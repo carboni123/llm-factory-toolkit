@@ -74,7 +74,6 @@ async def test_openai_pydantic_response_format():
         response_content = await client.generate(
             messages=messages,
             response_format=ExtractedInfo, # Pass the Pydantic class
-            temperature=0.1, # Lower temperature for more predictable extraction
         )
         print(f"Received raw response string:\n{response_content}")
 

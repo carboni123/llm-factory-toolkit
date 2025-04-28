@@ -78,7 +78,6 @@ class OpenAIProvider(BaseProvider):
         else:
             module_logger.info(f"OpenAI Provider initialized. Model: {self.model}. ToolFactory disabled.")
 
-
     async def generate(
         self,
         messages: List[Dict[str, Any]],
@@ -122,79 +121,24 @@ class OpenAIProvider(BaseProvider):
         api_call_args = {"model": active_model, **kwargs} # Start with base args
 
         # --- Handle response_format ---
-        processed_response_format = None
         if response_format:
-            if isinstance(response_format, dict) and response_format.get("type"):
-                processed_response_format = response_format
-                if response_format["type"] == "json_object" and active_model == "gpt-4o-mini":
-                     module_logger.warning("Using 'json_object' with gpt-4o-mini. Ensure your prompt instructs the model to output JSON.")
-                elif response_format["type"] == "json_schema" and not isinstance(response_format.get("json_schema"), dict):
-                     raise ConfigurationError("Invalid 'json_schema' provided in response_format.")
-
-            elif isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                try:
-                    # Generate and prune schema
-                    raw_schema = response_format.model_json_schema(mode="serialization") # Use serialization for output schema
-                    # OpenAI doesn't support additionalProperties=False directly in this context? Check latest docs.
-                    # raw_schema["additionalProperties"] = False # May cause issues if OpenAI doesn't expect it
-                    clean_schema = self._prune_openai_schema(raw_schema)
-
-                    # Check if schema is empty after pruning
-                    if not clean_schema.get("properties") and clean_schema.get("type") == "object":
-                         raise ConfigurationError(f"Pydantic model {response_format.__name__} resulted in an empty schema after pruning unsupported keywords.")
-
-                    processed_response_format = {
-                        "type": "json_object", # Use json_object mode, schema is enforced via prompt injection potentially
-                        # Alternative (check if supported by model):
-                        # "type": "json_schema",
-                        # "json_schema": {
-                        #     "name": response_format.__name__, # Function name for schema
-                        #     "description": response_format.__doc__ or f"Schema for {response_format.__name__}",
-                        #     "strict": True, # Enforce schema strictly if supported
-                        #     "schema": clean_schema,
-                        # },
-                    }
-                    # Inject schema into system prompt or user message for json_object mode
-                    schema_json_str = json.dumps(clean_schema)
-                    schema_instruction = f"\n\nPlease format your response as a JSON object adhering to the following schema:\n```json\n{schema_json_str}\n```"
-
-                    # Find system prompt or add one
-                    system_prompt_found = False
-                    for msg in current_messages:
-                        if msg.get("role") == "system":
-                            msg["content"] += schema_instruction
-                            system_prompt_found = True
-                            break
-                    if not system_prompt_found:
-                         # Or append to the last user message if no system prompt
-                         if current_messages and current_messages[-1].get("role") == "user":
-                             current_messages[-1]["content"] += schema_instruction
-                         else:
-                            # Or prepend a new system message (less ideal as it changes message order)
-                            # current_messages.insert(0, {"role": "system", "content": schema_instruction.strip()})
-                            # Best approach: Add to last user message or require a system prompt? Let's add to last user msg.
-                             module_logger.warning("No system prompt found to inject Pydantic schema. Appending to last user message.")
-                             if current_messages and current_messages[-1].get("role") == "user":
-                                  current_messages[-1]["content"] += schema_instruction
-                             else:
-                                  # Cannot reliably inject schema
-                                  raise ConfigurationError("Cannot inject Pydantic schema instruction without a system or user message.")
-
-
-                except Exception as e:
-                    raise ConfigurationError(f"Failed to process Pydantic schema for {response_format.__name__}: {e}")
-            else:
-                raise ConfigurationError("Invalid response_format. Expecting dict or Pydantic BaseModel class.")
-
-            if processed_response_format:
-                api_call_args["response_format"] = processed_response_format
-
+            # Handle Pydantic response_format schema if provided
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                raw_schema = response_format.model_json_schema(mode="validation")
+                clean_schema = self._prune_openai_schema(raw_schema)
+                clean_schema["additionalProperties"] = False
+                api_call_args["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": clean_schema,
+                    },
+                }
         # --- Optional parameters ---
         if temperature is not None:
             api_call_args["temperature"] = temperature
         if max_tokens is not None:
             api_call_args["max_tokens"] = max_tokens
-
 
         # --- Main Generation Loop ---
         while iteration_count < max_tool_iterations:
@@ -212,35 +156,32 @@ class OpenAIProvider(BaseProvider):
 
                 completion = await self.async_client.chat.completions.create(
                     **request_payload
-                    # No parse method in async client, response object is standard
                 )
 
                 # Log usage if available
                 if completion.usage:
                     module_logger.info(f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}")
 
-
             except asyncio.TimeoutError:
                 module_logger.error(f"OpenAI API request timed out after {self.timeout} seconds.")
                 raise ProviderError("API request timed out")
             except APIConnectionError as e:
-                 module_logger.error(f"OpenAI API connection error: {e}")
-                 raise ProviderError(f"API connection error: {e}")
+                module_logger.error(f"OpenAI API connection error: {e}")
+                raise ProviderError(f"API connection error: {e}")
             except RateLimitError as e:
                 module_logger.error(f"OpenAI API rate limit exceeded: {e}")
                 raise ProviderError(f"API rate limit exceeded: {e}")
             except APITimeoutError as e: # Different from asyncio.TimeoutError
-                 module_logger.error(f"OpenAI API operation timed out: {e}")
-                 raise ProviderError(f"API operation timed out: {e}")
+                module_logger.error(f"OpenAI API operation timed out: {e}")
+                raise ProviderError(f"API operation timed out: {e}")
             except BadRequestError as e:
-                 module_logger.error(f"OpenAI API bad request: {e}")
-                 # Log request details that might be helpful (avoid logging sensitive data like full messages in production)
-                 module_logger.error(f"Request details: Model={active_model}, NumMessages={len(current_messages)}, Args={ {k:v for k,v in request_payload.items() if k != 'messages'} }")
-                 raise ProviderError(f"API bad request: {e}") # Provide more context if possible
+                module_logger.error(f"OpenAI API bad request: {e}")
+                # Log request details that might be helpful (avoid logging sensitive data like full messages in production)
+                module_logger.error(f"Request details: Model={active_model}, NumMessages={len(current_messages)}, Args={ {k:v for k,v in request_payload.items() if k != 'messages'} }")
+                raise ProviderError(f"API bad request: {e}") # Provide more context if possible
             except Exception as e: # Catch unexpected errors
-                 module_logger.error(f"Unexpected error during OpenAI API call: {e}", exc_info=True)
-                 raise ProviderError(f"Unexpected API error: {e}")
-
+                module_logger.error(f"Unexpected error during OpenAI API call: {e}", exc_info=True)
+                raise ProviderError(f"Unexpected API error: {e}")
 
             # Process response message
             response_message = completion.choices[0].message
@@ -254,21 +195,20 @@ class OpenAIProvider(BaseProvider):
                 # No tool calls, return the content
                 final_content = response_message.content
                 # Attempt to parse if JSON format was requested
-                if isinstance(processed_response_format, dict) and processed_response_format.get("type", "").startswith("json"):
+                if isinstance(response_format, dict) and response_format.get("type", "").startswith("json"):
                     if final_content:
                         try:
-                             # Validate JSON structure if needed
-                             _ = json.loads(final_content)
-                             return final_content
+                            # Validate JSON structure if needed
+                            _ = json.loads(final_content)
+                            return final_content
                         except json.JSONDecodeError:
-                             module_logger.warning("Model did not return valid JSON despite request. Returning raw content.")
-                             return final_content
+                            module_logger.warning("Model did not return valid JSON despite request. Returning raw content.")
+                            return final_content
                     else:
-                         # Handle case where model returns no content but was expected to return JSON
-                         module_logger.warning("Model returned no content when JSON format was requested.")
-                         return None # Or raise an error?
+                        # Handle case where model returns no content but was expected to return JSON
+                        module_logger.warning("Model returned no content when JSON format was requested.")
+                        return None # Or raise an error?
                 return final_content # Return plain text content
-
 
             # --- Handle Tool Calls ---
             module_logger.info(f"Tool calls received: {len(tool_calls)}")
@@ -287,16 +227,16 @@ class OpenAIProvider(BaseProvider):
                 call_id = call.id
 
                 if not (func_name and func_args_str and call_id):
-                     # Should not happen with valid API responses, but check defensively
-                     module_logger.error(f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}")
-                     # Append an error message back to the model?
-                     tool_results.append({
+                    # Should not happen with valid API responses, but check defensively
+                    module_logger.error(f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}")
+                    # Append an error message back to the model?
+                    tool_results.append({
                         "role": "tool",
                         "tool_call_id": call_id or "unknown",
                         "name": func_name or "unknown",
                         "content": json.dumps({"error": "Malformed tool call received by client."}),
                      })
-                     continue
+                    continue
 
                 try:
                     # Dispatch tool using the factory; ToolError will be raised on failure
@@ -322,16 +262,15 @@ class OpenAIProvider(BaseProvider):
                     # Optionally re-raise the ToolError if you want to halt execution immediately
                     # raise e
                 except Exception as e:
-                     # Catch unexpected errors during dispatch/append phase
-                     module_logger.error(f"Unexpected error handling tool call {call_id} ({func_name}): {e}", exc_info=True)
-                     tool_results.append({
+                    # Catch unexpected errors during dispatch/append phase
+                    module_logger.error(f"Unexpected error handling tool call {call_id} ({func_name}): {e}", exc_info=True)
+                    tool_results.append({
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": func_name,
                         "content": json.dumps({"error": f"Unexpected client-side error handling tool: {e}"}),
                      })
-                     # raise ToolError(f"Unexpected error handling tool call {func_name}: {e}")
-
+                    # raise ToolError(f"Unexpected error handling tool call {func_name}: {e}")
 
             # Add all tool results to the message history for the next iteration
             current_messages.extend(tool_results)
@@ -364,7 +303,13 @@ class OpenAIProvider(BaseProvider):
         additionalProperties (sometimes), dependencies, allOf, anyOf, oneOf, not, etc.
         """
         ALLOWED_KEYS = {
-            "type", "properties", "required", "items", "enum", "description", "format"
+            "type",
+            "properties",
+            "required",
+            "items",
+            "enum",
+            "description",
+            "format",
             # Add others if confirmed supported by the specific OpenAI model/feature
         }
 
@@ -383,24 +328,18 @@ class OpenAIProvider(BaseProvider):
                         node["properties"][prop_key] = _prune(node["properties"][prop_key])
 
                 if "items" in node: # Could be dict (schema) or list (tuple validation)
-                     node["items"] = _prune(node["items"])
+                    node["items"] = _prune(node["items"])
 
                 return node
             elif isinstance(node, list):
-                 # Prune items within a list (e.g., for enum or tuple validation)
+                # Prune items within a list (e.g., for enum or tuple validation)
                 return [_prune(item) for item in node]
             else:
                 # Return primitive types as is
                 return node
 
         pruned_schema = _prune(schema.copy()) # Work on a copy
-        if isinstance(pruned_schema, dict) and "description" in pruned_schema:
-            # module_logger.debug("Removing top-level schema description before injection.")
-            del pruned_schema["description"]
-        module_logger.debug(f"Pruned schema: {json.dumps(pruned_schema)}")
-
         return pruned_schema
-
 
     # The _convert_message_to_dict method is no longer needed as we use
     # response_message.model_dump() from the Pydantic model provided by the openai library.
