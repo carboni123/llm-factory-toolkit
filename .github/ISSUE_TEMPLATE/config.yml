@@ -1,0 +1,12 @@
+# .github/ISSUE_TEMPLATE/config.yml
+blank_issues_enabled: false # Discourage blank issues, guide users to templates
+contact_links:
+  - name: "❓ General Question / Discussion"
+    url: https://github.com/carboni123/llm_factory_toolkit/discussions # Link to Discussions (enable it in repo settings) or remove if not used
+    about: "Ask general questions or discuss usage in the Discussions tab."
+  - name: "🐛 Report a Bug"
+    url: https://github.com/carboni123/llm_factory_toolkit/issues/new?template=bug_report.md
+    about: "Report a reproducible bug or error in the library."
+  - name: "💡 Feature Request"
+    url: https://github.com/carboni123/llm_factory_toolkit/issues/new?template=feature_request.md
+    about: "Suggest a new feature or enhancement for the llm-factory-toolkit."

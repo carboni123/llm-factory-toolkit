@@ -1,0 +1,76 @@
+# .github/workflows/ci.yml
+name: LLM Toolkit CI
+
+on:
+  push:
+    branches:
+      - main # Or your primary development branch
+  pull_request:
+    branches:
+      - main # Or your primary development branch
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  test:
+    name: Run Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # Allow other Python versions to complete even if one fails
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12'] # Test across supported Python versions
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip' # Cache dependencies
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install the library itself along with development dependencies (like pytest)
+          # Assumes you have defined pytest etc. in pyproject.toml [project.optional-dependencies] dev
+          # If not, add 'pip install pytest pytest-asyncio' here
+          pip install -e .[dev]
+          # Alternatively, if you don't use extras_require:
+          # pip install -e .
+          # pip install pytest pytest-asyncio
+
+      - name: Run tests
+        # IMPORTANT: Your integration tests require OPENAI_API_KEY.
+        # You MUST configure this as a repository secret in GitHub settings.
+        # Settings -> Secrets and variables -> Actions -> New repository secret
+        # Name: OPENAI_API_KEY
+        # Value: sk-...your_key...
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Add other secrets/env vars needed by tests here
+        run: |
+          # Check if the secret is set - skip integration tests if not (e.g., for forks)
+          # Modify this logic if you ALWAYS want tests to fail if the key is missing.
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY secret not set. Skipping integration tests."
+            # Optionally run only unit tests here if you separate them:
+            # pytest tests/unit
+          else
+            echo "OPENAI_API_KEY secret found. Running all tests..."
+            pytest tests/ -v --maxfail=5 --disable-warnings
+          fi
+          # If you don't separate tests, just run pytest and let it handle skips:
+          # pytest tests/ -v --maxfail=5 --disable-warnings
+
+      # Optional: Add steps for linting (e.g., with ruff or flake8)
+      # - name: Lint with Ruff
+      #   run: |
+      #     pip install ruff
+      #     ruff check .
+
+      # Optional: Add step for building distributions
+      # - name: Build distributions
+      #   run: |
+      #     pip install build
+      #     python -m build
