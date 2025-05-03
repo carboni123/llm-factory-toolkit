@@ -5,78 +5,66 @@ import logging
 import traceback
 from typing import List, Dict, Any, Optional, Tuple, Type
 
-from openai import OpenAI, BadRequestError, RateLimitError, APIConnectionError, APITimeoutError, AsyncOpenAI # Added AsyncOpenAI
+from openai import OpenAI, BadRequestError, RateLimitError, APIConnectionError, APITimeoutError, AsyncOpenAI
 from pydantic import BaseModel
 
-# Use relative imports within the library structure
 from .base import BaseProvider
-from . import register_provider # Import the registration decorator
+from . import register_provider
 from ..tools.tool_factory import ToolFactory
 from ..exceptions import ConfigurationError, ProviderError, ToolError, UnsupportedFeatureError
 
-# Configure logging for the module
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 module_logger = logging.getLogger(__name__)
 
-# Decorator registers this class with the identifier 'openai'
 @register_provider("openai")
 class OpenAIProvider(BaseProvider):
     """
     Provider implementation for interactions with the OpenAI API.
-    Supports tool use via a ToolFactory and Pydantic response formatting.
+    Supports tool use via a ToolFactory, tool filtering per call,
+    and Pydantic response formatting.
     """
 
-    DEFAULT_MODEL = "gpt-4o-mini" # Class constant for default model
-    API_ENV_VAR = "OPENAI_API_KEY" # Class constant for env var name
+    DEFAULT_MODEL = "gpt-4o-mini"
+    API_ENV_VAR = "OPENAI_API_KEY"
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: str = DEFAULT_MODEL,
-        tool_factory: Optional[ToolFactory] = None,
+        tool_factory: Optional[ToolFactory] = None, # ToolFactory instance is required for tool use
         timeout: float = 180.0,
-         # Add other OpenAI client options if needed (e.g., base_url, max_retries)
-        **kwargs: Any # To capture any extra args passed via create_provider_instance
+        **kwargs: Any
     ):
         """
         Initializes the OpenAI Provider.
 
         Args:
-            api_key (str, optional): OpenAI API key string or path to file containing the key.
-                                     Defaults to environment variable OPENAI_API_KEY.
-            model (str): The default OpenAI model to use (e.g., "gpt-4o-mini", "gpt-4-turbo").
-            tool_factory (ToolFactory, optional): An instance of ToolFactory for custom tool handling.
-            timeout (float): Timeout in seconds for API requests.
-            **kwargs: Additional arguments passed to the BaseProvider.
+            api_key (str, optional): OpenAI API key or path to file. Defaults to env var.
+            model (str): Default OpenAI model.
+            tool_factory (ToolFactory, optional): Instance of ToolFactory for tool handling.
+                                                  Required if tool usage is expected.
+            timeout (float): API request timeout in seconds.
+            **kwargs: Additional arguments passed to BaseProvider.
         """
-        # Pass relevant args to BaseProvider for key handling
         super().__init__(api_key=api_key, api_env_var=self.API_ENV_VAR, **kwargs)
 
         if not self.api_key:
-            raise ConfigurationError(
-                f"No valid OpenAI API key found. Provide 'api_key' argument, "
-                f"a file path, or set the {self.API_ENV_VAR} environment variable."
-            )
+            raise ConfigurationError(f"No valid OpenAI API key found. Provide 'api_key' argument, file path, or set {self.API_ENV_VAR}.")
 
-        # Use AsyncOpenAI for async methods
         try:
-            self.async_client = AsyncOpenAI(
-                api_key=self.api_key,
-                timeout=timeout,
-                # Pass other relevant OpenAI client args here if needed
-                # max_retries=..., base_url=...
-                )
+            self.async_client = AsyncOpenAI(api_key=self.api_key, timeout=timeout)
         except Exception as e:
             raise ConfigurationError(f"Failed to initialize OpenAI async client: {e}")
 
         self.model = model
+        # Ensure tool_factory is stored. It's needed for get_tool_definitions
         self.tool_factory = tool_factory
-        self.timeout = timeout # Store timeout if needed elsewhere
+        self.timeout = timeout
 
         if self.tool_factory:
-            module_logger.info(f"OpenAI Provider initialized. Model: {self.model}. ToolFactory enabled.")
+            module_logger.info(f"OpenAI Provider initialized. Model: {self.model}. ToolFactory detected (available tools: {self.tool_factory.available_tool_names}).")
         else:
-            module_logger.info(f"OpenAI Provider initialized. Model: {self.model}. ToolFactory disabled.")
+            module_logger.info(f"OpenAI Provider initialized. Model: {self.model}. No ToolFactory provided.")
 
     async def generate(
         self,
@@ -86,36 +74,32 @@ class OpenAIProvider(BaseProvider):
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        use_tools: Optional[List[str]] = [],
         **kwargs: Any,
     ) -> Optional[str]:
         """
-        Generates text using the OpenAI API, handling tool calls iteratively
-        and supporting Pydantic-based JSON schema response formatting.
+        Generates text using the OpenAI API, handling tool calls iteratively,
+        supporting tool filtering, and Pydantic response formatting.
 
         Args:
-            messages (List[Dict[str, Any]]): A list of message dictionaries conforming to OpenAI's format.
-            model (str, optional): The specific model to use for this request. Defaults to the instance's model.
-            max_tool_iterations (int): Maximum number of tool call cycles allowed.
-            response_format (Dict | Type[BaseModel], optional):
-                - A dictionary specifying the response format (e.g., {"type": "json_object"}).
-                - A Pydantic BaseModel class to enforce a specific JSON schema output.
-            temperature (float, optional): Sampling temperature.
-            max_tokens (int, optional): Maximum number of tokens to generate.
-            **kwargs: Additional arguments passed directly to the OpenAI API client
-                      (e.g., 'top_p', 'frequency_penalty').
+            messages: List of message dictionaries.
+            model: Specific model override. Defaults to instance's model.
+            max_tool_iterations: Max tool call cycles.
+            response_format: Dictionary or Pydantic model for response format.
+            temperature: Sampling temperature.
+            max_tokens: Max tokens to generate.
+            use_tools (Optional[List[str]]): List of tool names to make available for this call.
+                                             If None, uses all tools from the factory. If [], uses none.
+            **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
-            Optional[str]: The final generated content from the assistant, or None if an error
-                           or timeout occurs, or if max iterations are reached without content.
+            Optional[str]: Final assistant content, or None on error/timeout.
 
         Raises:
-            ProviderError: For API connection issues, rate limits, or bad requests.
-            ToolError: If tool execution fails.
-            UnsupportedFeatureError: If tool calls are received but no tool_factory is configured.
-            ConfigurationError: If response_format is invalid.
+            ProviderError, ToolError, UnsupportedFeatureError, ConfigurationError.
         """
         active_model = model or self.model
-        current_messages = list(messages) # Work on a copy
+        current_messages = list(messages)
         iteration_count = 0
 
         api_call_args = {"model": active_model, **kwargs} # Start with base args
@@ -142,23 +126,26 @@ class OpenAIProvider(BaseProvider):
 
         # --- Main Generation Loop ---
         while iteration_count < max_tool_iterations:
-            request_payload = {**api_call_args, "messages": current_messages}
 
-            # Add tools if tool_factory is configured and has tools
+            request_payload = {**api_call_args, "messages": current_messages} # Combine base args + current messages
+
+            # --- Add Tools (Filtered) ---
+            tools = []
             if self.tool_factory:
-                tools = self.tool_factory.get_tool_definitions()
-                if tools:
-                    request_payload["tools"] = tools
-                    request_payload["tool_choice"] = "auto" # Let the model decide
+                # If the user passed a non‐empty list, filter down to those names;
+                # otherwise load *all* registered tools.
+                if use_tools is None:
+                    tools = []
+                elif use_tools:
+                    tools = self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
+                else:
+                    tools = self.tool_factory.get_tool_definitions()
 
+            if tools:
+                request_payload["tools"] = tools
+            # --- API Call ---
             try:
-                module_logger.debug(f"OpenAI API Request (Iteration {iteration_count+1}): Model={active_model}, Messages={[m['role'] for m in current_messages]}, Tools={bool(request_payload.get('tools'))}, ResponseFormat={request_payload.get('response_format')}")
-
-                completion = await self.async_client.chat.completions.create(
-                    **request_payload
-                )
-
-                # Log usage if available
+                completion = await self.async_client.chat.completions.create(**request_payload)
                 if completion.usage:
                     module_logger.info(f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}")
 
@@ -171,7 +158,7 @@ class OpenAIProvider(BaseProvider):
             except RateLimitError as e:
                 module_logger.error(f"OpenAI API rate limit exceeded: {e}")
                 raise ProviderError(f"API rate limit exceeded: {e}")
-            except APITimeoutError as e: # Different from asyncio.TimeoutError
+            except APITimeoutError as e:
                 module_logger.error(f"OpenAI API operation timed out: {e}")
                 raise ProviderError(f"API operation timed out: {e}")
             except BadRequestError as e:
@@ -183,14 +170,16 @@ class OpenAIProvider(BaseProvider):
                 module_logger.error(f"Unexpected error during OpenAI API call: {e}", exc_info=True)
                 raise ProviderError(f"Unexpected API error: {e}")
 
-            # Process response message
+
+            # --- Process Response ---
             response_message = completion.choices[0].message
             # Convert Pydantic model to dict for consistent message history handling
             response_message_dict = response_message.model_dump(exclude_unset=True)
             current_messages.append(response_message_dict)
 
-            tool_calls = response_message.tool_calls # Access tool_calls directly from the response model
+            tool_calls = response_message.tool_calls
 
+            # --- Handle No Tool Calls ---
             if not tool_calls:
                 # No tool calls, return the content
                 final_content = response_message.content
@@ -216,6 +205,7 @@ class OpenAIProvider(BaseProvider):
                 module_logger.error("Tool calls received, but no ToolFactory is configured.")
                 raise UnsupportedFeatureError("Received tool calls from OpenAI, but no tool_factory was provided to handle them.")
 
+            # --- Dispatch Tools ---
             tool_results = []
             for call in tool_calls:
                 if call.type != "function" or not call.function:

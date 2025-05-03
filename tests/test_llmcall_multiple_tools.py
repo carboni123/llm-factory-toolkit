@@ -24,7 +24,6 @@ You are a highly specialized security assistant.
 Your task is to retrieve three separate parts of a master access code using the provided tools.
 Once you have all three parts, combine them in the exact order: Part 1, Part 2, Part 3.
 Present the final combined code clearly.
-Available tools: get_secret_part_1, get_secret_part_2, get_secret_part_3.
 """
 USER_PROMPT_MULTI_TOOL = "Please retrieve the master access code. Use 'source_A' for part 1, 'key_B' for part 2, and 'vault_C' for part 3, then combine them."
 

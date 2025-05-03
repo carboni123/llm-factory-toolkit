@@ -13,6 +13,7 @@ class LLMClient:
     """
     High-level client for interacting with different LLM providers.
     Manages provider instantiation, tool registration, and generation calls.
+    Supports filtering tools used in specific generation calls.
     """
 
     def __init__(
@@ -41,7 +42,6 @@ class LLMClient:
         self.tool_factory = tool_factory or ToolFactory()
 
         try:
-            # Pass the tool_factory and other specific arguments to the provider instance creator
             self.provider: BaseProvider = create_provider_instance(
                 provider_type=provider_type,
                 api_key=api_key,
@@ -51,7 +51,7 @@ class LLMClient:
             module_logger.info(f"Successfully created provider instance: {type(self.provider).__name__}")
         except (ConfigurationError, ImportError, LLMToolkitError) as e:
              module_logger.error(f"Failed to initialize LLMClient: {e}", exc_info=True)
-             raise # Re-raise the specific error
+             raise
 
     def register_tool(
         self,
@@ -61,37 +61,32 @@ class LLMClient:
         parameters: Optional[Dict[str, Any]] = None
     ):
         """
-        Registers a Python function as a tool for the LLM.
+        Registers a Python function as a tool for the LLM with the internal ToolFactory.
 
         Args:
             function (Callable): The Python function to register.
             name (str, optional): The name for the tool. Defaults to the function's __name__.
             description (str, optional): Description of the tool. Defaults to the function's docstring.
             parameters (Dict[str, Any], optional): JSON schema description of the function's parameters.
-                                                    Attempts to infer if not provided (future enhancement).
         """
         if name is None:
             name = function.__name__
         if description is None:
-            description = function.__doc__ or f"Executes the {name} function."
+            docstring = function.__doc__ or ""
+            description = docstring.strip() or f"Executes the {name} function."
             if not function.__doc__:
                  module_logger.warning(f"Tool function '{name}' has no docstring. Using generic description.")
 
-        # TODO: Add parameter inference logic here in the future if desired.
         if parameters is None:
-             # For now, require parameters to be explicitly defined if needed by the function
-             # module_logger.warning(f"No parameters schema provided for tool '{name}'. Assuming no parameters.")
-             # Or raise error? Let's allow no parameters for now.
-             pass
-
+             pass # Allow no parameters
 
         self.tool_factory.register_tool(
             function=function,
             name=name,
-            description=description.strip(), # Clean up description
+            description=description,
             parameters=parameters
         )
-        module_logger.info(f"Tool '{name}' registered with LLMClient.")
+        module_logger.info(f"Tool '{name}' registered with LLMClient's ToolFactory.")
 
 
     async def generate(
@@ -102,6 +97,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        use_tools: Optional[List[str]] = [],
         # Allow provider-specific kwargs
         **kwargs: Any
     ) -> Optional[str]:
@@ -115,7 +111,13 @@ class LLMClient:
             max_tokens (int, optional): Max tokens to generate.
             response_format (Dict | Type[BaseModel], optional): Desired response format (e.g., JSON).
                                                                 Accepts dict or Pydantic model.
-            **kwargs: Additional arguments passed directly to the provider's generate method.
+            use_tools (Optional[List[str]]): A list of tool names to make available for this
+                                             specific call. If None (default), all registered tools
+                                             in the ToolFactory are potentially available.
+                                             If an empty list `[]` is passed, no tools will be
+                                             made available for this call, even if registered.
+            **kwargs: Additional arguments passed directly to the provider's generate method
+                      (e.g., tool_choice, max_tool_iterations).
 
         Returns:
             Optional[str]: The generated text content, or None on failure/timeout.
@@ -123,9 +125,10 @@ class LLMClient:
         Raises:
             ProviderError: If the provider encounters an API error.
             ToolError: If a registered tool fails during execution.
+            UnsupportedFeatureError: If tools are needed but not supported/configured.
             LLMToolkitError: For other library-specific errors.
         """
-        module_logger.debug(f"Client calling provider.generate. Model override: {model}")
+        module_logger.debug(f"Client calling provider.generate. Model override: {model}, Use tools: {use_tools}")
 
         # Prepare arguments for the provider's generate method
         provider_args = {
@@ -134,31 +137,21 @@ class LLMClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "response_format": response_format,
-            **kwargs # Pass through any other specific args
+            "use_tools": use_tools, # <-- PASS THE FILTER LIST
+            **kwargs # Pass through any other specific args like tool_choice
         }
         # Filter out None values to avoid overriding provider defaults unintentionally
-        provider_args = {k: v for k, v in provider_args.items() if v is not None}
+        # Keep 'use_tools' even if None, as the provider expects it
+        provider_args = {k: v for k, v in provider_args.items() if v is not None or k == 'use_tools'}
+
 
         try:
             # Delegate the actual generation call to the provider instance
             result = await self.provider.generate(**provider_args)
             return result
         except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError) as e:
-            module_logger.error(f"Error during generation: {e}")
+            module_logger.error(f"Error during generation: {e}", exc_info=False) # Avoid excessive traceback for expected errors
             raise # Re-raise specific toolkit errors
         except Exception as e:
             module_logger.error(f"An unexpected error occurred during generation: {e}", exc_info=True)
             raise LLMToolkitError(f"Unexpected generation error: {e}") from e
-
-
-    # Add convenience methods like 'chat' if desired
-    # async def chat(self, user_prompt: str, history: Optional[List[Dict[str, Any]]] = None, **kwargs) -> str:
-    #     """ Starts or continues a chat conversation. """
-    #     messages = list(history) if history else []
-    #     messages.append({"role": "user", "content": user_prompt})
-    #     response = await self.generate(messages=messages, **kwargs)
-    #     if response is None:
-    #         raise LLMToolkitError("Chat generation failed to return a response.")
-    #     # You might want to append the assistant response to the history here
-    #     # or leave it to the caller.
-    #     return response
