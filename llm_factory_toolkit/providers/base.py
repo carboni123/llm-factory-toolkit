@@ -2,7 +2,10 @@
 import os
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
+from typing import Dict, Any, Optional, List, Type
+
 from ..exceptions import ConfigurationError
+from ..tools.models import ToolIntentOutput, BaseModel
 
 class BaseProvider(ABC):
     """
@@ -86,6 +89,39 @@ class BaseProvider(ABC):
         """
         Abstract method to generate text based on a list of messages.
         Subclasses must implement this.
+        """
+        pass
+
+    @abstractmethod
+    async def generate_tool_intent(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        use_tools: Optional[List[str]] = [], # None for all, [] for none, list of names for specific
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        **kwargs: Any
+    ) -> ToolIntentOutput:
+        """
+        Generates a response from the LLM, prioritizing the detection of tool call intents
+        without executing them.
+
+        Args:
+            messages: List of message dictionaries.
+            model: Specific model override.
+            use_tools: List of tool names to make available.
+                       None: all tools from factory.
+                       []: no tools.
+                       List[str]: specific tools.
+            temperature: Sampling temperature.
+            max_tokens: Max tokens to generate.
+            response_format: Desired response format if LLM replies directly.
+            **kwargs: Additional provider-specific arguments.
+
+        Returns:
+            ToolIntentOutput: An object containing potential text content,
+                              parsed tool call intents, and the raw assistant message.
         """
         pass
 

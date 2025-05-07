@@ -1,8 +1,10 @@
 # llm_factory_toolkit/llm_factory_toolkit/client.py
+import json
 import logging
 from typing import Optional, List, Dict, Any, Type, Callable
 
 from .providers import create_provider_instance, BaseProvider
+from .tools.models import ToolIntentOutput
 from .tools.tool_factory import ToolFactory
 from .exceptions import ConfigurationError, LLMToolkitError, ProviderError, ToolError, UnsupportedFeatureError
 from pydantic import BaseModel # Import for type hinting
@@ -155,3 +157,158 @@ class LLMClient:
         except Exception as e:
             module_logger.error(f"An unexpected error occurred during generation: {e}", exc_info=True)
             raise LLMToolkitError(f"Unexpected generation error: {e}") from e
+
+
+    async def generate_tool_intent(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        use_tools: Optional[List[str]] = [], # Default: no tools unless specified
+        **kwargs: Any
+    ) -> ToolIntentOutput:
+        """
+        Requests the LLM to generate a response, specifically to identify potential tool calls,
+        but does not execute them.
+
+        Args:
+            messages: The conversation history.
+            model: Override the default model for this request.
+            temperature: Sampling temperature.
+            max_tokens: Max tokens to generate.
+            response_format: Desired response format if the LLM replies directly.
+            use_tools: List of tool names to make available.
+                       None: all tools from factory.
+                       []: no tools for this call.
+                       List[str]: specific tools.
+            **kwargs: Additional arguments passed to the provider's generate_tool_intent method.
+
+        Returns:
+            ToolIntentOutput: Object containing text content (if any), a list of
+                              parsed tool call intents, and the raw assistant message.
+
+        Raises:
+            ProviderError, LLMToolkitError, etc.
+        """
+        module_logger.debug(
+            f"Client calling provider.generate_tool_intent. Model: {model}, Use tools: {use_tools}"
+        )
+
+        provider_args = {
+            "messages": messages,
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": response_format,
+            "use_tools": use_tools, # Pass the filter list/None/[]
+            "tool_choice": "required",
+            **kwargs
+        }
+        # Filter out None values to avoid overriding provider defaults unintentionally,
+        # but keep 'use_tools' as its specific values (None, []) are meaningful.
+        provider_args = {
+            k: v for k, v in provider_args.items() if v is not None or k == 'use_tools'
+        }
+
+        try:
+            return await self.provider.generate_tool_intent(**provider_args)
+        except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError) as e:
+            module_logger.error(f"Error during tool intent generation: {e}", exc_info=False)
+            raise
+        except Exception as e:
+            module_logger.error(f"An unexpected error occurred during tool intent generation: {e}", exc_info=True)
+            raise LLMToolkitError(f"Unexpected tool intent generation error: {e}") from e
+
+
+    def execute_tool_intents( # Changed from a static/external function to an instance method
+        self,
+        intent_output: ToolIntentOutput,
+        extract_result_key: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Executes a list of tool call intents using the client's ToolFactory
+        and returns a list of formatted tool result messages.
+
+        Args:
+            intent_output: The ToolIntentOutput containing tool_calls from the planner.
+
+        Returns:
+            A list of tool result messages suitable for adding to an LLM conversation history.
+        
+        Raises:
+            ConfigurationError: If the client does not have a ToolFactory configured.
+        """
+        tool_result_messages: List[Dict[str, Any]] = []
+
+        if not self.tool_factory: # Use self.tool_factory
+            # This is a critical configuration issue if tools are intended.
+            # Raise an error rather than just logging and returning empty.
+            # Alternatively, the __init__ should ensure tool_factory is always present.
+            raise ConfigurationError("LLMClient has no ToolFactory configured, cannot execute tool intents.")
+
+        if not intent_output.tool_calls:
+            module_logger.info("No tool calls to execute.")
+            return tool_result_messages
+
+        for tool_call in intent_output.tool_calls:
+            tool_name = tool_call.name
+            tool_call_id = tool_call.id
+
+            args_to_dump = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+            tool_args_str = json.dumps(args_to_dump)
+            
+            module_logger.debug(f"Client executing tool: {tool_name} (ID: {tool_call_id}), args: {tool_args_str}")
+            
+            try:
+                # Use self.tool_factory
+                result_str = self.tool_factory.dispatch_tool(tool_name, tool_args_str)
+
+                # Extracts argument from tool result (assuming its json formatted)
+                if extract_result_key:
+                    result_json = json.loads(result_str)
+                    result_str = result_json[extract_result_key]
+
+                tool_result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": result_str,
+                })
+                module_logger.debug(f"Tool {tool_name} (ID: {tool_call_id}) executed successfully. Result: {result_str}")
+            except json.JSONDecodeError as jde:
+                # The raw_json_result_str itself was not valid JSON
+                module_logger.error(f"Tool {tool_name}: Tool result was not valid JSON, cannot extract key. Raw output: {result_str}")
+                tool_result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": json.dumps({"error": f"Tool {tool_name}: Tool result was not valid JSON, cannot extract key. Error: {jde}"})
+                })
+            except KeyError as ke:
+                # Invalid key
+                module_logger.error(f"Tool {tool_name}: Invalid key '{extract_result_key}'. Raw output: {result_json}")
+                tool_result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": json.dumps({"error": f"Tool {tool_name}: Tool result was not valid JSON, cannot extract key. Error: {ke}"})
+                })   
+            except ToolError as te: # Catch specific ToolError from dispatch_tool
+                module_logger.error(f"ToolError executing tool {tool_name} (ID: {tool_call_id}): {te}", exc_info=True)
+                tool_result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": json.dumps({"error": str(te), "tool_error_details": te.to_dict() if hasattr(te, 'to_dict') else str(te)}),
+                })
+            except Exception as e:
+                module_logger.error(f"Unexpected error executing tool {tool_name} (ID: {tool_call_id}): {e}", exc_info=True)
+                tool_result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": json.dumps({"error": f"Tool execution failed unexpectedly: {str(e)}"}),
+                })
+        return tool_result_messages

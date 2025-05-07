@@ -3,13 +3,13 @@ import asyncio
 import json
 import logging
 import traceback
-from typing import List, Dict, Any, Optional, Tuple, Type
+from typing import List, Dict, Any, Optional, Tuple, Type, Union
 
-from openai import OpenAI, BadRequestError, RateLimitError, APIConnectionError, APITimeoutError, AsyncOpenAI
-from pydantic import BaseModel
+from openai import AsyncOpenAI, BadRequestError, RateLimitError, APIConnectionError, APITimeoutError
 
 from .base import BaseProvider
 from . import register_provider
+from ..tools.models import ParsedToolCall, ToolIntentOutput, BaseModel
 from ..tools.tool_factory import ToolFactory
 from ..exceptions import ConfigurationError, ProviderError, ToolError, UnsupportedFeatureError
 
@@ -279,6 +279,122 @@ class OpenAIProvider(BaseProvider):
                 return str(m.get("content", "")) + warning_msg
         return None # Or raise an error indicating max iterations were hit without result
 
+    async def generate_tool_intent(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        use_tools: Optional[List[str]] = [],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        **kwargs: Any
+    ) -> ToolIntentOutput:
+        active_model = model or self.model
+        api_call_args = {"model": active_model, **kwargs}
+
+        if response_format:
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                raw_schema = response_format.model_json_schema(mode="validation")
+                clean_schema = self._prune_openai_schema(raw_schema)
+                clean_schema["additionalProperties"] = False
+                api_call_args["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": { "name": response_format.__name__, "schema": clean_schema },
+                }
+            elif isinstance(response_format, dict):
+                 api_call_args["response_format"] = response_format
+
+
+        if temperature is not None: api_call_args["temperature"] = temperature
+        if max_tokens is not None: api_call_args["max_tokens"] = max_tokens
+
+        request_payload = {**api_call_args, "messages": list(messages)}
+
+        # --- Tool Configuration (using refactored logic) ---
+        tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(use_tools, kwargs)
+        if tools_for_payload is not None: # Can be an empty list []
+            request_payload["tools"] = tools_for_payload
+        if tool_choice_for_payload is not None:
+            request_payload["tool_choice"] = tool_choice_for_payload
+        # --- End Tool Configuration ---
+
+        try:
+            completion = await self.async_client.chat.completions.create(**request_payload)
+            if completion.usage:
+                module_logger.info(f"OpenAI API Usage for intent: {completion.usage.model_dump_json(exclude_unset=True)}")
+        except asyncio.TimeoutError:
+            module_logger.error(f"OpenAI API request (intent) timed out after {self.timeout} seconds.")
+            raise ProviderError("API request for intent timed out")
+        except APIConnectionError as e: # (copy other error handling types from generate)
+            module_logger.error(f"OpenAI API connection error (intent): {e}")
+            raise ProviderError(f"API connection error (intent): {e}")
+        except RateLimitError as e:
+            module_logger.error(f"OpenAI API rate limit exceeded (intent): {e}")
+            raise ProviderError(f"API rate limit exceeded (intent): {e}")
+        except APITimeoutError as e:
+            module_logger.error(f"OpenAI API operation timed out (intent): {e}")
+            raise ProviderError(f"API operation timed out (intent): {e}")
+        except BadRequestError as e:
+            module_logger.error(f"OpenAI API bad request (intent): {e}")
+            module_logger.error(f"Request details (intent): Model={active_model}, NumMessages={len(messages)}, Args={ {k:v for k,v in request_payload.items() if k != 'messages'} }")
+            raise ProviderError(f"API bad request (intent): {e}")
+        except Exception as e:
+            module_logger.error(f"Unexpected error during OpenAI API call (intent): {e}", exc_info=True)
+            raise ProviderError(f"Unexpected API error (intent): {e}")
+
+        response_message = completion.choices[0].message
+        raw_assistant_msg_dict = response_message.model_dump(exclude_unset=True)
+        
+        parsed_tool_calls_list: List[ParsedToolCall] = []
+        if response_message.tool_calls:
+            module_logger.info(f"Tool call intents received: {len(response_message.tool_calls)}")
+            for tc in response_message.tool_calls:
+                if tc.type == "function" and tc.function:
+                    func_name = tc.function.name
+                    args_str = tc.function.arguments # This is a JSON string
+                    
+                    args_dict_or_str: Union[Dict[str, Any], str]
+                    parsing_error: Optional[str] = None
+
+                    try:
+                        # Ensure args_str is not None before parsing, default to "{}" for no-arg functions if OpenAI sends null/empty
+                        actual_args_to_parse = args_str if args_str is not None else "{}"
+                        parsed_args = json.loads(actual_args_to_parse)
+                        if not isinstance(parsed_args, dict):
+                            parsing_error = f"Tool arguments are not a JSON object (dict). Type: {type(parsed_args)}"
+                            args_dict_or_str = actual_args_to_parse
+                        else:
+                            args_dict_or_str = parsed_args
+                    except json.JSONDecodeError as e:
+                        parsing_error = f"JSONDecodeError: {str(e)}"
+                        args_dict_or_str = args_str # Store raw string on error
+                    except TypeError as e: # e.g. if args_str is not a string (should not happen from OpenAI)
+                        parsing_error = f"TypeError processing arguments: {str(e)}"
+                        args_dict_or_str = str(args_str) # Store string representation
+
+                    if parsing_error:
+                        module_logger.warning(
+                            f"Failed to parse arguments for tool intent '{func_name}'. ID: {tc.id}. "
+                            f"Error: {parsing_error}. Raw args: '{args_str}'"
+                        )
+                    
+                    parsed_tool_calls_list.append(
+                        ParsedToolCall(
+                            id=tc.id,
+                            name=func_name,
+                            arguments=args_dict_or_str,
+                            arguments_parsing_error=parsing_error
+                        )
+                    )
+                else:
+                    module_logger.warning(f"Skipping unexpected tool call type or format in intent: {tc.model_dump_json()}")
+        
+        return ToolIntentOutput(
+            content=response_message.content, # This can be non-empty even with tool_calls
+            tool_calls=parsed_tool_calls_list if parsed_tool_calls_list else None,
+            raw_assistant_message=raw_assistant_msg_dict
+        )
+    
     @staticmethod
     def _prune_openai_schema(schema: dict) -> dict:
         """
@@ -331,5 +447,44 @@ class OpenAIProvider(BaseProvider):
         pruned_schema = _prune(schema.copy()) # Work on a copy
         return pruned_schema
 
-    # The _convert_message_to_dict method is no longer needed as we use
-    # response_message.model_dump() from the Pydantic model provided by the openai library.
+    def _prepare_tool_payload(
+        self,
+        use_tools: Optional[List[str]],
+        existing_kwargs: Dict[str, Any]
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Any]]:
+        """
+        Prepares the 'tools' and 'tool_choice' parts of the API request payload.
+        Returns a tuple: (tool_definitions_for_payload, effective_tool_choice_for_payload)
+        """
+        final_tool_definitions = []
+        # Determine effective_tool_choice, potentially modifying it based on use_tools
+        # User's explicit tool_choice in kwargs takes precedence.
+        effective_tool_choice = existing_kwargs.get("tool_choice")
+
+        if use_tools == []:  # Explicitly no tools for this call
+            if self.tool_factory:
+                # OpenAI expects "tools": [] to signal no tools if tools could have been available.
+                final_tool_definitions = [] # Mark to send "tools": []
+                if effective_tool_choice is None or effective_tool_choice == "auto":
+                    effective_tool_choice = "none"
+            # If no tool_factory, final_tool_definitions remains empty (no "tools" key sent later)
+            # and effective_tool_choice is as per user or None.
+        elif self.tool_factory:  # use_tools is None (all available) or a list of names
+            # get_tool_definitions handles None (all) or list (filtered)
+            definitions = self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
+            if definitions:
+                final_tool_definitions = definitions
+            elif (effective_tool_choice is None or effective_tool_choice == "auto"):
+                # No tools available/selected from factory, and choice is auto, so effectively "none"
+                effective_tool_choice = "none"
+        # If no tool_factory and use_tools is not [], final_tool_definitions remains empty,
+        # and effective_tool_choice is as per user or None.
+
+        # Determine what to return for the payload
+        tools_payload = None
+        if final_tool_definitions: # If there are actual definitions to send
+            tools_payload = final_tool_definitions
+        elif use_tools == [] and self.tool_factory: # Case: explicit no tools with a factory present
+            tools_payload = [] # Send "tools": []
+
+        return tools_payload, effective_tool_choice
