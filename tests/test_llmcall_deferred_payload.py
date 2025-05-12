@@ -139,7 +139,6 @@ async def test_openai_deferred_payload_processing():
             temperature=0.0,
             # use_tools=None # Allow all registered tools by default
         )
-        print(f"\nclient.generate() completed.")
         print(f"Final Assistant Response:\n---\n{final_response_content}\n---")
         print(f"Collected Payloads ({len(collected_payloads)}): {collected_payloads}")
 
@@ -160,21 +159,44 @@ async def test_openai_deferred_payload_processing():
 
         # 7. Process Payloads (Deferred Action)
         print("\n--- Processing Collected Payloads (Deferred Action) ---")
-        retrieved_parts: Dict[int, str] = {}
-        for payload in collected_payloads:
-            assert isinstance(payload, dict), "Payload item should be a dictionary"
-            part_num = payload.get("part_number")
-            part_val = payload.get("secret_part")
-            assert isinstance(part_num, int) and 1 <= part_num <= 3, f"Invalid part number: {part_num}"
-            assert isinstance(part_val, str), f"Invalid part value type for part {part_num}"
+        retrieved_parts: Dict[int, str] = {} # Use dict to store parts by number for ordering
+        for item in collected_payloads:
+            assert isinstance(item, dict), f"Payload item should be a dictionary, got {type(item)}"
+            tool_name = item.get("tool_name")
+            original_payload = item.get("payload")
+
+            assert tool_name is not None, f"Payload item missing 'tool_name': {item}"
+            print(f"Processing payload from tool: '{tool_name}'")
+
+            # Ensure the original payload is the expected dictionary format for this specific test
+            assert isinstance(original_payload, dict), \
+                f"Original payload for tool '{tool_name}' should be a dict, got {type(original_payload)}"
+
+            part_num = original_payload.get("part_number")
+            part_val = original_payload.get("secret_part")
+
+            # Validate the extracted parts from the original payload
+            assert isinstance(part_num, int) and 1 <= part_num <= 3, \
+                f"Invalid or missing 'part_number' in payload from tool '{tool_name}': {part_num}"
+            assert isinstance(part_val, str), \
+                f"Invalid or missing 'secret_part' in payload from tool '{tool_name}': {part_val}"
+
+            # Check for duplicates
             assert part_num not in retrieved_parts, f"Duplicate part number received: {part_num}"
+
+            # Store the part value using its number as the key
             retrieved_parts[part_num] = part_val
-            print(f"Processed payload for part {part_num}: value='{part_val}'")
+            print(f"-> Stored Part {part_num}: '{part_val}'")
 
-        assert len(retrieved_parts) == 3, "Did not retrieve all three unique parts from payloads"
+        # Ensure all parts were collected
+        assert len(retrieved_parts) == 3, f"Expected to retrieve 3 parts, but got {len(retrieved_parts)}"
 
-        # Combine parts in order
-        programmatic_secret = retrieved_parts[1] + retrieved_parts[2] + retrieved_parts[3]
+        # Combine parts in the correct order using the part numbers
+        try:
+            programmatic_secret = retrieved_parts[1] + retrieved_parts[2] + retrieved_parts[3]
+        except KeyError as e:
+             pytest.fail(f"Missing part number {e} when combining secret. Retrieved parts: {retrieved_parts}")
+
         print(f"Programmatically combined secret: {programmatic_secret}")
 
         # 8. Final Assertion on Programmatic Result

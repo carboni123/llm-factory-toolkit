@@ -244,8 +244,12 @@ class OpenAIProvider(BaseProvider):
                     })
                     module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
                     # Collect payload if action is needed
-                    if tool_exec_result.action_needed and tool_exec_result.payload is not None:
-                        collected_payloads.append(tool_exec_result.payload)
+                    if tool_exec_result.action_needed:
+                        payload = {
+                            "tool_name": func_name,
+                            "payload": tool_exec_result.payload
+                        }
+                        collected_payloads.append(payload)
 
                 except ToolError as e:
                     # Log the tool error and potentially inform the model
