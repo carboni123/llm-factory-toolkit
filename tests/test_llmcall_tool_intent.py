@@ -7,13 +7,11 @@ Requires OPENAI_API_KEY environment variable.
 
 import os
 import pytest
-import asyncio
 import json
 
-# Imports from your library
 from llm_factory_toolkit import LLMClient
 from llm_factory_toolkit.tools import ToolFactory
-from llm_factory_toolkit.tools.models import ToolIntentOutput
+from llm_factory_toolkit.tools.models import ToolIntentOutput, ToolExecutionResult 
 from llm_factory_toolkit.exceptions import ConfigurationError, ProviderError, ToolError, UnsupportedFeatureError, LLMToolkitError
 
 # Use pytest-asyncio for async tests
@@ -48,7 +46,12 @@ def mock_get_secret_part_1(retrieval_source: str) -> dict:
     # assert retrieval_source == EXPECTED_ARG_1, f"Tool 1 expected '{EXPECTED_ARG_1}', got '{retrieval_source}'"
     result = {"secret_part": SECRET_PART_1}
     print(f"[Mock Tool 1] Returning: {result}")
-    return result
+    # Return the structured result
+    return ToolExecutionResult(
+        content=json.dumps(result), # String content for LLM history
+        payload=result,                     # Optional: Pass raw data if needed elsewhere
+        action_needed=False                 # No deferred action for this mock
+    )
 
 MOCK_TOOL_PARAMS_1 = {
     "type": "object",
@@ -67,7 +70,11 @@ def mock_get_secret_part_2(key_identifier: str) -> dict:
     # assert key_identifier == EXPECTED_ARG_2, f"Tool 2 expected '{EXPECTED_ARG_2}', got '{key_identifier}'"
     result = {"secret_part": SECRET_PART_2}
     print(f"[Mock Tool 2] Returning: {result}")
-    return result
+    return ToolExecutionResult(
+        content=json.dumps(result),
+        payload=result,   
+        action_needed=False
+    )
 
 MOCK_TOOL_PARAMS_2 = {
     "type": "object",
@@ -86,7 +93,11 @@ def mock_get_secret_part_3(vault_name: str) -> dict:
     # assert vault_name == EXPECTED_ARG_3, f"Tool 3 expected '{EXPECTED_ARG_3}', got '{vault_name}'"
     result = {"secret_part": SECRET_PART_3}
     print(f"[Mock Tool 3] Returning: {result}")
-    return result
+    return ToolExecutionResult(
+        content=json.dumps(result),
+        payload=result,   
+        action_needed=False
+    )
 
 MOCK_TOOL_PARAMS_3 = {
     "type": "object",
@@ -199,7 +210,7 @@ async def test_openai_three_tool_calls_combined_secret():
 
 
         print(f"Calling client.generate (Explainer)")
-        final_response_content = await client.generate(
+        final_response_content, _ = await client.generate(
             messages=messages,
             model=TEST_MODEL,
             temperature=0.0,

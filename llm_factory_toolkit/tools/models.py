@@ -1,7 +1,8 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/models.py
-from typing import Dict, Any, Optional, List, Union # Added Union
-from pydantic import BaseModel
+from typing import Dict, Any, Optional, List, Union
+from pydantic import BaseModel, Field
 
+# --- Existing models ---
 class ParsedToolCall(BaseModel):
     id: str # Tool call ID from the provider
     name: str # Name of the function to be called
@@ -13,3 +14,14 @@ class ToolIntentOutput(BaseModel):
     content: Optional[str] = None # Text content if LLM replied directly without a tool call
     tool_calls: Optional[List[ParsedToolCall]] = None # List of parsed tool calls
     raw_assistant_message: Dict[str, Any] # The full, raw message object from the assistant
+
+class ToolExecutionResult(BaseModel):
+    """Represents the outcome of a tool execution, separating LLM content from actionable payloads."""
+    content: str # The string to be added to the message history for the LLM
+    payload: Any = None    # Data/instructions for the caller (e.g., message details to send)
+    action_needed: bool = Field(default=False) # Flag indicating if the payload requires caller action
+    error: Optional[str] = None # Optional error message
+
+    # Optional: Add model_config for extra settings if needed later
+    # class Config:
+    #     arbitrary_types_allowed = True # If payload can be complex non-pydantic types

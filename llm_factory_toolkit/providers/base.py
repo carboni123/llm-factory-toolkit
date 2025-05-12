@@ -2,7 +2,7 @@
 import os
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
-from typing import Dict, Any, Optional, List, Type
+from typing import Dict, Tuple, Any, Optional, List, Type
 
 from ..exceptions import ConfigurationError
 from ..tools.models import ToolIntentOutput, BaseModel
@@ -85,10 +85,15 @@ class BaseProvider(ABC):
         return api_key
 
     @abstractmethod
-    async def generate(self, messages: list[dict[str, any]], **kwargs) -> str | None:
+    async def generate(self, messages: list[dict[str, any]], **kwargs) -> Tuple[Optional[str], List[Any]]:
         """
-        Abstract method to generate text based on a list of messages.
-        Subclasses must implement this.
+        Abstract method to generate text based on a list of messages,
+        potentially handling tool calls and returning deferred action payloads.
+
+        Returns:
+             Tuple[Optional[str], List[Any]]:
+                 - The generated text content (or None).
+                 - A list of payloads from executed tools requiring deferred action.
         """
         pass
 

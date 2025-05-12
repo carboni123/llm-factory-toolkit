@@ -150,7 +150,7 @@ async def test_openai_three_tool_calls_combined_secret():
 
         # 4. Make the API call
         print("Calling client.generate (three tool calls expected)...")
-        response_content = await client.generate(
+        response_content, _ = await client.generate(
             messages=messages,
             model=TEST_MODEL,
             temperature=0.1, # Lower temperature for more predictable combination behavior

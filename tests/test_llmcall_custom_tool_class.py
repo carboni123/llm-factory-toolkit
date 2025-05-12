@@ -104,7 +104,7 @@ async def test_openai_custom_tool_class_call():
 
         # 5. Make the API call
         print("Calling client.generate (class-based tool use expected)...")
-        response_content = await client.generate(
+        response_content, _ = await client.generate(
             messages=messages,
             model=TEST_MODEL,
             temperature=0.1,

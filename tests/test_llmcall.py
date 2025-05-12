@@ -59,7 +59,7 @@ async def test_openai_simple_call():
 
         # 3. Make the API call using the client's method
         print("Calling client.generate...")
-        response_content = await client.generate(
+        response_content, _ = await client.generate(
             messages=messages,
             model=TEST_MODEL, # Can override the client's default model here
             temperature=0.7, # Adjusted temperature slightly

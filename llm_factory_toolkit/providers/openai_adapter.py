@@ -9,7 +9,7 @@ from openai import AsyncOpenAI, BadRequestError, RateLimitError, APIConnectionEr
 
 from .base import BaseProvider
 from . import register_provider
-from ..tools.models import ParsedToolCall, ToolIntentOutput, BaseModel
+from ..tools.models import ParsedToolCall, ToolIntentOutput, ToolExecutionResult, BaseModel
 from ..tools.tool_factory import ToolFactory
 from ..exceptions import ConfigurationError, ProviderError, ToolError, UnsupportedFeatureError
 
@@ -76,7 +76,7 @@ class OpenAIProvider(BaseProvider):
         max_tokens: Optional[int] = None,
         use_tools: Optional[List[str]] = [],
         **kwargs: Any,
-    ) -> Optional[str]:
+    ) -> Tuple[Optional[str], List[Any]]:
         """
         Generates text using the OpenAI API, handling tool calls iteratively,
         supporting tool filtering, and Pydantic response formatting.
@@ -93,11 +93,13 @@ class OpenAIProvider(BaseProvider):
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
-            Optional[str]: Final assistant content, or None on error/timeout.
-
+            Tuple[Optional[str], List[Any]]:
+                - Final assistant content (or None).
+                - List of payloads collected from tool calls that require action.
         Raises:
             ProviderError, ToolError, UnsupportedFeatureError, ConfigurationError.
         """
+        collected_payloads: List[Any] = []
         active_model = model or self.model
         current_messages = list(messages)
         iteration_count = 0
@@ -189,15 +191,15 @@ class OpenAIProvider(BaseProvider):
                         try:
                             # Validate JSON structure if needed
                             _ = json.loads(final_content)
-                            return final_content
+                            return final_content, collected_payloads
                         except json.JSONDecodeError:
                             module_logger.warning("Model did not return valid JSON despite request. Returning raw content.")
-                            return final_content
+                            return final_content, collected_payloads
                     else:
                         # Handle case where model returns no content but was expected to return JSON
                         module_logger.warning("Model returned no content when JSON format was requested.")
-                        return None # Or raise an error?
-                return final_content # Return plain text content
+                        return None, [] # Or raise an error?
+                return final_content, collected_payloads # Return plain text content
 
             # --- Handle Tool Calls ---
             module_logger.info(f"Tool calls received: {len(tool_calls)}")
@@ -229,15 +231,21 @@ class OpenAIProvider(BaseProvider):
                     continue
 
                 try:
-                    # Dispatch tool using the factory; ToolError will be raised on failure
-                    result_str = self.tool_factory.dispatch_tool(func_name, func_args_str)
+                    # Dispatch tool using the factory; It now returns ToolExecutionResult
+                    tool_exec_result: ToolExecutionResult = self.tool_factory.dispatch_tool(
+                        func_name, func_args_str
+                    )
+                    # Append result content to history for the next LLM iteration
                     tool_results.append({
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": func_name,
-                        "content": result_str, # Result must be a JSON string
+                        "content": tool_exec_result.content, # Use the content for LLM
                     })
                     module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
+                    # Collect payload if action is needed
+                    if tool_exec_result.action_needed and tool_exec_result.payload is not None:
+                        collected_payloads.append(tool_exec_result.payload)
 
                 except ToolError as e:
                     # Log the tool error and potentially inform the model
@@ -268,16 +276,13 @@ class OpenAIProvider(BaseProvider):
             module_logger.debug(f"Completed tool iteration {iteration_count}. Current messages: {[m['role'] for m in current_messages]}")
 
         # --- Max Iterations Reached ---
-        module_logger.warning(
-            f"Max tool iterations ({max_tool_iterations}) reached without final assistant content."
-        )
-        # Try to return the last assistant message content, if any, before iterations ended
+        final_content = None
         for m in reversed(current_messages):
             if m.get("role") == 'assistant' and m.get("content"):
-                # Add warning that max iterations were hit
                 warning_msg = f"\n\n[Warning: Max tool iterations ({max_tool_iterations}) reached. Result might be incomplete.]"
-                return str(m.get("content", "")) + warning_msg
-        return None # Or raise an error indicating max iterations were hit without result
+                final_content = str(m.get("content", "")) + warning_msg
+                break
+        return final_content, collected_payloads
 
     async def generate_tool_intent(
         self,

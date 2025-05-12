@@ -1,10 +1,10 @@
 # llm_factory_toolkit/llm_factory_toolkit/client.py
 import json
 import logging
-from typing import Optional, List, Dict, Any, Type, Callable
+from typing import Optional, List, Dict, Tuple, Any, Type, Callable
 
 from .providers import create_provider_instance, BaseProvider
-from .tools.models import ToolIntentOutput
+from .tools.models import ToolIntentOutput, ToolExecutionResult
 from .tools.tool_factory import ToolFactory
 from .exceptions import ConfigurationError, LLMToolkitError, ProviderError, ToolError, UnsupportedFeatureError
 from pydantic import BaseModel # Import for type hinting
@@ -94,17 +94,16 @@ class LLMClient:
     async def generate(
         self,
         messages: List[Dict[str, Any]],
-        # Expose common generation parameters directly
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
-        # Allow provider-specific kwargs
         **kwargs: Any
-    ) -> Optional[str]:
+    ) -> Tuple[Optional[str], List[Any]]:
         """
-        Generates a response from the configured LLM provider based on the message history.
+        Generates a response from the configured LLM provider based on the message history,
+        potentially handling tool calls and returning deferred action payloads.
 
         Args:
             messages (List[Dict[str, Any]]): The conversation history.
@@ -122,7 +121,9 @@ class LLMClient:
                       (e.g., tool_choice, max_tool_iterations).
 
         Returns:
-            Optional[str]: The generated text content, or None on failure/timeout.
+            Tuple[Optional[str], List[Any]]:
+                - The generated text content (or None).
+                - A list of payloads from executed tools requiring deferred action.
 
         Raises:
             ProviderError: If the provider encounters an API error.
@@ -132,28 +133,24 @@ class LLMClient:
         """
         module_logger.debug(f"Client calling provider.generate. Model override: {model}, Use tools: {use_tools}")
 
-        # Prepare arguments for the provider's generate method
         provider_args = {
             "messages": messages,
-            "model": model, # Pass along model override
+            "model": model,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "response_format": response_format,
-            "use_tools": use_tools, # <-- PASS THE FILTER LIST
-            **kwargs # Pass through any other specific args like tool_choice
+            "use_tools": use_tools,
+            **kwargs
         }
-        # Filter out None values to avoid overriding provider defaults unintentionally
-        # Keep 'use_tools' even if None, as the provider expects it
         provider_args = {k: v for k, v in provider_args.items() if v is not None or k == 'use_tools'}
 
-
         try:
-            # Delegate the actual generation call to the provider instance
-            result = await self.provider.generate(**provider_args)
-            return result
+            # Delegate to the provider, which now returns a tuple
+            result_content, result_payloads = await self.provider.generate(**provider_args)
+            return result_content, result_payloads
         except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError) as e:
-            module_logger.error(f"Error during generation: {e}", exc_info=False) # Avoid excessive traceback for expected errors
-            raise # Re-raise specific toolkit errors
+            module_logger.error(f"Error during generation: {e}", exc_info=False)
+            raise
         except Exception as e:
             module_logger.error(f"An unexpected error occurred during generation: {e}", exc_info=True)
             raise LLMToolkitError(f"Unexpected generation error: {e}") from e
@@ -222,30 +219,28 @@ class LLMClient:
             raise LLMToolkitError(f"Unexpected tool intent generation error: {e}") from e
 
 
-    def execute_tool_intents( # Changed from a static/external function to an instance method
+    def execute_tool_intents(
         self,
         intent_output: ToolIntentOutput,
-        extract_result_key: Optional[str] = None,
+        # extract_result_key: Optional[str] = None, # Removed - No longer applicable/reliable
     ) -> List[Dict[str, Any]]:
         """
         Executes a list of tool call intents using the client's ToolFactory
-        and returns a list of formatted tool result messages.
+        and returns a list of formatted tool result messages *based on the content*.
+        This method performs immediate execution and does not handle deferred payloads.
 
         Args:
             intent_output: The ToolIntentOutput containing tool_calls from the planner.
 
         Returns:
             A list of tool result messages suitable for adding to an LLM conversation history.
-        
+
         Raises:
             ConfigurationError: If the client does not have a ToolFactory configured.
         """
         tool_result_messages: List[Dict[str, Any]] = []
 
-        if not self.tool_factory: # Use self.tool_factory
-            # This is a critical configuration issue if tools are intended.
-            # Raise an error rather than just logging and returning empty.
-            # Alternatively, the __init__ should ensure tool_factory is always present.
+        if not self.tool_factory:
             raise ConfigurationError("LLMClient has no ToolFactory configured, cannot execute tool intents.")
 
         if not intent_output.tool_calls:
@@ -254,61 +249,89 @@ class LLMClient:
 
         for tool_call in intent_output.tool_calls:
             tool_name = tool_call.name
-            tool_call_id = tool_call.id
+            tool_call_id = tool_call.id # Assuming ParsedToolCall always has an id
 
+            # --- Handle potential parsing errors from intent generation ---
+            if tool_call.arguments_parsing_error:
+                module_logger.error(
+                    f"Skipping execution of tool '{tool_name}' (ID: {tool_call_id}) due to previous "
+                    f"argument parsing error: {tool_call.arguments_parsing_error}. Raw Args: {tool_call.arguments}"
+                )
+                tool_result_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    # Provide error info back to the LLM
+                    "content": json.dumps({
+                        "error": f"Tool '{tool_name}' skipped due to argument parsing error during planning.",
+                        "details": tool_call.arguments_parsing_error,
+                        "received_arguments": tool_call.arguments # Send back what was received if it's a string
+                    }),
+                })
+                continue # Skip this tool call
+
+            # --- Prepare arguments for dispatch ---
+            # Ensure arguments are a dict before dumping. Default to empty dict if not
+            # (e.g., if parsing failed silently before or tool takes no args).
             args_to_dump = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-            tool_args_str = json.dumps(args_to_dump)
-            
-            module_logger.debug(f"Client executing tool: {tool_name} (ID: {tool_call_id}), args: {tool_args_str}")
-            
             try:
-                # Use self.tool_factory
-                result_str = self.tool_factory.dispatch_tool(tool_name, tool_args_str)
+                # Ensure it's serializable JSON args for dispatch_tool
+                tool_args_str = json.dumps(args_to_dump)
+            except TypeError as e:
+                 module_logger.error(f"Failed to serialize arguments for tool '{tool_name}' (ID: {tool_call_id}): {e}. Arguments: {args_to_dump}", exc_info=True)
+                 tool_result_messages.append({
+                     "role": "tool", "tool_call_id": tool_call_id, "name": tool_name,
+                     "content": json.dumps({"error": f"Internal error: Failed to serialize arguments for tool '{tool_name}'."}),
+                 })
+                 continue # Skip this tool
 
-                # Extracts argument from tool result (assuming its json formatted)
-                if extract_result_key:
-                    result_json = json.loads(result_str)
-                    result_str = result_json[extract_result_key]
+            module_logger.debug(f"Client executing tool: {tool_name} (ID: {tool_call_id}), args: {tool_args_str}")
 
+            # --- Dispatch the tool and format the result ---
+            try:
+                # dispatch_tool now returns ToolExecutionResult
+                tool_exec_result: ToolExecutionResult = self.tool_factory.dispatch_tool(
+                    tool_name, tool_args_str
+                )
+
+                # Extract the string content intended for the LLM history
+                # This handles both successful results and errors packaged by dispatch_tool
+                result_content_for_llm = tool_exec_result.content
+
+                # Log if the tool reported an error internally during its execution
+                if tool_exec_result.error:
+                    module_logger.error(
+                        f"Tool '{tool_name}' (ID: {tool_call_id}) reported an error during execution: "
+                        f"{tool_exec_result.error}. LLM content: {result_content_for_llm}"
+                    )
+                else:
+                    module_logger.debug(
+                        f"Tool {tool_name} (ID: {tool_call_id}) executed. LLM content: {result_content_for_llm}"
+                    )
+
+                # Append the message with the STRING content
                 tool_result_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "name": tool_name,
-                    "content": result_str,
+                    "content": result_content_for_llm,
                 })
-                module_logger.debug(f"Tool {tool_name} (ID: {tool_call_id}) executed successfully. Result: {result_str}")
-            except json.JSONDecodeError as jde:
-                # The raw_json_result_str itself was not valid JSON
-                module_logger.error(f"Tool {tool_name}: Tool result was not valid JSON, cannot extract key. Raw output: {result_str}")
-                tool_result_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                    "content": json.dumps({"error": f"Tool {tool_name}: Tool result was not valid JSON, cannot extract key. Error: {jde}"})
-                })
-            except KeyError as ke:
-                # Invalid key
-                module_logger.error(f"Tool {tool_name}: Invalid key '{extract_result_key}'. Raw output: {result_json}")
-                tool_result_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                    "content": json.dumps({"error": f"Tool {tool_name}: Tool result was not valid JSON, cannot extract key. Error: {ke}"})
-                })   
-            except ToolError as te: # Catch specific ToolError from dispatch_tool
-                module_logger.error(f"ToolError executing tool {tool_name} (ID: {tool_call_id}): {te}", exc_info=True)
-                tool_result_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": tool_name,
-                    "content": json.dumps({"error": str(te), "tool_error_details": te.to_dict() if hasattr(te, 'to_dict') else str(te)}),
-                })
+
             except Exception as e:
-                module_logger.error(f"Unexpected error executing tool {tool_name} (ID: {tool_call_id}): {e}", exc_info=True)
+                # Catch unexpected errors during the dispatch call itself or result handling
+                module_logger.error(
+                    f"Unexpected client-side error during dispatch/handling for tool {tool_name} "
+                    f"(ID: {tool_call_id}): {e}", exc_info=True
+                )
                 tool_result_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "name": tool_name,
-                    "content": json.dumps({"error": f"Tool execution failed unexpectedly: {str(e)}"}),
+                    "content": json.dumps({
+                        "error": f"Unexpected client-side error executing tool '{tool_name}'.",
+                        "details": str(e) # Include error details
+                    }),
                 })
+                # Continue processing other tools unless the error is critical
+
         return tool_result_messages

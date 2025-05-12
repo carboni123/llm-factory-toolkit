@@ -98,7 +98,7 @@ async def test_openai_tool_call():
 
         # 4. Make the API call using the client, allowing tool iterations
         print("Calling client.generate (tool use expected)...")
-        response_content = await client.generate(
+        response_content, _ = await client.generate(
             messages=messages,
             model=TEST_MODEL, # Explicitly use a model known for tool use
             temperature=0.1, # Low temp for predictable tool use and response

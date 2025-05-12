@@ -1,9 +1,10 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/tool_factory.py
 import json
 import logging
-from typing import List, Dict, Any, Callable, Optional # Added Optional
+from typing import List, Dict, Any, Callable, Optional
 
-from ..exceptions import ToolError # Use custom exception
+from .models import ToolExecutionResult
+from ..exceptions import ToolError
 
 module_logger = logging.getLogger(__name__)
 
@@ -88,41 +89,76 @@ class ToolFactory:
             module_logger.debug(f"Returning filtered tool definitions for names: {list(found_names)}")
             return filtered_definitions
 
-    def dispatch_tool(self, function_name: str, function_args_str: str) -> str:
+    def dispatch_tool(self, function_name: str, function_args_str: str) -> ToolExecutionResult: # <--- Changed return type hint
         """
-        Executes the appropriate tool function based on the name and arguments.
-        (No changes needed here for filtering)
+        Executes the appropriate tool function based on the name and arguments,
+        returning a structured ToolExecutionResult.
         """
         if function_name not in self.tools:
-            raise ToolError(f"Tool '{function_name}' not found.")
+            error_msg = f"Tool '{function_name}' not found."
+            # Return error structure instead of raising ToolError immediately
+            return ToolExecutionResult(
+                content=json.dumps({"error": error_msg}),
+                error=error_msg
+            )
 
         try:
             arguments = json.loads(function_args_str)
             if not isinstance(arguments, dict):
                  raise TypeError(f"Expected JSON object (dict) for arguments of tool '{function_name}', but got {type(arguments)}")
         except json.JSONDecodeError as e:
-            raise ToolError(f"Failed to decode JSON arguments for tool '{function_name}': {e}")
+            error_msg = f"Failed to decode JSON arguments for tool '{function_name}': {e}"
+            module_logger.error(error_msg)
+            return ToolExecutionResult(
+                content=json.dumps({"error": error_msg}),
+                error=error_msg
+            )
         except TypeError as e:
-             raise ToolError(str(e)) # Forward type error message
+             error_msg = str(e)
+             module_logger.error(f"Argument type error for tool '{function_name}': {error_msg}")
+             return ToolExecutionResult(
+                content=json.dumps({"error": error_msg}),
+                error=error_msg
+            )
 
         tool_function = self.tools[function_name]
 
         try:
             module_logger.debug(f"Executing tool '{function_name}' with args: {arguments}")
-            result = tool_function(**arguments)
+            # --- Assume the tool function NOW RETURNS ToolExecutionResult ---
+            # This is a key change: the registered function must adhere to this contract.
+            # If it still returns raw data, you'd wrap it here.
+            # For now, assume it returns the correct structure.
+            result: ToolExecutionResult = tool_function(**arguments)
+
+            # Validate the result type (optional but good practice)
+            if not isinstance(result, ToolExecutionResult):
+                 # Handle cases where the tool function didn't return the expected structure
+                 module_logger.error(f"Tool function '{function_name}' did not return a ToolExecutionResult object. Returned: {type(result)}")
+                 # Attempt to serialize the unexpected result for the LLM, mark error
+                 try:
+                     llm_content = json.dumps({"result": result, "warning": "Tool returned unexpected format."})
+                 except TypeError:
+                     llm_content = json.dumps({"error": f"Tool returned non-serializable, unexpected format: {type(result)}"})
+
+                 return ToolExecutionResult(
+                    content=llm_content,
+                    error=f"Tool function '{function_name}' returned unexpected type: {type(result)}."
+                 )
+
+            module_logger.debug(f"Tool '{function_name}' executed. LLM Content: {result.content}, ActionNeeded: {result.action_needed}")
+            return result
+
         except Exception as e:
-            module_logger.error(f"Error executing tool '{function_name}': {e}", exc_info=True)
-            raise ToolError(f"Execution failed for tool '{function_name}': {e}")
+            # Catch errors raised *during* the tool_function execution if it doesn't handle them
+            error_msg = f"Execution failed unexpectedly within tool '{function_name}': {e}"
+            module_logger.exception(f"Error during tool execution for {function_name}") # Log with stack trace
+            # Return error structure
+            return ToolExecutionResult(
+                content=json.dumps({"error": error_msg}),
+                error=error_msg
+            )
 
-        try:
-            result_str = json.dumps(result)
-            module_logger.debug(f"Tool '{function_name}' executed successfully. Result: {result_str}")
-            return result_str
-        except TypeError as e:
-            module_logger.error(f"Failed to serialize result for tool '{function_name}': {e}", exc_info=True)
-            raise ToolError(f"Result of tool '{function_name}' is not JSON serializable: {e}")
-
-    # Optional: Add a property to get all registered tool names
     @property
     def available_tool_names(self) -> List[str]:
         """Returns a list of all registered tool names."""

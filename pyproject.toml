@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm_factory_toolkit"
-version = "0.1.2"
+version = "0.2.0"
 authors = [
   { name="Diego Carboni", email="carboni123@hotmail.com" },
 ]
