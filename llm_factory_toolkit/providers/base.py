@@ -32,7 +32,7 @@ class BaseProvider(ABC):
             try:
                 self.api_key = self._load_api_key_from_file(api_key)
             except (FileNotFoundError, ValueError) as e:
-                 raise ConfigurationError(f"Error loading API key from file '{api_key}': {e}")
+                raise ConfigurationError(f"Error loading API key from file '{api_key}': {e}")
 
         # 2. If an api_key is provided but not a file path, assume it's the key itself.
         elif api_key:
@@ -43,15 +43,14 @@ class BaseProvider(ABC):
             try:
                 self.api_key = self._load_api_key_from_env(api_env_var)
             except ValueError as e:
-                 # Don't raise immediately, maybe a subclass has another way
-                 pass # Or log a warning: print(f"Warning: {e}")
+                # Don't raise immediately, maybe a subclass has another way
+                pass # Or log a warning: print(f"Warning: {e}")
 
         # Subclasses might have default keys or other mechanisms.
         # It's up to the subclass to raise an error if the key is ultimately missing and required.
         # Example check in subclass __init__ after super().__init__():
         # if not self.api_key:
         #     raise ConfigurationError("API key is required for this provider and was not found.")
-
 
     def _load_api_key_from_file(self, key_path: str) -> str:
         """Loads the key from a file."""
@@ -76,24 +75,30 @@ class BaseProvider(ABC):
             load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
         except Exception as e:
             # Log warning, but don't fail if .env is missing/unreadable
-             print(f"Warning: Could not load .env file: {e}")
+            print(f"Warning: Could not load .env file: {e}")
 
         api_key = os.environ.get(api_env_var)
         if not api_key:
-             # Let the caller handle raising ConfigurationError
+            # Let the caller handle raising ConfigurationError
             raise ValueError(f"Environment variable '{api_env_var}' not found or is empty.")
         return api_key
 
     @abstractmethod
-    async def generate(self, messages: list[dict[str, any]], **kwargs) -> Tuple[Optional[str], List[Any]]:
+    async def generate(
+        self,
+        messages: list[dict[str, any]],
+        tool_execution_context: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Tuple[Optional[str], List[Any]]:
         """
         Abstract method to generate text based on a list of messages,
         potentially handling tool calls and returning deferred action payloads.
-
+        The tool_execution_context is passed to the ToolFactory for injection.
+        
         Returns:
-             Tuple[Optional[str], List[Any]]:
-                 - The generated text content (or None).
-                 - A list of payloads from executed tools requiring deferred action.
+        Tuple[Optional[str], List[Any]]:
+            - The generated text content (or None).
+            - A list of payloads from executed tools requiring deferred action.
         """
         pass
 

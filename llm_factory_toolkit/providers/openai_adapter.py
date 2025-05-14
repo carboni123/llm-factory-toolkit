@@ -75,6 +75,7 @@ class OpenAIProvider(BaseProvider):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         use_tools: Optional[List[str]] = [],
+        tool_execution_context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Tuple[Optional[str], List[Any]]:
         """
@@ -172,7 +173,6 @@ class OpenAIProvider(BaseProvider):
                 module_logger.error(f"Unexpected error during OpenAI API call: {e}", exc_info=True)
                 raise ProviderError(f"Unexpected API error: {e}")
 
-
             # --- Process Response ---
             response_message = completion.choices[0].message
             # Convert Pydantic model to dict for consistent message history handling
@@ -232,8 +232,12 @@ class OpenAIProvider(BaseProvider):
 
                 try:
                     # Dispatch tool using the factory; It now returns ToolExecutionResult
-                    tool_exec_result: ToolExecutionResult = self.tool_factory.dispatch_tool(
-                        func_name, func_args_str
+                    tool_exec_result: ToolExecutionResult = (
+                        self.tool_factory.dispatch_tool(
+                            func_name,
+                            func_args_str,
+                            tool_execution_context=tool_execution_context,
+                        )
                     )
                     # Append result content to history for the next LLM iteration
                     tool_results.append({
@@ -311,8 +315,7 @@ class OpenAIProvider(BaseProvider):
                     "json_schema": { "name": response_format.__name__, "schema": clean_schema },
                 }
             elif isinstance(response_format, dict):
-                 api_call_args["response_format"] = response_format
-
+                api_call_args["response_format"] = response_format
 
         if temperature is not None: api_call_args["temperature"] = temperature
         if max_tokens is not None: api_call_args["max_tokens"] = max_tokens
@@ -353,7 +356,7 @@ class OpenAIProvider(BaseProvider):
 
         response_message = completion.choices[0].message
         raw_assistant_msg_dict = response_message.model_dump(exclude_unset=True)
-        
+
         parsed_tool_calls_list: List[ParsedToolCall] = []
         if response_message.tool_calls:
             module_logger.info(f"Tool call intents received: {len(response_message.tool_calls)}")
@@ -361,7 +364,7 @@ class OpenAIProvider(BaseProvider):
                 if tc.type == "function" and tc.function:
                     func_name = tc.function.name
                     args_str = tc.function.arguments # This is a JSON string
-                    
+
                     args_dict_or_str: Union[Dict[str, Any], str]
                     parsing_error: Optional[str] = None
 
@@ -386,7 +389,7 @@ class OpenAIProvider(BaseProvider):
                             f"Failed to parse arguments for tool intent '{func_name}'. ID: {tc.id}. "
                             f"Error: {parsing_error}. Raw args: '{args_str}'"
                         )
-                    
+
                     parsed_tool_calls_list.append(
                         ParsedToolCall(
                             id=tc.id,
@@ -397,13 +400,13 @@ class OpenAIProvider(BaseProvider):
                     )
                 else:
                     module_logger.warning(f"Skipping unexpected tool call type or format in intent: {tc.model_dump_json()}")
-        
+
         return ToolIntentOutput(
             content=response_message.content, # This can be non-empty even with tool_calls
             tool_calls=parsed_tool_calls_list if parsed_tool_calls_list else None,
             raw_assistant_message=raw_assistant_msg_dict
         )
-    
+
     @staticmethod
     def _prune_openai_schema(schema: dict) -> dict:
         """
