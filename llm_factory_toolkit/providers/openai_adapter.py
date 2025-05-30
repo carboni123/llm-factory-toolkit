@@ -81,6 +81,7 @@ class OpenAIProvider(BaseProvider):
         """
         Generates text using the OpenAI API, handling tool calls iteratively,
         supporting tool filtering, and Pydantic response formatting.
+        Tool usage counts are updated in the provided ToolFactory instance.
 
         Args:
             messages: List of message dictionaries.
@@ -91,6 +92,7 @@ class OpenAIProvider(BaseProvider):
             max_tokens: Max tokens to generate.
             use_tools (Optional[List[str]]): List of tool names to make available for this call.
                                              If None, uses all tools from the factory. If [], uses none.
+            tool_execution_context: Context to be injected into tool calls.
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
@@ -166,16 +168,14 @@ class OpenAIProvider(BaseProvider):
                 raise ProviderError(f"API operation timed out: {e}")
             except BadRequestError as e:
                 module_logger.error(f"OpenAI API bad request: {e}")
-                # Log request details that might be helpful (avoid logging sensitive data like full messages in production)
                 module_logger.error(f"Request details: Model={active_model}, NumMessages={len(current_messages)}, Args={ {k:v for k,v in request_payload.items() if k != 'messages'} }")
-                raise ProviderError(f"API bad request: {e}") # Provide more context if possible
-            except Exception as e: # Catch unexpected errors
+                raise ProviderError(f"API bad request: {e}")
+            except Exception as e: 
                 module_logger.error(f"Unexpected error during OpenAI API call: {e}", exc_info=True)
                 raise ProviderError(f"Unexpected API error: {e}")
 
             # --- Process Response ---
             response_message = completion.choices[0].message
-            # Convert Pydantic model to dict for consistent message history handling
             response_message_dict = response_message.model_dump(exclude_unset=True)
             current_messages.append(response_message_dict)
 
@@ -217,11 +217,12 @@ class OpenAIProvider(BaseProvider):
                 func_name = call.function.name
                 func_args_str = call.function.arguments
                 call_id = call.id
+                
+                if func_name and self.tool_factory: # Ensure func_name and factory exist
+                    self.tool_factory.increment_tool_usage(func_name) # Increment count in factory
 
                 if not (func_name and func_args_str and call_id):
-                    # Should not happen with valid API responses, but check defensively
                     module_logger.error(f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}")
-                    # Append an error message back to the model?
                     tool_results.append({
                         "role": "tool",
                         "tool_call_id": call_id or "unknown",
@@ -231,7 +232,6 @@ class OpenAIProvider(BaseProvider):
                     continue
 
                 try:
-                    # Dispatch tool using the factory; It now returns ToolExecutionResult
                     tool_exec_result: ToolExecutionResult = (
                         self.tool_factory.dispatch_tool(
                             func_name,
@@ -239,15 +239,13 @@ class OpenAIProvider(BaseProvider):
                             tool_execution_context=tool_execution_context,
                         )
                     )
-                    # Append result content to history for the next LLM iteration
                     tool_results.append({
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": func_name,
-                        "content": tool_exec_result.content, # Use the content for LLM
+                        "content": tool_exec_result.content, 
                     })
                     module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
-                    # Collect payload if action is needed
                     if tool_exec_result.action_needed:
                         payload = {
                             "tool_name": func_name,
@@ -256,19 +254,14 @@ class OpenAIProvider(BaseProvider):
                         collected_payloads.append(payload)
 
                 except ToolError as e:
-                    # Log the tool error and potentially inform the model
                     module_logger.error(f"Error processing tool call {call_id} ({func_name}): {e}")
-                    # Append an error message back to the model
                     tool_results.append({
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": func_name,
-                        "content": json.dumps({"error": str(e)}), # Provide error message back to the LLM
+                        "content": json.dumps({"error": str(e)}), 
                     })
-                    # Optionally re-raise the ToolError if you want to halt execution immediately
-                    # raise e
                 except Exception as e:
-                    # Catch unexpected errors during dispatch/append phase
                     module_logger.error(f"Unexpected error handling tool call {call_id} ({func_name}): {e}", exc_info=True)
                     tool_results.append({
                         "role": "tool",
@@ -276,9 +269,7 @@ class OpenAIProvider(BaseProvider):
                         "name": func_name,
                         "content": json.dumps({"error": f"Unexpected client-side error handling tool: {e}"}),
                      })
-                    # raise ToolError(f"Unexpected error handling tool call {func_name}: {e}")
 
-            # Add all tool results to the message history for the next iteration
             current_messages.extend(tool_results)
             iteration_count += 1
             module_logger.debug(f"Completed tool iteration {iteration_count}. Current messages: {[m['role'] for m in current_messages]}")
@@ -324,7 +315,7 @@ class OpenAIProvider(BaseProvider):
 
         # --- Tool Configuration (using refactored logic) ---
         tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(use_tools, kwargs)
-        if tools_for_payload is not None: # Can be an empty list []
+        if tools_for_payload is not None: 
             request_payload["tools"] = tools_for_payload
         if tool_choice_for_payload is not None:
             request_payload["tool_choice"] = tool_choice_for_payload
@@ -337,7 +328,7 @@ class OpenAIProvider(BaseProvider):
         except asyncio.TimeoutError:
             module_logger.error(f"OpenAI API request (intent) timed out after {self.timeout} seconds.")
             raise ProviderError("API request for intent timed out")
-        except APIConnectionError as e: # (copy other error handling types from generate)
+        except APIConnectionError as e: 
             module_logger.error(f"OpenAI API connection error (intent): {e}")
             raise ProviderError(f"API connection error (intent): {e}")
         except RateLimitError as e:
@@ -363,13 +354,18 @@ class OpenAIProvider(BaseProvider):
             for tc in response_message.tool_calls:
                 if tc.type == "function" and tc.function:
                     func_name = tc.function.name
-                    args_str = tc.function.arguments # This is a JSON string
+                    args_str = tc.function.arguments 
+
+                    # Increment tool usage in the factory if generating intents also counts
+                    # This might be debatable: should generate_tool_intent also increment counts?
+                    # For now, let's assume yes, as it reflects an LLM "intent" to use the tool.
+                    if func_name and self.tool_factory:
+                        self.tool_factory.increment_tool_usage(func_name)
 
                     args_dict_or_str: Union[Dict[str, Any], str]
                     parsing_error: Optional[str] = None
 
                     try:
-                        # Ensure args_str is not None before parsing, default to "{}" for no-arg functions if OpenAI sends null/empty
                         actual_args_to_parse = args_str if args_str is not None else "{}"
                         parsed_args = json.loads(actual_args_to_parse)
                         if not isinstance(parsed_args, dict):
@@ -379,10 +375,10 @@ class OpenAIProvider(BaseProvider):
                             args_dict_or_str = parsed_args
                     except json.JSONDecodeError as e:
                         parsing_error = f"JSONDecodeError: {str(e)}"
-                        args_dict_or_str = args_str # Store raw string on error
-                    except TypeError as e: # e.g. if args_str is not a string (should not happen from OpenAI)
+                        args_dict_or_str = args_str 
+                    except TypeError as e: 
                         parsing_error = f"TypeError processing arguments: {str(e)}"
-                        args_dict_or_str = str(args_str) # Store string representation
+                        args_dict_or_str = str(args_str) 
 
                     if parsing_error:
                         module_logger.warning(
@@ -402,7 +398,7 @@ class OpenAIProvider(BaseProvider):
                     module_logger.warning(f"Skipping unexpected tool call type or format in intent: {tc.model_dump_json()}")
 
         return ToolIntentOutput(
-            content=response_message.content, # This can be non-empty even with tool_calls
+            content=response_message.content, 
             tool_calls=parsed_tool_calls_list if parsed_tool_calls_list else None,
             raw_assistant_message=raw_assistant_msg_dict
         )
@@ -428,35 +424,24 @@ class OpenAIProvider(BaseProvider):
             "enum",
             "description",
             "format",
-            # Add others if confirmed supported by the specific OpenAI model/feature
         }
-
         def _prune(node: Any) -> Any:
             if isinstance(node, dict):
-                # Prune unsupported keys at the current level
                 keys_to_remove = [key for key in node if key not in ALLOWED_KEYS]
                 if keys_to_remove:
-                    # module_logger.debug(f"Pruning keys: {keys_to_remove} from schema node")
                     for key in keys_to_remove:
                         del node[key]
-
-                # Recursively prune nested structures
                 if "properties" in node and isinstance(node["properties"], dict):
                     for prop_key in list(node["properties"].keys()):
                         node["properties"][prop_key] = _prune(node["properties"][prop_key])
-
-                if "items" in node: # Could be dict (schema) or list (tuple validation)
+                if "items" in node: 
                     node["items"] = _prune(node["items"])
-
                 return node
             elif isinstance(node, list):
-                # Prune items within a list (e.g., for enum or tuple validation)
                 return [_prune(item) for item in node]
             else:
-                # Return primitive types as is
                 return node
-
-        pruned_schema = _prune(schema.copy()) # Work on a copy
+        pruned_schema = _prune(schema.copy()) 
         return pruned_schema
 
     def _prepare_tool_payload(
@@ -469,34 +454,24 @@ class OpenAIProvider(BaseProvider):
         Returns a tuple: (tool_definitions_for_payload, effective_tool_choice_for_payload)
         """
         final_tool_definitions = []
-        # Determine effective_tool_choice, potentially modifying it based on use_tools
-        # User's explicit tool_choice in kwargs takes precedence.
         effective_tool_choice = existing_kwargs.get("tool_choice")
 
-        if use_tools == []:  # Explicitly no tools for this call
+        if use_tools == []:  
             if self.tool_factory:
-                # OpenAI expects "tools": [] to signal no tools if tools could have been available.
-                final_tool_definitions = [] # Mark to send "tools": []
+                final_tool_definitions = [] 
                 if effective_tool_choice is None or effective_tool_choice == "auto":
                     effective_tool_choice = "none"
-            # If no tool_factory, final_tool_definitions remains empty (no "tools" key sent later)
-            # and effective_tool_choice is as per user or None.
-        elif self.tool_factory:  # use_tools is None (all available) or a list of names
-            # get_tool_definitions handles None (all) or list (filtered)
+        elif self.tool_factory:  
             definitions = self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
             if definitions:
                 final_tool_definitions = definitions
             elif (effective_tool_choice is None or effective_tool_choice == "auto"):
-                # No tools available/selected from factory, and choice is auto, so effectively "none"
-                effective_tool_choice = "none"
-        # If no tool_factory and use_tools is not [], final_tool_definitions remains empty,
-        # and effective_tool_choice is as per user or None.
-
-        # Determine what to return for the payload
+                 effective_tool_choice = "none"
+        
         tools_payload = None
-        if final_tool_definitions: # If there are actual definitions to send
+        if final_tool_definitions: 
             tools_payload = final_tool_definitions
-        elif use_tools == [] and self.tool_factory: # Case: explicit no tools with a factory present
-            tools_payload = [] # Send "tools": []
+        elif use_tools == [] and self.tool_factory: 
+            tools_payload = [] 
 
         return tools_payload, effective_tool_choice

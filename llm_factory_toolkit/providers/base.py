@@ -94,6 +94,7 @@ class BaseProvider(ABC):
         Abstract method to generate text based on a list of messages,
         potentially handling tool calls and returning deferred action payloads.
         The tool_execution_context is passed to the ToolFactory for injection.
+        Tool usage counts are updated within the ToolFactory instance if one is used.
         
         Returns:
         Tuple[Optional[str], List[Any]]:
@@ -107,7 +108,7 @@ class BaseProvider(ABC):
         self,
         messages: List[Dict[str, Any]],
         model: Optional[str] = None,
-        use_tools: Optional[List[str]] = [], # None for all, [] for none, list of names for specific
+        use_tools: Optional[List[str]] = [], 
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
@@ -116,6 +117,7 @@ class BaseProvider(ABC):
         """
         Generates a response from the LLM, prioritizing the detection of tool call intents
         without executing them.
+        Tool usage counts may be updated in the ToolFactory instance if one is used.
 
         Args:
             messages: List of message dictionaries.
