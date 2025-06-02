@@ -82,7 +82,6 @@ class GetUserPasswordTool:
             return ToolExecutionResult(
                 content=json.dumps({"status": "success", "user_id": user_id, "password_snippet": password[:3] + "***"}), # Content for LLM
                 payload={"password": password, "user_id": user_id, "message": result_message}, # Actual password in payload
-                action_needed=True
             )
         else:
             error_message = f"Password for user '{user_id}' not found."

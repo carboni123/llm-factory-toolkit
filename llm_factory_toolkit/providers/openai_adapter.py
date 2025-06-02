@@ -246,12 +246,14 @@ class OpenAIProvider(BaseProvider):
                         "content": tool_exec_result.content, 
                     })
                     module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
-                    if tool_exec_result.action_needed:
-                        payload = {
-                            "tool_name": func_name,
-                            "payload": tool_exec_result.payload
-                        }
-                        collected_payloads.append(payload)
+                    
+                    payload: Dict[str, Any] = {
+                        "tool_name": func_name,
+                        "metadata": tool_exec_result.metadata or {},
+                    }
+                    if tool_exec_result.payload is not None:
+                        payload["payload"] = tool_exec_result.payload                        
+                    collected_payloads.append(payload)
 
                 except ToolError as e:
                     module_logger.error(f"Error processing tool call {call_id} ({func_name}): {e}")

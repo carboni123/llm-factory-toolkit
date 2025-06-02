@@ -50,7 +50,6 @@ def mock_get_secret_part_1(retrieval_source: str) -> dict:
     return ToolExecutionResult(
         content=json.dumps(result), # String content for LLM history
         payload=result,                     # Optional: Pass raw data if needed elsewhere
-        action_needed=False                 # No deferred action for this mock
     )
 
 MOCK_TOOL_PARAMS_1 = {
@@ -73,7 +72,6 @@ def mock_get_secret_part_2(key_identifier: str) -> dict:
     return ToolExecutionResult(
         content=json.dumps(result),
         payload=result,   
-        action_needed=False
     )
 
 MOCK_TOOL_PARAMS_2 = {
@@ -96,7 +94,6 @@ def mock_get_secret_part_3(vault_name: str) -> dict:
     return ToolExecutionResult(
         content=json.dumps(result),
         payload=result,   
-        action_needed=False
     )
 
 MOCK_TOOL_PARAMS_3 = {

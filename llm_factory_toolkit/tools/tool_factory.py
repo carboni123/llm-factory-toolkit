@@ -201,7 +201,7 @@ class ToolFactory:
                     error=f"Tool function '{function_name}' returned unexpected type: {type(result)}.",
                 )
             module_logger.debug(
-                f"Tool '{function_name}' executed. LLM Content: {result.content}, ActionNeeded: {result.action_needed}"
+                f"Tool '{function_name}' executed. LLM Content: {result.content}"
             )
             return result
         except Exception as e:

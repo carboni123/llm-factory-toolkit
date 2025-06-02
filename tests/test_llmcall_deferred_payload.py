@@ -55,7 +55,6 @@ def mock_get_secret_part_1_payload(retrieval_source: str) -> ToolExecutionResult
     return ToolExecutionResult(
         content=content_llm,
         payload=payload_data,
-        action_needed=True # Signal that the payload needs processing
     )
 MOCK_TOOL_PARAMS_1 = { "type": "object", "properties": {"retrieval_source": {"type": "string"}}, "required": ["retrieval_source"],}
 MOCK_TOOL_DESC_1 = "Gets the FIRST part of the secret code."
@@ -72,7 +71,6 @@ def mock_get_secret_part_2_payload(key_identifier: str) -> ToolExecutionResult:
     return ToolExecutionResult(
         content=content_llm,
         payload=payload_data,
-        action_needed=True
     )
 MOCK_TOOL_PARAMS_2 = { "type": "object", "properties": {"key_identifier": {"type": "string"}}, "required": ["key_identifier"],}
 MOCK_TOOL_DESC_2 = "Gets the SECOND part of the secret code."
@@ -89,7 +87,6 @@ def mock_get_secret_part_3_payload(vault_name: str) -> ToolExecutionResult:
     return ToolExecutionResult(
         content=content_llm,
         payload=payload_data,
-        action_needed=True
     )
 MOCK_TOOL_PARAMS_3 = { "type": "object", "properties": {"vault_name": {"type": "string"}}, "required": ["vault_name"],}
 MOCK_TOOL_DESC_3 = "Gets the THIRD part of the secret code."
