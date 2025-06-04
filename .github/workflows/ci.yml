@@ -4,20 +4,23 @@ name: LLM Toolkit CI
 on:
   push:
     branches:
-      - main # Or your primary development branch
+      - master
   pull_request:
     branches:
-      - main # Or your primary development branch
+      - master
   workflow_dispatch: # Allows manual triggering
 
 jobs:
   test:
     name: Run Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    environment: production
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     strategy:
-      fail-fast: false # Allow other Python versions to complete even if one fails
+      fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12'] # Test across supported Python versions
+        python-version: ['3.12'] #['3.9', '3.10', '3.11', '3.12'] # Test across supported Python versions
 
     steps:
       - name: Checkout code
@@ -41,14 +44,6 @@ jobs:
           # pip install pytest pytest-asyncio
 
       - name: Run tests
-        # IMPORTANT: Your integration tests require OPENAI_API_KEY.
-        # You MUST configure this as a repository secret in GitHub settings.
-        # Settings -> Secrets and variables -> Actions -> New repository secret
-        # Name: OPENAI_API_KEY
-        # Value: sk-...your_key...
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Add other secrets/env vars needed by tests here
         run: |
           # Check if the secret is set - skip integration tests if not (e.g., for forks)
           # Modify this logic if you ALWAYS want tests to fail if the key is missing.
