@@ -108,7 +108,7 @@ class BaseProvider(ABC):
         self,
         messages: List[Dict[str, Any]],
         model: Optional[str] = None,
-        use_tools: Optional[List[str]] = [], 
+        use_tools: Optional[List[str]] = [],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
@@ -122,10 +122,9 @@ class BaseProvider(ABC):
         Args:
             messages: List of message dictionaries.
             model: Specific model override.
-            use_tools: List of tool names to make available.
-                       None: all tools from factory.
-                       []: no tools.
-                       List[str]: specific tools.
+            use_tools: List of tool names to make available. Defaults to ``[]``
+                       (all registered tools). Passing ``None`` disables tools.
+                       Providing a non-empty list restricts to specific tools.
             temperature: Sampling temperature.
             max_tokens: Max tokens to generate.
             response_format: Desired response format if LLM replies directly.

@@ -91,7 +91,9 @@ class OpenAIProvider(BaseProvider):
             temperature: Sampling temperature.
             max_tokens: Max tokens to generate.
             use_tools (Optional[List[str]]): List of tool names to make available for this call.
-                                             If None, uses all tools from the factory. If [], uses none.
+                                             Defaults to ``[]`` which exposes all registered tools.
+                                             Passing ``None`` disables tool usage. A non-empty list
+                                             restricts to the specified tools.
             tool_execution_context: Context to be injected into tool calls.
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
@@ -137,16 +139,17 @@ class OpenAIProvider(BaseProvider):
             # --- Add Tools (Filtered) ---
             tools = []
             if self.tool_factory:
-                # If the user passed a non‐empty list, filter down to those names;
-                # otherwise load *all* registered tools.
+                # Determine which tools to expose based on the use_tools argument
                 if use_tools is None:
-                    tools = []
-                elif use_tools:
-                    tools = self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
-                else:
+                    # None explicitly disables tools
+                    if request_payload.get("tool_choice", "auto") == "auto":
+                        request_payload["tool_choice"] = "none"
+                elif use_tools == []:
                     tools = self.tool_factory.get_tool_definitions()
+                else:
+                    tools = self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
 
-            if tools:
+            if tools or use_tools is None:
                 request_payload["tools"] = tools
             # --- API Call ---
             try:
@@ -458,22 +461,24 @@ class OpenAIProvider(BaseProvider):
         final_tool_definitions = []
         effective_tool_choice = existing_kwargs.get("tool_choice")
 
-        if use_tools == []:  
-            if self.tool_factory:
-                final_tool_definitions = [] 
-                if effective_tool_choice is None or effective_tool_choice == "auto":
-                    effective_tool_choice = "none"
-        elif self.tool_factory:  
-            definitions = self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
+        if use_tools is None:
+            # Explicitly disable all tools
+            if self.tool_factory and (effective_tool_choice is None or effective_tool_choice == "auto"):
+                effective_tool_choice = "none"
+        elif self.tool_factory:
+            if use_tools == []:
+                definitions = self.tool_factory.get_tool_definitions()
+            else:
+                definitions = self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
             if definitions:
                 final_tool_definitions = definitions
-            elif (effective_tool_choice is None or effective_tool_choice == "auto"):
-                 effective_tool_choice = "none"
+            elif effective_tool_choice is None or effective_tool_choice == "auto":
+                effective_tool_choice = "none"
         
         tools_payload = None
-        if final_tool_definitions: 
+        if final_tool_definitions:
             tools_payload = final_tool_definitions
-        elif use_tools == [] and self.tool_factory: 
-            tools_payload = [] 
+        elif use_tools is None:
+            tools_payload = []
 
         return tools_payload, effective_tool_choice

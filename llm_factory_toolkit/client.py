@@ -113,10 +113,10 @@ class LLMClient:
             response_format (Dict | Type[BaseModel], optional): Desired response format (e.g., JSON).
                                                                 Accepts dict or Pydantic model.
             use_tools (Optional[List[str]]): A list of tool names to make available for this
-                                             specific call. If None (default), all registered tools
-                                             in the ToolFactory are potentially available.
-                                             If an empty list `[]` is passed, no tools will be
-                                             made available for this call, even if registered.
+                                             specific call. Defaults to `[]`, which exposes all
+                                             registered tools. Passing ``None`` disables tool
+                                             usage entirely. Providing a non-empty list restricts
+                                             the available tools to those names.
             **kwargs: Additional arguments passed directly to the provider's generate method
                       (e.g., tool_choice, max_tool_iterations).
 
@@ -182,10 +182,10 @@ class LLMClient:
             temperature: Sampling temperature.
             max_tokens: Max tokens to generate.
             response_format: Desired response format if the LLM replies directly.
-            use_tools: List of tool names to make available.
-                       None: all tools from factory.
-                       []: no tools for this call.
-                       List[str]: specific tools.
+            use_tools: List of tool names to make available. Defaults to ``[]``
+                       which exposes all registered tools. Pass ``None`` to
+                       disable tool usage or provide a non-empty list of names
+                       to restrict the available tools.
             **kwargs: Additional arguments passed to the provider's generate_tool_intent method.
 
         Returns:
