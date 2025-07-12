@@ -35,3 +35,6 @@ dev = [
    "pytest>=8.3.0",
    "pytest-asyncio>=0.26.0",
 ]
+builtins = [
+   "sympy>=1.12",
+]

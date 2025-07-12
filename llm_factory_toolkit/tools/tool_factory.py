@@ -8,8 +8,34 @@ from collections import defaultdict
 
 from .models import ToolExecutionResult
 from ..exceptions import ToolError
+import importlib
 
 module_logger = logging.getLogger(__name__)
+
+# Mapping of built-in tool metadata. Keys are tool names.
+BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
+    "safe_math_evaluator": {
+        "function": "builtins.safe_math_evaluator",
+        "description": "Safely evaluates mathematical expressions.",
+        "parameters": {
+            "type": "object",
+            "properties": {"expression": {"type": "string"}},
+            "required": ["expression"],
+        },
+    },
+    "read_local_file": {
+        "function": "builtins.read_local_file",
+        "description": "Reads content from a local file path.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "format": {"type": "string", "enum": ["text", "json"], "default": "text"},
+            },
+            "required": ["file_path"],
+        },
+    },
+}
 
 
 class ToolFactory:
@@ -66,6 +92,28 @@ class ToolFactory:
         self.tool_definitions.append(tool_def)
         self.tool_usage_counts[name] = 0  # Initialize count for new/overwritten tool
         module_logger.info(f"Registered tool: {name}")
+
+    def register_builtins(self, names: Optional[List[str]] = None):
+        """Registers a selection of built-in tools by name."""
+        if names is None:
+            names = list(BUILTIN_TOOLS.keys())
+
+        builtins_mod = importlib.import_module("llm_factory_toolkit.tools.builtins")
+        for name in names:
+            info = BUILTIN_TOOLS.get(name)
+            if not info:
+                module_logger.warning(f"Built-in tool '{name}' not found.")
+                continue
+            func = getattr(builtins_mod, info["function"].split(".")[-1], None)
+            if func is None:
+                module_logger.warning(f"Function for built-in '{name}' not available.")
+                continue
+            self.register_tool(
+                function=func,
+                name=name,
+                description=info["description"],
+                parameters=info.get("parameters"),
+            )
 
     def get_tool_definitions(self, filter_tool_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """

@@ -26,6 +26,7 @@ except Exception as e:
 from .client import LLMClient
 from .providers.base import BaseProvider
 from .tools.tool_factory import ToolFactory
+from .tools import builtins
 from .exceptions import LLMToolkitError, ConfigurationError, ProviderError, ToolError, UnsupportedFeatureError
 from .providers import create_provider_instance # Allow direct provider creation if needed
 
@@ -81,6 +82,7 @@ __all__ = [
     "create_provider_instance",
     "clean_json_string",
     "extract_json_from_markdown",
+    "builtins",
 ]
 
 # Optional: Define __version__
