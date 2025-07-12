@@ -5,6 +5,7 @@ pydantic
 
 # Testing & Dev
 pytest
+pytest-asyncio
 pytest-cov
 black
 mypy
