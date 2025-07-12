@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
 from .models import ToolExecutionResult
-from ..exceptions import ToolError
 
 
 class BaseTool(ABC):

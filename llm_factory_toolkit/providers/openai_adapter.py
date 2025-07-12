@@ -2,14 +2,14 @@
 import asyncio
 import json
 import logging
-import traceback
 from typing import List, Dict, Any, Optional, Tuple, Type, Union
+from pydantic import BaseModel
 
 from openai import AsyncOpenAI, BadRequestError, RateLimitError, APIConnectionError, APITimeoutError
 
 from .base import BaseProvider
 from . import register_provider
-from ..tools.models import ParsedToolCall, ToolIntentOutput, ToolExecutionResult, BaseModel
+from ..tools.models import ParsedToolCall, ToolIntentOutput, ToolExecutionResult
 from ..tools.tool_factory import ToolFactory
 from ..exceptions import ConfigurationError, ProviderError, ToolError, UnsupportedFeatureError
 

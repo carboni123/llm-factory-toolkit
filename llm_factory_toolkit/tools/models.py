@@ -1,6 +1,6 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/models.py
 from typing import Dict, Any, Optional, List, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 # --- Existing models ---
@@ -9,7 +9,6 @@ class ParsedToolCall(BaseModel):
     name: str  # Name of the function to be called
     arguments: Union[Dict[str, Any], str]  # Parsed arguments as a dict, or raw string if parsing fails
     arguments_parsing_error: Optional[str] = None  # Error message if argument parsing failed
-    # type: str = "function" # Could be useful if providers support other tool types
 
 
 class ToolIntentOutput(BaseModel):

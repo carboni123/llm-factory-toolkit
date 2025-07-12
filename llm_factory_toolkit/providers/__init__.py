@@ -2,7 +2,7 @@
 import os
 import importlib
 import logging
-from typing import Type
+from typing import Type, Callable
 from .base import BaseProvider
 from ..exceptions import ConfigurationError
 
@@ -11,7 +11,7 @@ _providers_discovered = False
 module_logger = logging.getLogger(__name__)
 
 
-def register_provider(name: str):
+def register_provider(name: str) -> Callable:
     """
     Decorator to register LLM Provider classes.
 
@@ -28,7 +28,7 @@ def register_provider(name: str):
         return cls
     return decorator
 
-def _discover_providers(provider_dir: str | None = None):
+def _discover_providers(provider_dir: str | None = None) -> None:
     """
     Discovers and imports all provider modules in the specified directory
     to ensure registration decorators are executed.

@@ -1,11 +1,14 @@
 # llm_factory_toolkit/llm_factory_toolkit/providers/base.py
 import os
+import logging
 from abc import ABC, abstractmethod
 from dotenv import load_dotenv
 from typing import Dict, Tuple, Any, Optional, List, Type
 
 from ..exceptions import ConfigurationError
 from ..tools.models import ToolIntentOutput, BaseModel
+
+logger = logging.getLogger(__name__)
 
 class BaseProvider(ABC):
     """
@@ -44,7 +47,7 @@ class BaseProvider(ABC):
                 self.api_key = self._load_api_key_from_env(api_env_var)
             except ValueError as e:
                 # Don't raise immediately, maybe a subclass has another way
-                pass # Or log a warning: print(f"Warning: {e}")
+                logger.warning("API key from environment could not be loaded: %s", e)
 
         # Subclasses might have default keys or other mechanisms.
         # It's up to the subclass to raise an error if the key is ultimately missing and required.
@@ -75,7 +78,7 @@ class BaseProvider(ABC):
             load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
         except Exception as e:
             # Log warning, but don't fail if .env is missing/unreadable
-            print(f"Warning: Could not load .env file: {e}")
+            logger.warning("Could not load .env file: %s", e)
 
         api_key = os.environ.get(api_env_var)
         if not api_key:

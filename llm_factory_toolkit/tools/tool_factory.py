@@ -99,7 +99,9 @@ class ToolFactory:
         if parameters:
             if not isinstance(parameters, dict) or parameters.get("type") != "object":
                 module_logger.warning(
-                    f"Tool '{name}' parameters does not seem to be a valid JSON Schema object. Ensure it follows the provider's expected format."
+                    "Tool '%s' parameters does not seem to be a valid JSON "
+                    "Schema object. Ensure it follows the provider's expected format.",
+                    name,
                 )
             tool_def["function"]["parameters"] = parameters
 
@@ -235,10 +237,16 @@ class ToolFactory:
             llm_provided_arguments = json.loads(actual_args_to_parse)
             if not isinstance(llm_provided_arguments, dict):
                 raise TypeError(
-                    f"Expected JSON object (dict) for arguments of tool '{function_name}', but got {type(llm_provided_arguments)}"
+                    "Expected JSON object (dict) for arguments of tool '%s', "
+                    "but got %s",
+                    function_name,
+                    type(llm_provided_arguments),
                 )
         except json.JSONDecodeError as e:
-            error_msg = f"Failed to decode JSON arguments for tool '{function_name}': {e}. Args: '{actual_args_to_parse}'"
+            error_msg = (
+                f"Failed to decode JSON arguments for tool '{function_name}': {e}. "
+                f"Args: '{actual_args_to_parse}'"
+            )
             module_logger.error(error_msg)
             return ToolExecutionResult(
                 content=json.dumps(
@@ -299,7 +307,11 @@ class ToolFactory:
                 TypeError,
             ) as e:  # Handle cases where signature cannot be determined
                 module_logger.error(
-                    f"Could not inspect signature for tool '{function_name}' (target: {target_callable}): {e}. Context injection might be incomplete."
+                    "Could not inspect signature for tool '%s' (target: %s): %s. "
+                    "Context injection might be incomplete.",
+                    function_name,
+                    target_callable,
+                    e,
                 )
 
         try:
@@ -315,7 +327,9 @@ class ToolFactory:
 
             if not isinstance(result, ToolExecutionResult):
                 module_logger.error(
-                    f"Tool function '{function_name}' did not return a ToolExecutionResult object. Returned: {type(result)}"
+                    "Tool function '%s' did not return a ToolExecutionResult object. Returned: %s",
+                    function_name,
+                    type(result),
                 )
                 try:
                     llm_content = json.dumps(
