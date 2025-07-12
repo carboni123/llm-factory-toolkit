@@ -76,6 +76,7 @@ class OpenAIProvider(BaseProvider):
         max_tokens: Optional[int] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
+        parallel_tools: bool = False,
         **kwargs: Any,
     ) -> Tuple[Optional[str], List[Any]]:
         """
@@ -95,6 +96,8 @@ class OpenAIProvider(BaseProvider):
                                              Passing ``None`` disables tool usage. A non-empty list
                                              restricts to the specified tools.
             tool_execution_context: Context to be injected into tool calls.
+            parallel_tools (bool): If True, dispatch multiple tool calls concurrently
+                using ``asyncio.gather``. Defaults to ``False``.
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
@@ -211,70 +214,92 @@ class OpenAIProvider(BaseProvider):
                 raise UnsupportedFeatureError("Received tool calls from OpenAI, but no tool_factory was provided to handle them.")
 
             # --- Dispatch Tools ---
+
             tool_results = []
-            for call in tool_calls:
+
+            async def handle_tool_call(call):
                 if call.type != "function" or not call.function:
-                    module_logger.warning(f"Skipping unexpected tool call type or format: {call.model_dump_json()}")
-                    continue
+                    module_logger.warning(
+                        f"Skipping unexpected tool call type or format: {call.model_dump_json()}"
+                    )
+                    return None, None
 
                 func_name = call.function.name
                 func_args_str = call.function.arguments
                 call_id = call.id
-                
-                if func_name and self.tool_factory: # Ensure func_name and factory exist
-                    self.tool_factory.increment_tool_usage(func_name) # Increment count in factory
+
+                if func_name and self.tool_factory:
+                    self.tool_factory.increment_tool_usage(func_name)
 
                 if not (func_name and func_args_str and call_id):
-                    module_logger.error(f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}")
-                    tool_results.append({
+                    module_logger.error(
+                        f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}"
+                    )
+                    return {
                         "role": "tool",
                         "tool_call_id": call_id or "unknown",
                         "name": func_name or "unknown",
                         "content": json.dumps({"error": "Malformed tool call received by client."}),
-                     })
-                    continue
+                    }, None
 
                 try:
-                    tool_exec_result: ToolExecutionResult = (
-                        self.tool_factory.dispatch_tool(
-                            func_name,
-                            func_args_str,
-                            tool_execution_context=tool_execution_context,
-                        )
+                    tool_exec_result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
+                        func_name,
+                        func_args_str,
+                        tool_execution_context=tool_execution_context,
                     )
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": func_name,
-                        "content": tool_exec_result.content, 
-                    })
-                    module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
-                    
+
                     payload: Dict[str, Any] = {
                         "tool_name": func_name,
                         "metadata": tool_exec_result.metadata or {},
                     }
                     if tool_exec_result.payload is not None:
-                        payload["payload"] = tool_exec_result.payload                        
-                    collected_payloads.append(payload)
+                        payload["payload"] = tool_exec_result.payload
 
-                except ToolError as e:
-                    module_logger.error(f"Error processing tool call {call_id} ({func_name}): {e}")
-                    tool_results.append({
+                    module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
+
+                    return {
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": func_name,
-                        "content": json.dumps({"error": str(e)}), 
-                    })
+                        "content": tool_exec_result.content,
+                    }, payload
+
+                except ToolError as e:
+                    module_logger.error(f"Error processing tool call {call_id} ({func_name}): {e}")
+                    return {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": func_name,
+                        "content": json.dumps({"error": str(e)}),
+                    }, None
                 except Exception as e:
-                    module_logger.error(f"Unexpected error handling tool call {call_id} ({func_name}): {e}", exc_info=True)
-                    tool_results.append({
+                    module_logger.error(
+                        f"Unexpected error handling tool call {call_id} ({func_name}): {e}",
+                        exc_info=True,
+                    )
+                    return {
                         "role": "tool",
                         "tool_call_id": call_id,
                         "name": func_name,
                         "content": json.dumps({"error": f"Unexpected client-side error handling tool: {e}"}),
-                     })
+                    }, None
 
+            if parallel_tools:
+                tasks = [handle_tool_call(c) for c in tool_calls]
+                results = await asyncio.gather(*tasks)
+                for msg, payload in results:
+                    if msg:
+                        tool_results.append(msg)
+                    if payload:
+                        collected_payloads.append(payload)
+            else:
+                for c in tool_calls:
+                    msg, payload = await handle_tool_call(c)
+                    if msg:
+                        tool_results.append(msg)
+                    if payload:
+                        collected_payloads.append(payload)
             current_messages.extend(tool_results)
             iteration_count += 1
             module_logger.debug(f"Completed tool iteration {iteration_count}. Current messages: {[m['role'] for m in current_messages]}")

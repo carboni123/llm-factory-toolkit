@@ -99,6 +99,7 @@ class LLMClient:
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
+        parallel_tools: bool = False,
         **kwargs: Any
     ) -> Tuple[Optional[str], List[Any]]:
         """
@@ -117,6 +118,8 @@ class LLMClient:
                                              registered tools. Passing ``None`` disables tool
                                              usage entirely. Providing a non-empty list restricts
                                              the available tools to those names.
+            parallel_tools (bool): If True, instructs the provider to dispatch
+                multiple tool calls concurrently. Defaults to ``False``.
             **kwargs: Additional arguments passed directly to the provider's generate method
                       (e.g., tool_choice, max_tool_iterations).
 
@@ -143,12 +146,13 @@ class LLMClient:
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_execution_context": tool_execution_context,
+            "parallel_tools": parallel_tools,
             **kwargs # Pass through other args like 'max_tool_iterations', 'tool_choice'
         }
         # Filter out None values to avoid overriding provider defaults unintentionally,
         # but keep 'use_tools' and 'tool_execution_context' as their specific values (None, []) are meaningful.
         provider_args = {
-            k: v for k, v in provider_args.items() if v is not None or k in ['use_tools', 'tool_execution_context']
+            k: v for k, v in provider_args.items() if v is not None or k in ['use_tools', 'tool_execution_context', 'parallel_tools']
         }
 
         try:
@@ -224,7 +228,7 @@ class LLMClient:
             module_logger.error(f"An unexpected error occurred during tool intent generation: {e}", exc_info=True)
             raise LLMToolkitError(f"Unexpected tool intent generation error: {e}") from e
 
-    def execute_tool_intents(
+    async def execute_tool_intents(
         self,
         intent_output: ToolIntentOutput,
         tool_execution_context: Optional[Dict[str, Any]] = None
@@ -232,7 +236,7 @@ class LLMClient:
         """
         Executes a list of tool call intents using the client's ToolFactory
         and returns a list of formatted tool result messages *based on the content*.
-        This method performs immediate execution and does not handle deferred payloads.
+        This coroutine performs immediate execution and does not handle deferred payloads.
 
         Args:
             intent_output: The ToolIntentOutput containing tool_calls from the planner.
@@ -271,7 +275,7 @@ class LLMClient:
             module_logger.debug(f"Client executing tool: {tool_name} (ID: {tool_call_id}), args: {tool_args_str}, Context provided: {tool_execution_context is not None}")
 
             try:
-                tool_exec_result: ToolExecutionResult = self.tool_factory.dispatch_tool(
+                tool_exec_result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
                     tool_name,
                     tool_args_str,
                     tool_execution_context=tool_execution_context,

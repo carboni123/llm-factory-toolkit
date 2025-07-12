@@ -1,8 +1,9 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/tool_factory.py
 import json
 import logging
-from typing import List, Dict, Any, Callable, Optional
 import inspect
+import asyncio
+from typing import List, Dict, Any, Callable, Optional
 from collections import defaultdict
 
 from .models import ToolExecutionResult
@@ -102,15 +103,20 @@ class ToolFactory:
             module_logger.debug(f"Returning filtered tool definitions for names: {list(found_names)}")
             return filtered_definitions
 
-    def dispatch_tool(
-        self, function_name: str, function_args_str: str, tool_execution_context: Optional[Dict[str, Any]] = None
+    async def dispatch_tool(
+        self,
+        function_name: str,
+        function_args_str: str,
+        tool_execution_context: Optional[Dict[str, Any]] = None,
     ) -> ToolExecutionResult:
         """
         Executes the appropriate tool function based on the name and arguments,
-        injecting any relevant tool_execution_context, and
-        returning a structured ToolExecutionResult.
-        Note: This method does NOT increment tool usage counts; that is handled
-        by the provider when a tool call is first identified.
+        injecting any relevant ``tool_execution_context`` and returning a
+        ``ToolExecutionResult``.
+
+        This method is ``async`` to allow tool functions that perform I/O to be
+        awaited. Synchronous tools are executed directly and their results
+        returned. Tool usage counting is handled separately by the provider.
         """
         if function_name not in self.tools:
             error_msg = f"Tool '{function_name}' not found."
@@ -182,7 +188,12 @@ class ToolFactory:
 
         try:
             module_logger.debug(f"Executing tool '{function_name}' with final args: {final_arguments}")
-            result: ToolExecutionResult = tool_function(**final_arguments)
+            if asyncio.iscoroutinefunction(tool_function):
+                result: ToolExecutionResult = await tool_function(**final_arguments)
+            else:
+                result = tool_function(**final_arguments)
+                if asyncio.iscoroutine(result):
+                    result = await result
 
             if not isinstance(result, ToolExecutionResult):
                 module_logger.error(

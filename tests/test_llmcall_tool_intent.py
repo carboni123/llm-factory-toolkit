@@ -195,7 +195,8 @@ async def test_openai_three_tool_calls_combined_secret():
         #         # Critical failure if a tool can't be dispatched in the test, fail fast
         #         pytest.fail(f"Test setup error: Failed to dispatch tool {tool_name}: {e}")
 
-        for result in client.execute_tool_intents(intent_output):
+        results = await client.execute_tool_intents(intent_output)
+        for result in results:
             tool_result_messages.append(result)
         print("Tool execution phase complete.")
 

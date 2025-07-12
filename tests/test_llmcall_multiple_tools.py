@@ -154,6 +154,7 @@ async def test_openai_three_tool_calls_combined_secret():
             messages=messages,
             model=TEST_MODEL,
             temperature=0.1, # Lower temperature for more predictable combination behavior
+            parallel_tools=True,
         )
         print(f"Received final response:\n---\n{response_content}\n---")
 
