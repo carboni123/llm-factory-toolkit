@@ -1,14 +1,17 @@
 # llm_factory_toolkit/llm_factory_toolkit/providers/base.py
-import os
 import logging
+import os
 from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Tuple, Type
+
 from dotenv import load_dotenv
-from typing import Dict, Tuple, Any, Optional, List, Type
+from pydantic import BaseModel
 
 from ..exceptions import ConfigurationError
-from ..tools.models import ToolIntentOutput, BaseModel
+from ..tools.models import ToolIntentOutput
 
 logger = logging.getLogger(__name__)
+
 
 class BaseProvider(ABC):
     """
@@ -16,7 +19,9 @@ class BaseProvider(ABC):
     Handles common API key loading logic.
     """
 
-    def __init__(self, api_key: str | None = None, api_env_var: str | None = None, **kwargs):
+    def __init__(
+        self, api_key: str | None = None, api_env_var: str | None = None, **kwargs: Any
+    ) -> None:
         """
         Initializes the Provider object.
 
@@ -35,7 +40,9 @@ class BaseProvider(ABC):
             try:
                 self.api_key = self._load_api_key_from_file(api_key)
             except (FileNotFoundError, ValueError) as e:
-                raise ConfigurationError(f"Error loading API key from file '{api_key}': {e}")
+                raise ConfigurationError(
+                    f"Error loading API key from file '{api_key}': {e}"
+                )
 
         # 2. If an api_key is provided but not a file path, assume it's the key itself.
         elif api_key:
@@ -83,22 +90,25 @@ class BaseProvider(ABC):
         api_key = os.environ.get(api_env_var)
         if not api_key:
             # Let the caller handle raising ConfigurationError
-            raise ValueError(f"Environment variable '{api_env_var}' not found or is empty.")
+            raise ValueError(
+                f"Environment variable '{api_env_var}' not found or is empty."
+            )
         return api_key
 
     @abstractmethod
     async def generate(
         self,
-        messages: list[dict[str, any]],
+        messages: list[dict[str, Any]],
+        *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs: Any,
     ) -> Tuple[Optional[str], List[Any]]:
         """
         Abstract method to generate text based on a list of messages,
         potentially handling tool calls and returning deferred action payloads.
         The tool_execution_context is passed to the ToolFactory for injection.
         Tool usage counts are updated within the ToolFactory instance if one is used.
-        
+
         Returns:
         Tuple[Optional[str], List[Any]]:
             - The generated text content (or None).
@@ -110,12 +120,13 @@ class BaseProvider(ABC):
     async def generate_tool_intent(
         self,
         messages: List[Dict[str, Any]],
+        *,
         model: Optional[str] = None,
         use_tools: Optional[List[str]] = [],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> ToolIntentOutput:
         """
         Generates a response from the LLM, prioritizing the detection of tool call intents

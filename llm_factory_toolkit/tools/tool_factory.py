@@ -1,14 +1,14 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/tool_factory.py
+import asyncio
+import importlib
+import inspect
 import json
 import logging
-import inspect
-import asyncio
-from typing import List, Dict, Any, Callable, Optional
 from collections import defaultdict
+from typing import Any, Callable, Dict, List, Optional
 
-from .models import ToolExecutionResult
 from ..exceptions import ToolError
-import importlib
+from .models import ToolExecutionResult
 
 module_logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ class ToolFactory:
     injecting execution context into tool calls, and tracking tool usage.
     """
 
-    def __init__(self):
-        self.tools: Dict[str, Callable] = {}
+    def __init__(self) -> None:
+        self.tools: Dict[str, Callable[..., ToolExecutionResult]] = {}
         self.tool_definitions: List[Dict[str, Any]] = []
         self._tool_names: set[str] = set()  # Keep track of registered names
         self.tool_usage_counts: Dict[str, int] = defaultdict(int)  # Stores usage counts
@@ -59,11 +59,11 @@ class ToolFactory:
 
     def register_tool(
         self,
-        function: Callable,
+        function: Callable[..., ToolExecutionResult],
         name: str,
         description: str,
         parameters: Dict[str, Any] | None = None,
-    ):
+    ) -> None:
         """
         Registers a custom tool function and its definition (schema).
 
@@ -89,7 +89,7 @@ class ToolFactory:
             self._tool_names.add(name)
 
         self.tools[name] = function
-        tool_def = {
+        tool_def: Dict[str, Any] = {
             "type": "function",
             "function": {
                 "name": name,
@@ -116,7 +116,7 @@ class ToolFactory:
         name_override: Optional[str] = None,
         description_override: Optional[str] = None,
         parameters_override: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> None:
         """Registers a tool class that inherits from BaseTool."""
         from .base_tool import BaseTool
 
@@ -147,7 +147,7 @@ class ToolFactory:
         )
         module_logger.info(f"Registered tool class: {tool_class.__name__} as '{name}'")
 
-    def register_builtins(self, names: Optional[List[str]] = None):
+    def register_builtins(self, names: Optional[List[str]] = None) -> None:
         """Registers a selection of built-in tools by name."""
         if names is None:
             names = list(BUILTIN_TOOLS.keys())
@@ -362,7 +362,7 @@ class ToolFactory:
                 error=error_msg,
             )
 
-    def increment_tool_usage(self, tool_name: str):
+    def increment_tool_usage(self, tool_name: str) -> None:
         """Increments the usage count for the given tool name."""
         if tool_name in self._tool_names:
             self.tool_usage_counts[tool_name] += 1
@@ -381,7 +381,7 @@ class ToolFactory:
         """Returns a dictionary of tool names and their usage counts."""
         return dict(self.tool_usage_counts)  # Return a copy
 
-    def reset_tool_usage_counts(self):
+    def reset_tool_usage_counts(self) -> None:
         """Resets all tool usage counts to zero."""
         for tool_name in self.tool_usage_counts:
             self.tool_usage_counts[tool_name] = 0

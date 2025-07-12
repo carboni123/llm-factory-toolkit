@@ -1,15 +1,18 @@
 # llm_factory_toolkit/llm_factory_toolkit/client.py
 import json
 import logging
-from typing import Optional, List, Dict, Tuple, Any, Type, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
-from .providers import create_provider_instance, BaseProvider
-from .tools.models import ToolIntentOutput, ToolExecutionResult
+from pydantic import BaseModel  # Import for type hinting
+
+from .exceptions import (ConfigurationError, LLMToolkitError, ProviderError,
+                         ToolError, UnsupportedFeatureError)
+from .providers import BaseProvider, create_provider_instance
+from .tools.models import ToolExecutionResult, ToolIntentOutput
 from .tools.tool_factory import ToolFactory
-from .exceptions import ConfigurationError, LLMToolkitError, ProviderError, ToolError, UnsupportedFeatureError
-from pydantic import BaseModel # Import for type hinting
 
 module_logger = logging.getLogger(__name__)
+
 
 class LLMClient:
     """
@@ -24,8 +27,8 @@ class LLMClient:
         api_key: Optional[str] = None,
         tool_factory: Optional[ToolFactory] = None,
         # Pass provider-specific args via kwargs, e.g., model='gpt-4-turbo'
-        **provider_kwargs: Any
-    ):
+        **provider_kwargs: Any,
+    ) -> None:
         """
         Initializes the LLMClient.
 
@@ -47,21 +50,23 @@ class LLMClient:
             self.provider: BaseProvider = create_provider_instance(
                 provider_type=provider_type,
                 api_key=api_key,
-                tool_factory=self.tool_factory, # Pass the tool factory instance
-                **provider_kwargs # Pass through other args like 'model'
+                tool_factory=self.tool_factory,  # Pass the tool factory instance
+                **provider_kwargs,  # Pass through other args like 'model'
             )
-            module_logger.info(f"Successfully created provider instance: {type(self.provider).__name__}")
+            module_logger.info(
+                f"Successfully created provider instance: {type(self.provider).__name__}"
+            )
         except (ConfigurationError, ImportError, LLMToolkitError) as e:
             module_logger.error(f"Failed to initialize LLMClient: {e}", exc_info=True)
             raise
 
     def register_tool(
         self,
-        function: Callable,
+        function: Callable[..., ToolExecutionResult],
         name: Optional[str] = None,
         description: Optional[str] = None,
-        parameters: Optional[Dict[str, Any]] = None
-    ):
+        parameters: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Registers a Python function as a tool for the LLM with the internal ToolFactory.
 
@@ -77,16 +82,15 @@ class LLMClient:
             docstring = function.__doc__ or ""
             description = docstring.strip() or f"Executes the {name} function."
             if not function.__doc__:
-                module_logger.warning(f"Tool function '{name}' has no docstring. Using generic description.")
+                module_logger.warning(
+                    f"Tool function '{name}' has no docstring. Using generic description."
+                )
 
         if parameters is None:
-            pass # Allow no parameters
+            pass  # Allow no parameters
 
         self.tool_factory.register_tool(
-            function=function,
-            name=name,
-            description=description,
-            parameters=parameters
+            function=function, name=name, description=description, parameters=parameters
         )
         module_logger.info(f"Tool '{name}' registered with LLMClient's ToolFactory.")
 
@@ -100,7 +104,7 @@ class LLMClient:
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
         parallel_tools: bool = False,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Tuple[Optional[str], List[Any]]:
         """
         Generates a response from the configured LLM provider based on the message history,
@@ -135,7 +139,10 @@ class LLMClient:
             LLMToolkitError: For other library-specific errors.
         """
         module_logger.debug(
-            f"Client calling provider.generate. Model override: {model}, Use tools: {use_tools}, Context provided: {tool_execution_context is not None}"
+            "Client calling provider.generate. Model override: %s, Use tools: %s, Context provided: %s",
+            model,
+            use_tools,
+            tool_execution_context is not None,
         )
 
         provider_args = {
@@ -147,23 +154,35 @@ class LLMClient:
             "use_tools": use_tools,
             "tool_execution_context": tool_execution_context,
             "parallel_tools": parallel_tools,
-            **kwargs # Pass through other args like 'max_tool_iterations', 'tool_choice'
+            **kwargs,  # Pass through other args like 'max_tool_iterations', 'tool_choice'
         }
         # Filter out None values to avoid overriding provider defaults unintentionally,
         # but keep 'use_tools' and 'tool_execution_context' as their specific values (None, []) are meaningful.
         provider_args = {
-            k: v for k, v in provider_args.items() if v is not None or k in ['use_tools', 'tool_execution_context', 'parallel_tools']
+            k: v
+            for k, v in provider_args.items()
+            if v is not None
+            or k in ["use_tools", "tool_execution_context", "parallel_tools"]
         }
 
         try:
             # Delegate to the provider, which now returns a tuple
-            result_content, result_payloads = await self.provider.generate(**provider_args)
+            result_content, result_payloads = await self.provider.generate(
+                **provider_args
+            )
             return result_content, result_payloads
-        except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError) as e:
+        except (
+            ProviderError,
+            ToolError,
+            ConfigurationError,
+            UnsupportedFeatureError,
+        ) as e:
             module_logger.error(f"Error during generation: {e}", exc_info=False)
             raise
         except Exception as e:
-            module_logger.error(f"An unexpected error occurred during generation: {e}", exc_info=True)
+            module_logger.error(
+                f"An unexpected error occurred during generation: {e}", exc_info=True
+            )
             raise LLMToolkitError(f"Unexpected generation error: {e}") from e
 
     async def generate_tool_intent(
@@ -174,7 +193,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
-        **kwargs: Any
+        **kwargs: Any,
     ) -> ToolIntentOutput:
         """
         Requests the LLM to generate a response, specifically to identify potential tool calls,
@@ -211,27 +230,39 @@ class LLMClient:
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_choice": "required",
-            **kwargs
+            **kwargs,
         }
         # Filter out None values to avoid overriding provider defaults unintentionally,
         # but keep 'use_tools' as its specific values (None, []) are meaningful.
         provider_args = {
-            k: v for k, v in provider_args.items() if v is not None or k == 'use_tools'
+            k: v for k, v in provider_args.items() if v is not None or k == "use_tools"
         }
 
         try:
             return await self.provider.generate_tool_intent(**provider_args)
-        except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError) as e:
-            module_logger.error(f"Error during tool intent generation: {e}", exc_info=False)
+        except (
+            ProviderError,
+            ToolError,
+            ConfigurationError,
+            UnsupportedFeatureError,
+        ) as e:
+            module_logger.error(
+                f"Error during tool intent generation: {e}", exc_info=False
+            )
             raise
         except Exception as e:
-            module_logger.error(f"An unexpected error occurred during tool intent generation: {e}", exc_info=True)
-            raise LLMToolkitError(f"Unexpected tool intent generation error: {e}") from e
+            module_logger.error(
+                f"An unexpected error occurred during tool intent generation: {e}",
+                exc_info=True,
+            )
+            raise LLMToolkitError(
+                f"Unexpected tool intent generation error: {e}"
+            ) from e
 
     async def execute_tool_intents(
         self,
         intent_output: ToolIntentOutput,
-        tool_execution_context: Optional[Dict[str, Any]] = None
+        tool_execution_context: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Executes a list of tool call intents using the client's ToolFactory
@@ -249,7 +280,9 @@ class LLMClient:
         """
         tool_result_messages: List[Dict[str, Any]] = []
         if not self.tool_factory:
-            raise ConfigurationError("LLMClient has no ToolFactory configured, cannot execute tool intents.")
+            raise ConfigurationError(
+                "LLMClient has no ToolFactory configured, cannot execute tool intents."
+            )
         if not intent_output.tool_calls:
             module_logger.info("No tool calls to execute.")
             return tool_result_messages
@@ -259,36 +292,96 @@ class LLMClient:
             tool_call_id = tool_call.id
 
             if tool_call.arguments_parsing_error:
-                module_logger.error(f"Skipping execution of tool '{tool_name}' (ID: {tool_call_id}) due to previous argument parsing error: {tool_call.arguments_parsing_error}. Raw Args: {tool_call.arguments}")
-                tool_result_messages.append({"role": "tool","tool_call_id": tool_call_id,"name": tool_name,
-                    "content": json.dumps({"error": f"Tool '{tool_name}' skipped due to argument parsing error during planning.","details": tool_call.arguments_parsing_error,"received_arguments": tool_call.arguments if isinstance(tool_call.arguments, str) else json.dumps(tool_call.arguments)})})
+                module_logger.error(
+                    "Skipping execution of tool '%s' (ID: %s) due to previous argument parsing error: %s. Raw Args: %s",
+                    tool_name,
+                    tool_call_id,
+                    tool_call.arguments_parsing_error,
+                    tool_call.arguments,
+                )
+                tool_result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": json.dumps(
+                            {
+                                "error": f"Tool '{tool_name}' skipped due to argument parsing error during planning.",
+                                "details": tool_call.arguments_parsing_error,
+                                "received_arguments": (
+                                    tool_call.arguments
+                                    if isinstance(tool_call.arguments, str)
+                                    else json.dumps(tool_call.arguments)
+                                ),
+                            }
+                        ),
+                    }
+                )
                 continue
 
-            args_to_dump = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+            args_to_dump = (
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+            )
             try:
                 tool_args_str = json.dumps(args_to_dump)
             except TypeError as e:
-                module_logger.error(f"Failed to serialize arguments for tool '{tool_name}' (ID: {tool_call_id}): {e}. Arguments: {args_to_dump}", exc_info=True)
-                tool_result_messages.append({"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": json.dumps({"error": f"Internal error: Failed to serialize arguments for tool '{tool_name}'."})})
+                module_logger.error(
+                    "Failed to serialize arguments for tool '%s' (ID: %s): %s. Arguments: %s",
+                    tool_name,
+                    tool_call_id,
+                    e,
+                    args_to_dump,
+                    exc_info=True,
+                )
+                tool_result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": json.dumps(
+                            {
+                                "error": (
+                                    "Internal error: Failed to serialize arguments for tool '%s'."
+                                    % tool_name
+                                )
+                            }
+                        ),
+                    }
+                )
                 continue
 
-            module_logger.debug(f"Client executing tool: {tool_name} (ID: {tool_call_id}), args: {tool_args_str}, Context provided: {tool_execution_context is not None}")
+            module_logger.debug(
+                "Client executing tool: %s (ID: %s), args: %s, Context provided: %s",
+                tool_name,
+                tool_call_id,
+                tool_args_str,
+                tool_execution_context is not None,
+            )
 
             try:
-                tool_exec_result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
-                    tool_name,
-                    tool_args_str,
-                    tool_execution_context=tool_execution_context,
+                tool_exec_result: ToolExecutionResult = (
+                    await self.tool_factory.dispatch_tool(
+                        tool_name,
+                        tool_args_str,
+                        tool_execution_context=tool_execution_context,
+                    )
                 )
 
                 result_content_for_llm = tool_exec_result.content
                 if tool_exec_result.error:
                     module_logger.error(
-                        f"Tool '{tool_name}' (ID: {tool_call_id}) reported an error during execution: {tool_exec_result.error}. LLM content: {result_content_for_llm}"
+                        "Tool '%s' (ID: %s) reported an error during execution: %s. LLM content: %s",
+                        tool_name,
+                        tool_call_id,
+                        tool_exec_result.error,
+                        result_content_for_llm,
                     )
                 else:
                     module_logger.debug(
-                        f"Tool {tool_name} (ID: {tool_call_id}) executed. LLM content: {result_content_for_llm}"
+                        "Tool %s (ID: %s) executed. LLM content: %s",
+                        tool_name,
+                        tool_call_id,
+                        result_content_for_llm,
                     )
                 tool_result_messages.append(
                     {
@@ -300,7 +393,10 @@ class LLMClient:
                 )
             except Exception as e:
                 module_logger.error(
-                    f"Unexpected client-side error during dispatch/handling for tool {tool_name} (ID: {tool_call_id}): {e}",
+                    "Unexpected client-side error during dispatch/handling for tool %s (ID: %s): %s",
+                    tool_name,
+                    tool_call_id,
+                    e,
                     exc_info=True,
                 )
                 tool_result_messages.append(

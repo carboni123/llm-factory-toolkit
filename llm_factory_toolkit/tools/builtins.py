@@ -2,12 +2,12 @@ from __future__ import annotations
 
 """Collection of optional built-in tools for quick prototyping."""
 
-from typing import Any
 import json
 from pathlib import Path
+from typing import Any
 
-from .models import ToolExecutionResult
 from ..exceptions import ToolError
+from .models import ToolExecutionResult
 
 try:
     from sympy import sympify
@@ -20,7 +20,9 @@ except Exception:  # sympy is optional
 def safe_math_evaluator(expression: str) -> ToolExecutionResult:
     """Safely evaluates a mathematical expression using sympy."""
     if sympify is None:
-        error_msg = "sympy not installed. Install the 'builtins' extra to enable this tool."
+        error_msg = (
+            "sympy not installed. Install the 'builtins' extra to enable this tool."
+        )
         return ToolExecutionResult(content=error_msg, error=error_msg)
     try:
         result = sympify(expression)
@@ -53,4 +55,3 @@ def read_local_file(file_path: str, format: str = "text") -> ToolExecutionResult
     except Exception as e:  # pylint: disable=broad-except
         error_msg = f"File read error: {e}"
         return ToolExecutionResult(content=error_msg, error=error_msg)
-
