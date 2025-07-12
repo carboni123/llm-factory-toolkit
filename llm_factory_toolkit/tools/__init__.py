@@ -1,5 +1,7 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/__init__.py
-from .tool_factory import ToolFactory
+from . import builtins
+from .base_tool import BaseTool
 from .models import ParsedToolCall, ToolIntentOutput
+from .tool_factory import ToolFactory
 
-__all__ = ["ToolFactory", "ParsedToolCall", "ToolIntentOutput"]
+__all__ = ["ToolFactory", "BaseTool", "ParsedToolCall", "ToolIntentOutput", "builtins"]

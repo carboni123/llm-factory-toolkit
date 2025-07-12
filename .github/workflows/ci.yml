@@ -36,12 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Install the library itself along with development dependencies (like pytest)
-          # Assumes you have defined pytest etc. in pyproject.toml [project.optional-dependencies] dev
-          # If not, add 'pip install pytest pytest-asyncio' here
-          pip install -e .[dev]
-          # Alternatively, if you don't use extras_require:
-          # pip install -e .
-          # pip install pytest pytest-asyncio
+          pip install -e .[dev,builtins]
 
       - name: Run tests
         run: |

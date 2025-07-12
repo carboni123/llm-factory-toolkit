@@ -1,7 +1,8 @@
 # llm_factory_toolkit/llm_factory_toolkit/__init__.py
 import logging
-import re
 import os
+import re
+
 from dotenv import load_dotenv
 
 # Configure basic logging for the library
@@ -14,22 +15,30 @@ try:
     # Look for .env relative to the CWD where the script using the lib is run
     dotenv_path = os.path.join(os.getcwd(), ".env")
     if os.path.exists(dotenv_path):
-      load_dotenv(dotenv_path=dotenv_path)
+        load_dotenv(dotenv_path=dotenv_path)
     else:
-      # Maybe try searching upwards? For now, just check CWD.
-      pass # Silently ignore if not found in CWD
+        # Maybe try searching upwards? For now, just check CWD.
+        pass  # Silently ignore if not found in CWD
 except Exception as e:
     logging.getLogger(__name__).warning(f"Could not load .env file: {e}")
 
 
 # Expose key components for easy import
-from .client import LLMClient
-from .providers.base import BaseProvider
-from .tools.tool_factory import ToolFactory
-from .exceptions import LLMToolkitError, ConfigurationError, ProviderError, ToolError, UnsupportedFeatureError
-from .providers import create_provider_instance # Allow direct provider creation if needed
+from .client import LLMClient  # noqa: E402
+from .exceptions import ConfigurationError  # noqa: E402
+from .exceptions import LLMToolkitError  # noqa: E402
+from .exceptions import ProviderError  # noqa: E402
+from .exceptions import ToolError  # noqa: E402
+from .exceptions import UnsupportedFeatureError  # noqa: E402
+from .providers import \
+    create_provider_instance  # noqa: E402; Allow direct provider creation if needed
+from .providers.base import BaseProvider  # noqa: E402
+from .tools import builtins  # noqa: E402
+from .tools.base_tool import BaseTool  # noqa: E402
+from .tools.tool_factory import ToolFactory  # noqa: E402
 
-# --- Utility functions (from old __init__.py) ---
+# --- Utility functions ---
+
 
 def clean_json_string(text: str) -> str:
     """
@@ -38,7 +47,8 @@ def clean_json_string(text: str) -> str:
     """
     # Remove control characters except for \t, \n, \r, \f, \b which are valid in JSON strings
     # This regex targets ASCII control chars (0-31) excluding 9, 10, 13, 12, 8
-    return re.sub(r'[\x00-\x08\x0B\x0E-\x1F]+', '', text)
+    return re.sub(r"[\x00-\x08\x0B\x0E-\x1F]+", "", text)
+
 
 def extract_json_from_markdown(markdown_text: str) -> str | None:
     """
@@ -66,13 +76,14 @@ def extract_json_from_markdown(markdown_text: str) -> str | None:
         #      return cleaned_text
         # except json.JSONDecodeError:
         #      return None # Not valid JSON
-        return None # Return None if no explicit block found
+        return None  # Return None if no explicit block found
 
 
 __all__ = [
     "LLMClient",
     "BaseProvider",
     "ToolFactory",
+    "BaseTool",
     "LLMToolkitError",
     "ConfigurationError",
     "ProviderError",
@@ -81,15 +92,17 @@ __all__ = [
     "create_provider_instance",
     "clean_json_string",
     "extract_json_from_markdown",
+    "builtins",
 ]
 
 # Optional: Define __version__
 try:
     from importlib.metadata import version
-    __version__ = version("llm_factory_toolkit") # Assumes package name matches folder
+
+    __version__ = version("llm_factory_toolkit")  # Assumes package name matches folder
 except ImportError:
-     # Fallback if importlib.metadata is not available (Python < 3.8)
-     # or package not installed
+    # Fallback if importlib.metadata is not available (Python < 3.8)
+    # or package not installed
     __version__ = "0.0.0-unknown"
 except Exception:
-     __version__ = "0.0.0-unknown"
+    __version__ = "0.0.0-unknown"
