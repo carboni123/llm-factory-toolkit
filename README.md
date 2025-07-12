@@ -1,8 +1,3 @@
-## 1. README.md
-
-This file provides a general overview of your `llm_factory_toolkit` project.
-
-```markdown
 # LLM Toolkit
 
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
