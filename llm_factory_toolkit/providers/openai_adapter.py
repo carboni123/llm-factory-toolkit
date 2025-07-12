@@ -112,7 +112,7 @@ class OpenAIProvider(BaseProvider):
         current_messages = list(messages)
         iteration_count = 0
 
-        api_call_args = {"model": active_model, **kwargs} # Start with base args
+        api_call_args = {"model": active_model, **kwargs}  # Start with base args
 
         # --- Handle response_format ---
         if response_format:
@@ -137,7 +137,7 @@ class OpenAIProvider(BaseProvider):
         # --- Main Generation Loop ---
         while iteration_count < max_tool_iterations:
 
-            request_payload = {**api_call_args, "messages": current_messages} # Combine base args + current messages
+            request_payload = {**api_call_args, "messages": current_messages}  # Combine base args + current messages
 
             # --- Add Tools (Filtered) ---
             tools = []
@@ -154,31 +154,9 @@ class OpenAIProvider(BaseProvider):
 
             if tools or use_tools is None:
                 request_payload["tools"] = tools
-            # --- API Call ---
-            try:
-                completion = await self.async_client.chat.completions.create(**request_payload)
-                if completion.usage:
-                    module_logger.info(f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}")
 
-            except asyncio.TimeoutError:
-                module_logger.error(f"OpenAI API request timed out after {self.timeout} seconds.")
-                raise ProviderError("API request timed out")
-            except APIConnectionError as e:
-                module_logger.error(f"OpenAI API connection error: {e}")
-                raise ProviderError(f"API connection error: {e}")
-            except RateLimitError as e:
-                module_logger.error(f"OpenAI API rate limit exceeded: {e}")
-                raise ProviderError(f"API rate limit exceeded: {e}")
-            except APITimeoutError as e:
-                module_logger.error(f"OpenAI API operation timed out: {e}")
-                raise ProviderError(f"API operation timed out: {e}")
-            except BadRequestError as e:
-                module_logger.error(f"OpenAI API bad request: {e}")
-                module_logger.error(f"Request details: Model={active_model}, NumMessages={len(current_messages)}, Args={ {k:v for k,v in request_payload.items() if k != 'messages'} }")
-                raise ProviderError(f"API bad request: {e}")
-            except Exception as e: 
-                module_logger.error(f"Unexpected error during OpenAI API call: {e}", exc_info=True)
-                raise ProviderError(f"Unexpected API error: {e}")
+            # --- API Call ---
+            completion = await self._make_api_call(request_payload, active_model, len(current_messages))
 
             # --- Process Response ---
             response_message = completion.choices[0].message
@@ -211,106 +189,22 @@ class OpenAIProvider(BaseProvider):
             module_logger.info(f"Tool calls received: {len(tool_calls)}")
             if not self.tool_factory:
                 module_logger.error("Tool calls received, but no ToolFactory is configured.")
-                raise UnsupportedFeatureError("Received tool calls from OpenAI, but no tool_factory was provided to handle them.")
+                raise UnsupportedFeatureError(
+                    "Received tool calls from OpenAI, but no tool_factory was provided to handle them."
+                )
 
-            # --- Dispatch Tools ---
-
-            tool_results = []
-
-            async def handle_tool_call(call):
-                if call.type != "function" or not call.function:
-                    module_logger.warning(
-                        f"Skipping unexpected tool call type or format: {call.model_dump_json()}"
-                    )
-                    return None, None
-
-                func_name = call.function.name
-                func_args_str = call.function.arguments
-                call_id = call.id
-
-                if func_name and self.tool_factory:
-                    self.tool_factory.increment_tool_usage(func_name)
-
-                if not (func_name and func_args_str and call_id):
-                    module_logger.error(
-                        f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}"
-                    )
-                    return {
-                        "role": "tool",
-                        "tool_call_id": call_id or "unknown",
-                        "name": func_name or "unknown",
-                        "content": json.dumps({"error": "Malformed tool call received by client."}),
-                    }, None
-
-                try:
-                    tool_exec_result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
-                        func_name,
-                        func_args_str,
-                        tool_execution_context=tool_execution_context,
-                    )
-
-                    payload: Dict[str, Any] = {
-                        "tool_name": func_name,
-                        "metadata": tool_exec_result.metadata or {},
-                    }
-                    if tool_exec_result.payload is not None:
-                        payload["payload"] = tool_exec_result.payload
-
-                    module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
-
-                    return {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": func_name,
-                        "content": tool_exec_result.content,
-                    }, payload
-
-                except ToolError as e:
-                    module_logger.error(f"Error processing tool call {call_id} ({func_name}): {e}")
-                    return {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": func_name,
-                        "content": json.dumps({"error": str(e)}),
-                    }, None
-                except Exception as e:
-                    module_logger.error(
-                        f"Unexpected error handling tool call {call_id} ({func_name}): {e}",
-                        exc_info=True,
-                    )
-                    return {
-                        "role": "tool",
-                        "tool_call_id": call_id,
-                        "name": func_name,
-                        "content": json.dumps({"error": f"Unexpected client-side error handling tool: {e}"}),
-                    }, None
-
-            if parallel_tools:
-                tasks = [handle_tool_call(c) for c in tool_calls]
-                results = await asyncio.gather(*tasks)
-                for msg, payload in results:
-                    if msg:
-                        tool_results.append(msg)
-                    if payload:
-                        collected_payloads.append(payload)
-            else:
-                for c in tool_calls:
-                    msg, payload = await handle_tool_call(c)
-                    if msg:
-                        tool_results.append(msg)
-                    if payload:
-                        collected_payloads.append(payload)
+            tool_results, payloads = await self._handle_tool_calls(
+                tool_calls,
+                tool_execution_context=tool_execution_context,
+                parallel_tools=parallel_tools,
+            )
             current_messages.extend(tool_results)
+            collected_payloads.extend(payloads)
             iteration_count += 1
             module_logger.debug(f"Completed tool iteration {iteration_count}. Current messages: {[m['role'] for m in current_messages]}")
 
         # --- Max Iterations Reached ---
-        final_content = None
-        for m in reversed(current_messages):
-            if m.get("role") == 'assistant' and m.get("content"):
-                warning_msg = f"\n\n[Warning: Max tool iterations ({max_tool_iterations}) reached. Result might be incomplete.]"
-                final_content = str(m.get("content", "")) + warning_msg
-                break
+        final_content = self._aggregate_final_content(current_messages, max_tool_iterations)
         return final_content, collected_payloads
 
     async def generate_tool_intent(
@@ -507,3 +401,145 @@ class OpenAIProvider(BaseProvider):
             tools_payload = []
 
         return tools_payload, effective_tool_choice
+
+    async def _make_api_call(
+        self,
+        request_payload: Dict[str, Any],
+        active_model: str,
+        num_messages: int,
+    ) -> Any:
+        """Wrapper for OpenAI API call with error handling."""
+        try:
+            completion = await self.async_client.chat.completions.create(**request_payload)
+            if completion.usage:
+                module_logger.info(
+                    f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
+                )
+            return completion
+        except asyncio.TimeoutError:
+            module_logger.error(f"OpenAI API request timed out after {self.timeout} seconds.")
+            raise ProviderError("API request timed out")
+        except APIConnectionError as e:
+            module_logger.error(f"OpenAI API connection error: {e}")
+            raise ProviderError(f"API connection error: {e}")
+        except RateLimitError as e:
+            module_logger.error(f"OpenAI API rate limit exceeded: {e}")
+            raise ProviderError(f"API rate limit exceeded: {e}")
+        except APITimeoutError as e:
+            module_logger.error(f"OpenAI API operation timed out: {e}")
+            raise ProviderError(f"API operation timed out: {e}")
+        except BadRequestError as e:
+            module_logger.error(f"OpenAI API bad request: {e}")
+            module_logger.error(
+                f"Request details: Model={active_model}, NumMessages={num_messages}, Args={{ {k:v for k,v in request_payload.items() if k != 'messages'} }}"
+            )
+            raise ProviderError(f"API bad request: {e}")
+        except Exception as e:
+            module_logger.error(f"Unexpected error during OpenAI API call: {e}", exc_info=True)
+            raise ProviderError(f"Unexpected API error: {e}")
+
+    async def _handle_tool_calls(
+        self,
+        tool_calls: Any,
+        tool_execution_context: Optional[Dict[str, Any]],
+        parallel_tools: bool,
+    ) -> Tuple[List[Dict[str, Any]], List[Any]]:
+        """Dispatch tool calls either sequentially or in parallel."""
+        tool_results: List[Dict[str, Any]] = []
+        collected_payloads: List[Any] = []
+
+        async def handle(call):
+            if call.type != "function" or not call.function:
+                module_logger.warning(
+                    f"Skipping unexpected tool call type or format: {call.model_dump_json()}"
+                )
+                return None, None
+
+            func_name = call.function.name
+            func_args_str = call.function.arguments
+            call_id = call.id
+
+            if func_name and self.tool_factory:
+                self.tool_factory.increment_tool_usage(func_name)
+
+            if not (func_name and func_args_str and call_id):
+                module_logger.error(
+                    f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}"
+                )
+                return {
+                    "role": "tool",
+                    "tool_call_id": call_id or "unknown",
+                    "name": func_name or "unknown",
+                    "content": json.dumps({"error": "Malformed tool call received by client."}),
+                }, None
+
+            try:
+                tool_exec_result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
+                    func_name,
+                    func_args_str,
+                    tool_execution_context=tool_execution_context,
+                )
+
+                payload: Dict[str, Any] = {
+                    "tool_name": func_name,
+                    "metadata": tool_exec_result.metadata or {},
+                }
+                if tool_exec_result.payload is not None:
+                    payload["payload"] = tool_exec_result.payload
+
+                module_logger.info(f"Successfully dispatched and got result for tool: {func_name}")
+
+                return {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": func_name,
+                    "content": tool_exec_result.content,
+                }, payload
+
+            except ToolError as e:
+                module_logger.error(f"Error processing tool call {call_id} ({func_name}): {e}")
+                return {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": func_name,
+                    "content": json.dumps({"error": str(e)}),
+                }, None
+            except Exception as e:
+                module_logger.error(
+                    f"Unexpected error handling tool call {call_id} ({func_name}): {e}",
+                    exc_info=True,
+                )
+                return {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": func_name,
+                    "content": json.dumps({"error": f"Unexpected client-side error handling tool: {e}"}),
+                }, None
+
+        if parallel_tools:
+            tasks = [handle(c) for c in tool_calls]
+            results = await asyncio.gather(*tasks)
+        else:
+            results = [await handle(c) for c in tool_calls]
+
+        for msg, payload in results:
+            if msg:
+                tool_results.append(msg)
+            if payload:
+                collected_payloads.append(payload)
+
+        return tool_results, collected_payloads
+
+    def _aggregate_final_content(
+        self, current_messages: List[Dict[str, Any]], max_tool_iterations: int
+    ) -> Optional[str]:
+        """Return assistant content when max iterations reached."""
+        final_content = None
+        for m in reversed(current_messages):
+            if m.get("role") == "assistant" and m.get("content"):
+                warning_msg = (
+                    f"\n\n[Warning: Max tool iterations ({max_tool_iterations}) reached. Result might be incomplete.]"
+                )
+                final_content = str(m.get("content", "")) + warning_msg
+                break
+        return final_content
