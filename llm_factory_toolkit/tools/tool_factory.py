@@ -30,7 +30,11 @@ BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "file_path": {"type": "string"},
-                "format": {"type": "string", "enum": ["text", "json"], "default": "text"},
+                "format": {
+                    "type": "string",
+                    "enum": ["text", "json"],
+                    "default": "text",
+                },
             },
             "required": ["file_path"],
         },
@@ -53,7 +57,13 @@ class ToolFactory:
         self.tool_usage_counts: Dict[str, int] = defaultdict(int)  # Stores usage counts
         module_logger.info("ToolFactory initialized.")
 
-    def register_tool(self, function: Callable, name: str, description: str, parameters: Dict[str, Any] | None = None):
+    def register_tool(
+        self,
+        function: Callable,
+        name: str,
+        description: str,
+        parameters: Dict[str, Any] | None = None,
+    ):
         """
         Registers a custom tool function and its definition (schema).
 
@@ -67,7 +77,11 @@ class ToolFactory:
         if name in self.tools:
             module_logger.warning(f"Tool '{name}' is already registered. Overwriting.")
             # Remove existing definition before adding the new one
-            self.tool_definitions = [t for t in self.tool_definitions if t.get("function", {}).get("name") != name]
+            self.tool_definitions = [
+                t
+                for t in self.tool_definitions
+                if t.get("function", {}).get("name") != name
+            ]
             # Reset usage count for the overwritten tool if it existed
             if name in self.tool_usage_counts:
                 del self.tool_usage_counts[name]
@@ -93,6 +107,44 @@ class ToolFactory:
         self.tool_usage_counts[name] = 0  # Initialize count for new/overwritten tool
         module_logger.info(f"Registered tool: {name}")
 
+    def register_tool_class(
+        self,
+        tool_class: type,
+        config: Optional[Dict[str, Any]] = None,
+        name_override: Optional[str] = None,
+        description_override: Optional[str] = None,
+        parameters_override: Optional[Dict[str, Any]] = None,
+    ):
+        """Registers a tool class that inherits from BaseTool."""
+        from .base_tool import BaseTool
+
+        if not issubclass(tool_class, BaseTool):
+            raise ToolError(f"{tool_class.__name__} must inherit from BaseTool.")
+
+        name = name_override or getattr(tool_class, "NAME", None)
+        description = description_override or getattr(tool_class, "DESCRIPTION", None)
+        parameters = parameters_override or getattr(tool_class, "PARAMETERS", None)
+
+        if not name or not description:
+            raise ToolError(
+                f"Tool class {tool_class.__name__} missing required NAME or DESCRIPTION."
+            )
+
+        def tool_wrapper(**kwargs: Any) -> ToolExecutionResult:
+            attr = tool_class.__dict__.get("execute")
+            if isinstance(attr, classmethod):
+                return tool_class.execute(**kwargs)
+            instance = tool_class.from_config(**(config or {}))
+            return instance.execute(**kwargs)
+
+        self.register_tool(
+            function=tool_wrapper,
+            name=name,
+            description=description,
+            parameters=parameters,
+        )
+        module_logger.info(f"Registered tool class: {tool_class.__name__} as '{name}'")
+
     def register_builtins(self, names: Optional[List[str]] = None):
         """Registers a selection of built-in tools by name."""
         if names is None:
@@ -115,7 +167,9 @@ class ToolFactory:
                 parameters=info.get("parameters"),
             )
 
-    def get_tool_definitions(self, filter_tool_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def get_tool_definitions(
+        self, filter_tool_names: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Returns the list of provider-compatible tool definitions, optionally filtered.
 
@@ -148,7 +202,9 @@ class ToolFactory:
                 module_logger.warning(
                     f"Requested tools not found in factory: {list(missing_names)}. They will be excluded."
                 )
-            module_logger.debug(f"Returning filtered tool definitions for names: {list(found_names)}")
+            module_logger.debug(
+                f"Returning filtered tool definitions for names: {list(found_names)}"
+            )
             return filtered_definitions
 
     async def dispatch_tool(
@@ -170,7 +226,8 @@ class ToolFactory:
             error_msg = f"Tool '{function_name}' not found."
             module_logger.error(error_msg)
             return ToolExecutionResult(
-                content=json.dumps({"error": error_msg, "status": "tool_not_found"}), error=error_msg
+                content=json.dumps({"error": error_msg, "status": "tool_not_found"}),
+                error=error_msg,
             )
 
         try:
@@ -181,18 +238,24 @@ class ToolFactory:
                     f"Expected JSON object (dict) for arguments of tool '{function_name}', but got {type(llm_provided_arguments)}"
                 )
         except json.JSONDecodeError as e:
-            error_msg = (
-                f"Failed to decode JSON arguments for tool '{function_name}': {e}. Args: '{actual_args_to_parse}'"
-            )
+            error_msg = f"Failed to decode JSON arguments for tool '{function_name}': {e}. Args: '{actual_args_to_parse}'"
             module_logger.error(error_msg)
             return ToolExecutionResult(
-                content=json.dumps({"error": error_msg, "status": "argument_decode_error"}), error=error_msg
+                content=json.dumps(
+                    {"error": error_msg, "status": "argument_decode_error"}
+                ),
+                error=error_msg,
             )
         except TypeError as e:
             error_msg = str(e)
-            module_logger.error(f"Argument type error for tool '{function_name}': {error_msg}")
+            module_logger.error(
+                f"Argument type error for tool '{function_name}': {error_msg}"
+            )
             return ToolExecutionResult(
-                content=json.dumps({"error": error_msg, "status": "argument_type_error"}), error=error_msg
+                content=json.dumps(
+                    {"error": error_msg, "status": "argument_type_error"}
+                ),
+                error=error_msg,
             )
 
         tool_function = self.tools[function_name]
@@ -228,14 +291,21 @@ class ToolFactory:
                             )
                         else:
                             final_arguments[param_name] = param_value
-                            module_logger.debug(f"Injected context param '{param_name}' for tool '{function_name}'")
-            except (ValueError, TypeError) as e:  # Handle cases where signature cannot be determined
+                            module_logger.debug(
+                                f"Injected context param '{param_name}' for tool '{function_name}'"
+                            )
+            except (
+                ValueError,
+                TypeError,
+            ) as e:  # Handle cases where signature cannot be determined
                 module_logger.error(
                     f"Could not inspect signature for tool '{function_name}' (target: {target_callable}): {e}. Context injection might be incomplete."
                 )
 
         try:
-            module_logger.debug(f"Executing tool '{function_name}' with final args: {final_arguments}")
+            module_logger.debug(
+                f"Executing tool '{function_name}' with final args: {final_arguments}"
+            )
             if asyncio.iscoroutinefunction(tool_function):
                 result: ToolExecutionResult = await tool_function(**final_arguments)
             else:
@@ -249,11 +319,16 @@ class ToolFactory:
                 )
                 try:
                     llm_content = json.dumps(
-                        {"result": str(result), "warning": "Tool returned unexpected format."}
+                        {
+                            "result": str(result),
+                            "warning": "Tool returned unexpected format.",
+                        }
                     )  # str(result) for safety
                 except TypeError:
                     llm_content = json.dumps(
-                        {"error": f"Tool returned non-serializable, unexpected format: {type(result)}"}
+                        {
+                            "error": f"Tool returned non-serializable, unexpected format: {type(result)}"
+                        }
                     )
                 return ToolExecutionResult(
                     content=llm_content,
@@ -264,10 +339,13 @@ class ToolFactory:
             )
             return result
         except Exception as e:
-            error_msg = f"Execution failed unexpectedly within tool '{function_name}': {e}"
+            error_msg = (
+                f"Execution failed unexpectedly within tool '{function_name}': {e}"
+            )
             module_logger.exception(f"Error during tool execution for {function_name}")
             return ToolExecutionResult(
-                content=json.dumps({"error": error_msg, "status": "execution_error"}), error=error_msg
+                content=json.dumps({"error": error_msg, "status": "execution_error"}),
+                error=error_msg,
             )
 
     def increment_tool_usage(self, tool_name: str):
@@ -313,7 +391,9 @@ class ToolFactory:
         # However, typical usage (one periodic logger per process) doesn't require this.
         counts_to_return = dict(self.tool_usage_counts)  # Get a copy
         self.reset_tool_usage_counts()  # Then reset
-        module_logger.info(f"Retrieved and reset tool usage counts. Counts returned: {counts_to_return}")
+        module_logger.info(
+            f"Retrieved and reset tool usage counts. Counts returned: {counts_to_return}"
+        )
         return counts_to_return
 
     @property

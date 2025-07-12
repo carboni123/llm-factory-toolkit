@@ -1,0 +1,11 @@
+# Core
+python-dotenv
+openai
+pydantic
+
+# Testing & Dev
+pytest
+pytest-cov
+black
+mypy
+flake8
