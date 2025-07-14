@@ -34,7 +34,8 @@ Import and instantiate the client, specifying the `provider_type`.
 from llm_factory_toolkit import LLMClient
 
 # Basic initialization for OpenAI, using default model (gpt-4o-mini)
-# Assumes OPENAI_API_KEY is in the environment or .env
+# Assumes OPENAI_API_KEY is in the environment or .env. If the key is missing,
+# initialization still succeeds but API calls will raise `ConfigurationError`.
 client = LLMClient(provider_type='openai')
 
 # Specify a model and API key directly
