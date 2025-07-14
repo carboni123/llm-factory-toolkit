@@ -14,7 +14,7 @@ A flexible Python toolkit designed to simplify interactions with various Large L
 *   **Structured Output:** Request responses in specific JSON formats, optionally validated using Pydantic models.
 *   **Async First:** Built with `asyncio` for non-blocking I/O operations.
 *   **Simplified Client:** High-level `LLMClient` manages provider instantiation, tool handling, and API calls.
-*   **Configuration:** Loads API keys securely from environment variables (`.env` file supported) or direct arguments.
+*   **Configuration:** Loads API keys securely from environment variables (`.env` file supported) or direct arguments. If a key isn't found, initialization succeeds but API calls will raise `ConfigurationError`.
 
 ## Installation
 
@@ -54,7 +54,9 @@ import os
 from llm_factory_toolkit import LLMClient
 from llm_factory_toolkit.exceptions import LLMToolkitError
 
-# Ensure your OPENAI_API_KEY is set in your environment or .env file
+# Ensure your OPENAI_API_KEY is set in your environment or .env file. If it is
+# missing, the client can still be created but any API call will raise
+# `ConfigurationError`.
 
 async def main():
     try:

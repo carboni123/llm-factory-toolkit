@@ -4,14 +4,22 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
-from openai import (APIConnectionError, APITimeoutError, AsyncOpenAI,
-                    BadRequestError, RateLimitError)
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AsyncOpenAI,
+    BadRequestError,
+    RateLimitError,
+)
 from pydantic import BaseModel
 
-from ..exceptions import (ConfigurationError, ProviderError, ToolError,
-                          UnsupportedFeatureError)
-from ..tools.models import (ParsedToolCall, ToolExecutionResult,
-                            ToolIntentOutput)
+from ..exceptions import (
+    ConfigurationError,
+    ProviderError,
+    ToolError,
+    UnsupportedFeatureError,
+)
+from ..tools.models import ParsedToolCall, ToolExecutionResult, ToolIntentOutput
 from ..tools.tool_factory import ToolFactory
 from . import register_provider
 from .base import BaseProvider
@@ -57,14 +65,17 @@ class OpenAIProvider(BaseProvider):
         super().__init__(api_key=api_key, api_env_var=self.API_ENV_VAR, **kwargs)
 
         if not self.api_key:
-            raise ConfigurationError(
-                f"No valid OpenAI API key found. Provide 'api_key' argument, file path, or set {self.API_ENV_VAR}."
+            self.async_client = None
+            module_logger.warning(
+                "OpenAI API key not found during initialization. API calls will fail until a key is provided."
             )
-
-        try:
-            self.async_client = AsyncOpenAI(api_key=self.api_key, timeout=timeout)
-        except Exception as e:
-            raise ConfigurationError(f"Failed to initialize OpenAI async client: {e}")
+        else:
+            try:
+                self.async_client = AsyncOpenAI(api_key=self.api_key, timeout=timeout)
+            except Exception as e:
+                raise ConfigurationError(
+                    f"Failed to initialize OpenAI async client: {e}"
+                )
 
         self.model = model
         # Ensure tool_factory is stored. It's needed for get_tool_definitions
@@ -82,6 +93,15 @@ class OpenAIProvider(BaseProvider):
                 "OpenAI Provider initialized. Model: %s. No ToolFactory provided.",
                 self.model,
             )
+
+    def _ensure_client(self) -> AsyncOpenAI:
+        """Return the async client or raise if not configured."""
+        if self.async_client is None:
+            raise ConfigurationError(
+                "OpenAI API key is required for API calls. Provide a valid key via argument "
+                "or the OPENAI_API_KEY environment variable."
+            )
+        return self.async_client
 
     async def generate(
         self,
@@ -125,6 +145,8 @@ class OpenAIProvider(BaseProvider):
         Raises:
             ProviderError, ToolError, UnsupportedFeatureError, ConfigurationError.
         """
+        self._ensure_client()
+
         collected_payloads: List[Any] = []
         active_model = model or self.model
         current_messages = list(messages)
@@ -256,6 +278,8 @@ class OpenAIProvider(BaseProvider):
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         **kwargs: Any,
     ) -> ToolIntentOutput:
+        self._ensure_client()
+
         active_model = model or self.model
         api_call_args = {"model": active_model, **kwargs}
 
@@ -294,9 +318,8 @@ class OpenAIProvider(BaseProvider):
         # --- End Tool Configuration ---
 
         try:
-            completion = await self.async_client.chat.completions.create(
-                **request_payload
-            )
+            client = self._ensure_client()
+            completion = await client.chat.completions.create(**request_payload)
             if completion.usage:
                 module_logger.info(
                     f"OpenAI API Usage for intent: {completion.usage.model_dump_json(exclude_unset=True)}"
@@ -483,10 +506,9 @@ class OpenAIProvider(BaseProvider):
         num_messages: int,
     ) -> Any:
         """Wrapper for OpenAI API call with error handling."""
+        client = self._ensure_client()
         try:
-            completion = await self.async_client.chat.completions.create(
-                **request_payload
-            )
+            completion = await client.chat.completions.create(**request_payload)
             if completion.usage:
                 module_logger.info(
                     f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
