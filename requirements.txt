@@ -2,13 +2,13 @@
 #    uv pip compile requirements.in -o requirements.txt
 annotated-types==0.7.0
     # via pydantic
-anyio==4.9.0
+anyio==4.10.0
     # via
     #   httpx
     #   openai
 black==25.1.0
     # via -r requirements.in
-certifi==2025.7.9
+certifi==2025.8.3
     # via
     #   httpcore
     #   httpx
@@ -19,7 +19,7 @@ colorama==0.4.6
     #   click
     #   pytest
     #   tqdm
-coverage==7.9.2
+coverage==7.10.4
     # via pytest-cov
 distro==1.9.0
     # via openai
@@ -41,13 +41,13 @@ jiter==0.10.0
     # via openai
 mccabe==0.7.0
     # via flake8
-mypy==1.16.1
+mypy==1.17.1
     # via -r requirements.in
 mypy-extensions==1.1.0
     # via
     #   black
     #   mypy
-openai==1.95.1
+openai==1.101.0
     # via -r requirements.in
 packaging==25.0
     # via
@@ -80,7 +80,7 @@ pytest==8.4.1
     #   -r requirements.in
     #   pytest-asyncio
     #   pytest-cov
-pytest-asyncio==1.0.0
+pytest-asyncio==1.1.0
     # via -r requirements.in
 pytest-cov==6.2.1
     # via -r requirements.in

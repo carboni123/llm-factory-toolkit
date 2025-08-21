@@ -290,18 +290,21 @@ class ToolFactory:
 
             try:
                 sig = inspect.signature(target_callable)
+                accepts_var_kw = any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD
+                    for p in sig.parameters.values()
+                )
                 for param_name, param_value in tool_execution_context.items():
-                    if param_name in sig.parameters:
-                        if param_name in final_arguments:
-                            module_logger.warning(
-                                f"Context parameter '{param_name}' for tool '{function_name}' "
-                                f"collides with an LLM-provided argument. Context will NOT override."
-                            )
-                        else:
-                            final_arguments[param_name] = param_value
-                            module_logger.debug(
-                                f"Injected context param '{param_name}' for tool '{function_name}'"
-                            )
+                    if param_name in final_arguments:
+                        module_logger.warning(
+                            f"Context parameter '{param_name}' for tool '{function_name}' "
+                            f"collides with an LLM-provided argument. Context will NOT override."
+                        )
+                    elif param_name in sig.parameters or accepts_var_kw:
+                        final_arguments[param_name] = param_value
+                        module_logger.debug(
+                            f"Injected context param '{param_name}' for tool '{function_name}'"
+                        )
             except (
                 ValueError,
                 TypeError,
