@@ -102,7 +102,7 @@ class BaseProvider(ABC):
         *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[Optional[BaseModel | str], List[Any]]:
         """
         Abstract method to generate text based on a list of messages,
         potentially handling tool calls and returning deferred action payloads.
@@ -110,8 +110,8 @@ class BaseProvider(ABC):
         Tool usage counts are updated within the ToolFactory instance if one is used.
 
         Returns:
-        Tuple[Optional[str], List[Any]]:
-            - The generated text content (or None).
+        Tuple[Optional[BaseModel | str], List[Any]]:
+            - The generated content as text or a parsed Pydantic model (or None).
             - A list of payloads from executed tools requiring deferred action.
         """
         pass

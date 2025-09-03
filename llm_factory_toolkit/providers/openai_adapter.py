@@ -116,7 +116,7 @@ class OpenAIProvider(BaseProvider):
         tool_execution_context: Optional[Dict[str, Any]] = None,
         parallel_tools: bool = False,
         **kwargs: Any,
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[Optional[BaseModel | str], List[Any]]:
         """
         Generates text using the OpenAI API, handling tool calls iteratively,
         supporting tool filtering, and Pydantic response formatting.
@@ -140,8 +140,8 @@ class OpenAIProvider(BaseProvider):
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
-            Tuple[Optional[str], List[Any]]:
-                - Final assistant content (or None).
+            Tuple[Optional[BaseModel | str], List[Any]]:
+                - Final assistant content as text or parsed model (or None).
                 - List of payloads collected from tool calls that require action.
         Raises:
             ProviderError, ToolError, UnsupportedFeatureError, ConfigurationError.
@@ -154,23 +154,18 @@ class OpenAIProvider(BaseProvider):
         iteration_count = 0
 
         api_call_args = {"model": active_model, **kwargs}  # Start with base args
+        use_parse = False
 
         # --- Handle response_format ---
         if response_format:
-            # Handle Pydantic response_format schema if provided
             if isinstance(response_format, type) and issubclass(
                 response_format, BaseModel
             ):
-                raw_schema = response_format.model_json_schema(mode="validation")
-                clean_schema = self._prune_openai_schema(raw_schema)
-                clean_schema["additionalProperties"] = False
-                api_call_args["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_format.__name__,
-                        "schema": clean_schema,
-                    },
-                }
+                api_call_args["response_format"] = response_format
+                use_parse = True
+            elif isinstance(response_format, dict):
+                api_call_args["response_format"] = response_format
+
         # --- Optional parameters ---
         if temperature is not None:
             api_call_args["temperature"] = temperature
@@ -205,27 +200,32 @@ class OpenAIProvider(BaseProvider):
 
             # --- API Call ---
             completion = await self._make_api_call(
-                request_payload, active_model, len(current_messages)
+                request_payload,
+                active_model,
+                len(current_messages),
+                use_parse=use_parse,
             )
 
             # --- Process Response ---
             response_message = completion.choices[0].message
-            response_message_dict = response_message.model_dump(exclude_unset=True)
+            response_message_dict = response_message.model_dump(
+                exclude_unset=True, exclude={"parsed"}
+            )
             current_messages.append(response_message_dict)
 
             tool_calls = response_message.tool_calls
 
             # --- Handle No Tool Calls ---
             if not tool_calls:
-                # No tool calls, return the content
+                if use_parse and getattr(response_message, "parsed", None) is not None:
+                    return response_message.parsed, collected_payloads
+
                 final_content = response_message.content
-                # Attempt to parse if JSON format was requested
                 if isinstance(response_format, dict) and response_format.get(
                     "type", ""
                 ).startswith("json"):
                     if final_content:
                         try:
-                            # Validate JSON structure if needed
                             _ = json.loads(final_content)
                             return final_content, collected_payloads
                         except json.JSONDecodeError:
@@ -234,12 +234,11 @@ class OpenAIProvider(BaseProvider):
                             )
                             return final_content, collected_payloads
                     else:
-                        # Handle case where model returns no content but was expected to return JSON
                         module_logger.warning(
                             "Model returned no content when JSON format was requested."
                         )
-                        return None, []  # Or raise an error?
-                return final_content, collected_payloads  # Return plain text content
+                        return None, []
+                return final_content, collected_payloads
 
             # --- Handle Tool Calls ---
             module_logger.info(f"Tool calls received: {len(tool_calls)}")
@@ -283,21 +282,14 @@ class OpenAIProvider(BaseProvider):
 
         active_model = model or self.model
         api_call_args = {"model": active_model, **kwargs}
+        use_parse = False
 
         if response_format:
             if isinstance(response_format, type) and issubclass(
                 response_format, BaseModel
             ):
-                raw_schema = response_format.model_json_schema(mode="validation")
-                clean_schema = self._prune_openai_schema(raw_schema)
-                clean_schema["additionalProperties"] = False
-                api_call_args["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_format.__name__,
-                        "schema": clean_schema,
-                    },
-                }
+                api_call_args["response_format"] = response_format
+                use_parse = True
             elif isinstance(response_format, dict):
                 api_call_args["response_format"] = response_format
 
@@ -319,11 +311,13 @@ class OpenAIProvider(BaseProvider):
         # --- End Tool Configuration ---
 
         completion = await self._make_api_call(
-            request_payload, active_model, len(messages)
+            request_payload, active_model, len(messages), use_parse=use_parse
         )
 
         response_message = completion.choices[0].message
-        raw_assistant_msg_dict = response_message.model_dump(exclude_unset=True)
+        raw_assistant_msg_dict = response_message.model_dump(
+            exclude_unset=True, exclude={"parsed"}
+        )
 
         parsed_tool_calls_list: List[ParsedToolCall] = []
         if response_message.tool_calls:
@@ -380,56 +374,16 @@ class OpenAIProvider(BaseProvider):
                         f"Skipping unexpected tool call type or format in intent: {tc.model_dump_json()}"
                     )
 
+        if use_parse and getattr(response_message, "parsed", None) is not None:
+            content_val = response_message.parsed.model_dump_json()
+        else:
+            content_val = response_message.content
+
         return ToolIntentOutput(
-            content=response_message.content,
+            content=content_val,
             tool_calls=parsed_tool_calls_list if parsed_tool_calls_list else None,
             raw_assistant_message=raw_assistant_msg_dict,
         )
-
-    @staticmethod
-    def _prune_openai_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Removes JSON Schema keywords not typically supported or recommended
-        by OpenAI function/tool calling schemas. This is a simplified version.
-        Consult OpenAI documentation for the definitive list.
-
-        Supported keywords generally include: type, properties, required,
-        items (for arrays), enum, description. format might be supported sometimes.
-
-        Unsupported or problematic: $ref, $schema, definitions, patternProperties,
-        additionalProperties (sometimes), dependencies, allOf, anyOf, oneOf, not, etc.
-        """
-        ALLOWED_KEYS = {
-            "type",
-            "properties",
-            "required",
-            "items",
-            "enum",
-            "description",
-            "format",
-        }
-
-        def _prune(node: Any) -> Any:
-            if isinstance(node, dict):
-                keys_to_remove = [key for key in node if key not in ALLOWED_KEYS]
-                if keys_to_remove:
-                    for key in keys_to_remove:
-                        del node[key]
-                if "properties" in node and isinstance(node["properties"], dict):
-                    for prop_key in list(node["properties"].keys()):
-                        node["properties"][prop_key] = _prune(
-                            node["properties"][prop_key]
-                        )
-                if "items" in node:
-                    node["items"] = _prune(node["items"])
-                return node
-            elif isinstance(node, list):
-                return [_prune(item) for item in node]
-            else:
-                return node
-
-        pruned_schema: Dict[str, Any] = _prune(schema.copy())
-        return pruned_schema
 
     def _prepare_tool_payload(
         self, use_tools: Optional[List[str]], existing_kwargs: Dict[str, Any]
@@ -472,11 +426,16 @@ class OpenAIProvider(BaseProvider):
         request_payload: Dict[str, Any],
         active_model: str,
         num_messages: int,
+        *,
+        use_parse: bool = False,
     ) -> Any:
         """Wrapper for OpenAI API call with error handling."""
         client = self._ensure_client()
         try:
-            completion = await client.chat.completions.create(**request_payload)
+            if use_parse:
+                completion = await client.chat.completions.parse(**request_payload)
+            else:
+                completion = await client.chat.completions.create(**request_payload)
             if completion.usage:
                 module_logger.info(
                     f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
@@ -509,7 +468,10 @@ class OpenAIProvider(BaseProvider):
                     "Retrying with 'max_completion_tokens' as 'max_tokens' is unsupported"
                 )
                 try:
-                    completion = await client.chat.completions.create(**request_payload)
+                    if use_parse:
+                        completion = await client.chat.completions.parse(**request_payload)
+                    else:
+                        completion = await client.chat.completions.create(**request_payload)
                     if completion.usage:
                         module_logger.info(
                             f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
