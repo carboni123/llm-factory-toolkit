@@ -299,64 +299,45 @@ async def run_json_mode():
 
 ### Pydantic Model Mode
 
-Define a Pydantic model representing your desired JSON structure. Pass the model *class* to `response_format`. The toolkit will:
-
-1.  Generate the JSON schema from the Pydantic model.
-2.  Configure the API call (e.g., set `response_format={"type": "json_object"}`).
-3.  Inject instructions into the prompt (usually the system prompt or last user message) telling the model to adhere to the generated schema.
+Define a Pydantic model representing your desired structured output. Pass the model *class* to `response_format`. The toolkit forwards it directly to OpenAI's parser, which validates the model's reply and returns an instance of your Pydantic model.
 
 ```python
 import asyncio
 from llm_factory_toolkit import LLMClient
 from pydantic import BaseModel, Field
-import json
 
-# 1. Define your Pydantic model
 class UserInfo(BaseModel):
     name: str = Field(description="The full name of the person.")
     age: int | None = Field(default=None, description="The age of the person, if known.")
     city: str = Field(description="The city where the person lives.")
 
 async def run_pydantic_mode():
-    # Use a model known to be good at following instructions, like gpt-4-turbo or gpt-4o-mini
     client = LLMClient(provider_type='openai', model='gpt-4o-mini')
 
-    # Note: Providing a system prompt helps guide the model
     messages = [
         {"role": "system", "content": "You extract structured data based on the user request and provided schema."},
         {"role": "user", "content": "Parse the following: 'Bob is 30 years old and resides in New York.'"}
     ]
 
     try:
-        # Pass the Pydantic model class to response_format
-        structured_response = await client.generate(
+        structured_response, _ = await client.generate(
             messages=messages,
-            response_format=UserInfo # Pass the class itself
+            response_format=UserInfo
         )
 
         if structured_response:
-            print(f"Raw JSON string (should match Pydantic schema):\n{structured_response}")
-            try:
-                # 3. Validate the output against the model
-                user_data = UserInfo.model_validate_json(structured_response)
-                print("\nValidated Pydantic object:")
-                print(user_data)
-                assert user_data.name == "Bob"
-                assert user_data.age == 30
-                assert user_data.city == "New York"
-                print("\nValidation successful!")
-            except Exception as e: # Catch Pydantic validation errors or JSON errors
-                print(f"\nError validating/parsing response: {e}")
-        else:
-            print("\nNo response received.")
-
+            print("Validated Pydantic object:")
+            print(structured_response.model_dump_json(indent=2))
+            assert structured_response.name == "Bob"
+            assert structured_response.age == 30
+            assert structured_response.city == "New York"
     except Exception as e:
         print(f"An error occurred: {e}")
 
 # asyncio.run(run_pydantic_mode())
 ```
 
-**Note:** Pydantic mode relies heavily on the LLM's ability to follow instructions and generate schema-compliant JSON within the prompt context.
+**Note:** When a Pydantic model is supplied, the OpenAI client attempts to repair and validate the output automatically.
 
 ## Error Handling
 

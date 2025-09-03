@@ -105,7 +105,7 @@ class LLMClient:
         tool_execution_context: Optional[Dict[str, Any]] = None,
         parallel_tools: bool = False,
         **kwargs: Any,
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[Optional[BaseModel | str], List[Any]]:
         """
         Generates a response from the configured LLM provider based on the message history,
         potentially handling tool calls and returning deferred action payloads.
@@ -128,8 +128,8 @@ class LLMClient:
                       (e.g., tool_choice, max_tool_iterations).
 
         Returns:
-            Tuple[Optional[str], List[Any]]:
-                - The generated text content (or None).
+            Tuple[Optional[BaseModel | str], List[Any]]:
+                - The generated content as plain text or a parsed Pydantic model (or None).
                 - A list of payloads from executed tools requiring deferred action.
 
         Raises:
