@@ -128,7 +128,8 @@ class OpenAIProvider(BaseProvider):
             max_tool_iterations: Max tool call cycles.
             response_format: Dictionary or Pydantic model for response format.
             temperature: Sampling temperature.
-            max_tokens: Max tokens to generate.
+            max_tokens: Max tokens to generate. Automatically translated to
+                ``max_completion_tokens`` for models that require it.
             use_tools (Optional[List[str]]): List of tool names to make available for this call.
                                              Defaults to ``[]`` which exposes all registered tools.
                                              Passing ``None`` disables tool usage. A non-empty list
@@ -317,42 +318,9 @@ class OpenAIProvider(BaseProvider):
             request_payload["tool_choice"] = tool_choice_for_payload
         # --- End Tool Configuration ---
 
-        try:
-            client = self._ensure_client()
-            completion = await client.chat.completions.create(**request_payload)
-            if completion.usage:
-                module_logger.info(
-                    f"OpenAI API Usage for intent: {completion.usage.model_dump_json(exclude_unset=True)}"
-                )
-        except asyncio.TimeoutError:
-            module_logger.error(
-                f"OpenAI API request (intent) timed out after {self.timeout} seconds."
-            )
-            raise ProviderError("API request for intent timed out")
-        except APIConnectionError as e:
-            module_logger.error(f"OpenAI API connection error (intent): {e}")
-            raise ProviderError(f"API connection error (intent): {e}")
-        except RateLimitError as e:
-            module_logger.error(f"OpenAI API rate limit exceeded (intent): {e}")
-            raise ProviderError(f"API rate limit exceeded (intent): {e}")
-        except APITimeoutError as e:
-            module_logger.error(f"OpenAI API operation timed out (intent): {e}")
-            raise ProviderError(f"API operation timed out (intent): {e}")
-        except BadRequestError as e:
-            module_logger.error(f"OpenAI API bad request (intent): {e}")
-            extra_args = {k: v for k, v in request_payload.items() if k != "messages"}
-            module_logger.error(
-                "Request details (intent): Model=%s, NumMessages=%s, Args=%s",
-                active_model,
-                len(messages),
-                extra_args,
-            )
-            raise ProviderError(f"API bad request (intent): {e}")
-        except Exception as e:
-            module_logger.error(
-                f"Unexpected error during OpenAI API call (intent): {e}", exc_info=True
-            )
-            raise ProviderError(f"Unexpected API error (intent): {e}")
+        completion = await self._make_api_call(
+            request_payload, active_model, len(messages)
+        )
 
         response_message = completion.choices[0].message
         raw_assistant_msg_dict = response_message.model_dump(exclude_unset=True)
@@ -529,6 +497,32 @@ class OpenAIProvider(BaseProvider):
             module_logger.error(f"OpenAI API operation timed out: {e}")
             raise ProviderError(f"API operation timed out: {e}")
         except BadRequestError as e:
+            message = str(e)
+            if (
+                "max_tokens" in message
+                and "max_completion_tokens" in message
+                and "max_tokens" in request_payload
+            ):
+                max_tok = request_payload.pop("max_tokens")
+                request_payload["max_completion_tokens"] = max_tok
+                module_logger.info(
+                    "Retrying with 'max_completion_tokens' as 'max_tokens' is unsupported"
+                )
+                try:
+                    completion = await client.chat.completions.create(**request_payload)
+                    if completion.usage:
+                        module_logger.info(
+                            f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
+                        )
+                    return completion
+                except Exception as retry_error:
+                    module_logger.error(
+                        f"Retry after removing 'max_tokens' failed: {retry_error}"
+                    )
+                    raise ProviderError(
+                        f"API bad request: {retry_error}"
+                    ) from retry_error
+
             module_logger.error(f"OpenAI API bad request: {e}")
             extra_args = {k: v for k, v in request_payload.items() if k != "messages"}
             module_logger.error(
