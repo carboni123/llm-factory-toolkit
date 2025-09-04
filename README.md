@@ -70,7 +70,7 @@ async def main():
         ]
 
         print("Generating response...")
-        response = await client.generate(messages=messages)
+        response = await client.generate(input=messages)
 
         if response:
             print("\nAssistant Response:")

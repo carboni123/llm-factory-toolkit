@@ -3,7 +3,11 @@ import pytest
 
 # Imports from your library
 from llm_factory_toolkit import LLMClient
-from llm_factory_toolkit.exceptions import ConfigurationError, ProviderError, LLMToolkitError
+from llm_factory_toolkit.exceptions import (
+    ConfigurationError,
+    ProviderError,
+    LLMToolkitError,
+)
 
 # Use pytest-asyncio for async tests
 pytestmark = pytest.mark.asyncio
@@ -24,13 +28,13 @@ skip_reason = "OPENAI_API_KEY environment variable not set"
 @pytest.mark.skipif(should_skip, reason=skip_reason)
 async def test_make_api_call_retries_without_temperature():
     """Ensure unsupported ``temperature`` is removed and retried."""
-    client = LLMClient(provider_type='openai', model=TEST_MODEL)
+    client = LLMClient(provider_type="openai", model=TEST_MODEL)
     assert client is not None
 
-    if hasattr(client.provider, 'model'):
-            print(f"Using model: {client.provider.model}")
+    if hasattr(client.provider, "model"):
+        print(f"Using model: {client.provider.model}")
     else:
-            print(f"Client provider type: {type(client.provider).__name__}")
+        print(f"Client provider type: {type(client.provider).__name__}")
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -39,9 +43,9 @@ async def test_make_api_call_retries_without_temperature():
 
     print("Calling client.generate...")
     response_content, _ = await client.generate(
-        messages=messages,
+        input=messages,
         model=TEST_MODEL,
-        max_tokens=100,
+        max_output_tokens=100,
         temperature=0.7,
     )
     print(f"Received response snippet: {response_content}")

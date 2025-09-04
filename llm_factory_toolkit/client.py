@@ -5,8 +5,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from pydantic import BaseModel  # Import for type hinting
 
-from .exceptions import (ConfigurationError, LLMToolkitError, ProviderError,
-                         ToolError, UnsupportedFeatureError)
+from .exceptions import (
+    ConfigurationError,
+    LLMToolkitError,
+    ProviderError,
+    ToolError,
+    UnsupportedFeatureError,
+)
 from .providers import BaseProvider, create_provider_instance
 from .tools.models import ToolExecutionResult, ToolIntentOutput
 from .tools.tool_factory import ToolFactory
@@ -96,10 +101,10 @@ class LLMClient:
 
     async def generate(
         self,
-        messages: List[Dict[str, Any]],
+        input: List[Dict[str, Any]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
@@ -111,10 +116,10 @@ class LLMClient:
         potentially handling tool calls and returning deferred action payloads.
 
         Args:
-            messages (List[Dict[str, Any]]): The conversation history.
+            input (List[Dict[str, Any]]): The conversation history.
             model (str, optional): Override the default model for this request.
             temperature (float, optional): Sampling temperature.
-            max_tokens (int, optional): Max tokens to generate.
+            max_output_tokens (int, optional): Max tokens to generate.
             response_format (Dict | Type[BaseModel], optional): Desired response format (e.g., JSON).
                                                                 Accepts dict or Pydantic model.
             use_tools (Optional[List[str]]): A list of tool names to make available for this
@@ -146,10 +151,10 @@ class LLMClient:
         )
 
         provider_args = {
-            "messages": messages,
+            "input": input,
             "model": model,
             "temperature": temperature,
-            "max_completion_tokens": max_tokens,
+            "max_output_tokens": max_output_tokens,
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_execution_context": tool_execution_context,
@@ -187,10 +192,10 @@ class LLMClient:
 
     async def generate_tool_intent(
         self,
-        messages: List[Dict[str, Any]],
+        input: List[Dict[str, Any]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         **kwargs: Any,
@@ -200,10 +205,10 @@ class LLMClient:
         but does not execute them.
 
         Args:
-            messages: The conversation history.
+            input: The conversation history.
             model: Override the default model for this request.
             temperature: Sampling temperature.
-            max_tokens: Max tokens to generate.
+            max_output_tokens: Max tokens to generate.
             response_format: Desired response format if the LLM replies directly.
             use_tools: List of tool names to make available. Defaults to ``[]``
                        which exposes all registered tools. Pass ``None`` to
@@ -223,10 +228,10 @@ class LLMClient:
         )
 
         provider_args = {
-            "messages": messages,
+            "input": input,
             "model": model,
             "temperature": temperature,
-            "max_completion_tokens": max_tokens,
+            "max_output_tokens": max_output_tokens,
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_choice": "required",
@@ -266,14 +271,19 @@ class LLMClient:
     ) -> List[Dict[str, Any]]:
         """
         Executes a list of tool call intents using the client's ToolFactory
-        and returns a list of formatted tool result messages *based on the content*.
-        This coroutine performs immediate execution and does not handle deferred payloads.
+        and returns a list of formatted tool result items suitable for the
+        OpenAI Responses API. Each executed tool produces an item of type
+        ``function_call_output`` that the caller can append to the conversation
+        history before making a follow-up LLM call. This coroutine performs
+        immediate execution and does not handle deferred payloads.
 
         Args:
             intent_output: The ToolIntentOutput containing tool_calls from the planner.
 
         Returns:
-            A list of tool result messages suitable for adding to an LLM conversation history.
+            A list of tool result items (each a ``dict`` with ``type`` set to
+            ``function_call_output``) ready to be appended to the conversation
+            history for subsequent LLM calls.
 
         Raises:
             ConfigurationError: If the client does not have a ToolFactory configured.
@@ -301,10 +311,9 @@ class LLMClient:
                 )
                 tool_result_messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": json.dumps(
+                        "type": "function_call_output",
+                        "call_id": tool_call_id,
+                        "output": json.dumps(
                             {
                                 "error": f"Tool '{tool_name}' skipped due to argument parsing error during planning.",
                                 "details": tool_call.arguments_parsing_error,
@@ -335,10 +344,9 @@ class LLMClient:
                 )
                 tool_result_messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": json.dumps(
+                        "type": "function_call_output",
+                        "call_id": tool_call_id,
+                        "output": json.dumps(
                             {
                                 "error": (
                                     "Internal error: Failed to serialize arguments for tool '%s'."
@@ -385,10 +393,9 @@ class LLMClient:
                     )
                 tool_result_messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": result_content_for_llm,
+                        "type": "function_call_output",
+                        "call_id": tool_call_id,
+                        "output": result_content_for_llm,
                     }
                 )
             except Exception as e:
@@ -401,10 +408,9 @@ class LLMClient:
                 )
                 tool_result_messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": json.dumps(
+                        "type": "function_call_output",
+                        "call_id": tool_call_id,
+                        "output": json.dumps(
                             {
                                 "error": f"Unexpected client-side error executing tool '{tool_name}'.",
                                 "details": str(e),
