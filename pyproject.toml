@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm_factory_toolkit"
-version = "0.3.2"
+version = "0.4.0"
 authors = [
   { name="Diego Carboni", email="carboni123@hotmail.com" },
 ]
@@ -22,13 +22,13 @@ classifiers = [
 # Add dependencies from requirements.txt
 dependencies = [
     "python-dotenv>=1.1",
-    "openai>=1.101.0",
+    "openai>=1.106.1",
     "pydantic>=2.11",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/carboni123/llm_factory_toolkit" # Update URL
-"Bug Tracker" = "https://github.com/carboni123/llm_factory_toolkit/issues" # Update URL
+"Homepage" = "https://github.com/carboni123/llm_factory_toolkit"
+"Bug Tracker" = "https://github.com/carboni123/llm_factory_toolkit/issues"
 
 [project.optional-dependencies]
 dev = [

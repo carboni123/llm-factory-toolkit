@@ -10,9 +10,8 @@ from openai import (
     AsyncOpenAI,
     BadRequestError,
     RateLimitError,
-    pydantic_function_tool,
 )
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel
 
 from ..exceptions import (
     ConfigurationError,
@@ -153,33 +152,26 @@ class OpenAIProvider(BaseProvider):
         current_messages = list(input)
         iteration_count = 0
 
-        api_call_args = {"model": active_model, **kwargs}  # Start with base args
+        api_call_args = {"model": active_model, **kwargs}
         use_parse = False
 
-        # --- Handle response_format ---
         if response_format:
             if isinstance(response_format, type) and issubclass(
                 response_format, BaseModel
             ):
                 api_call_args["text_format"] = response_format
                 use_parse = True
-            elif isinstance(response_format, dict):
-                api_call_args["text"] = response_format
+            else:
+                api_call_args["text"] = {"format": response_format}
 
-        # --- Optional parameters ---
         if temperature is not None:
             api_call_args["temperature"] = temperature
         if max_output_tokens is not None:
             api_call_args["max_output_tokens"] = max_output_tokens
 
-        # --- Main Generation Loop ---
         while iteration_count < max_tool_iterations:
-            request_payload = {
-                **api_call_args,
-                "input": current_messages,
-            }  # Combine base args + current messages
+            request_payload = {**api_call_args, "input": current_messages}
 
-            # --- Tool Configuration ---
             tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
                 use_tools, request_payload
             )
@@ -188,65 +180,36 @@ class OpenAIProvider(BaseProvider):
             if tool_choice_for_payload is not None:
                 request_payload["tool_choice"] = tool_choice_for_payload
 
-            # --- API Call ---
             completion = await self._make_api_call(
-                request_payload,
-                active_model,
-                len(current_messages),
+                request_payload, active_model, len(current_messages)
             )
 
-            assistant_text = ""
-            tool_calls: List[Any] = []
-            for item in getattr(completion, "output", []):
-                if getattr(item, "type", None) == "message" and getattr(
-                    item, "content", None
-                ):
-                    parts = [
-                        getattr(c, "text", "")
-                        for c in item.content
-                        if getattr(c, "type", "") == "output_text"
-                    ]
-                    assistant_text += "".join(parts)
-                elif getattr(item, "type", None) in {
-                    "function_call",
-                    "custom_tool_call",
-                }:
-                    tool_calls.append(item)
+            assistant_text = getattr(completion, "output_text", "") or ""
+            tool_calls = [
+                item
+                for item in getattr(completion, "output", [])
+                if getattr(item, "type", None) in {"function_call", "custom_tool_call"}
+            ]
 
-            response_message_dict: Dict[str, Any] = {
-                "role": "assistant",
-                "content": assistant_text,
-            }
-            if tool_calls:
-                response_message_dict["tool_calls"] = [
-                    {
-                        "id": getattr(tc, "id", None) or getattr(tc, "call_id", ""),
-                        "type": "function",
-                        "function": {
-                            "name": getattr(tc, "name", ""),
-                            "arguments": getattr(
-                                tc, "arguments", getattr(tc, "input", "")
-                            ),
-                        },
-                    }
-                    for tc in tool_calls
-                ]
-            current_messages.append(response_message_dict)
+            new_items = []
+            for out_item in getattr(completion, "output", []):
+                dump = out_item.model_dump()
+                if dump.get("type") in {"function_call", "custom_tool_call"}:
+                    dump.pop("parsed_arguments", None)
+                new_items.append(dump)
+            current_messages.extend(new_items)
 
             if not tool_calls:
-                if use_parse and getattr(completion, "output", None):
-                    first = completion.output[0]
-                    if (
-                        getattr(first, "content", None)
-                        and getattr(first.content[0], "parsed", None) is not None
-                    ):
-                        return first.content[0].parsed, collected_payloads
+                if use_parse:
+                    for item in getattr(completion, "output", []):
+                        for content in getattr(item, "content", []):
+                            parsed_obj = getattr(content, "parsed", None)
+                            if parsed_obj is not None:
+                                return parsed_obj, collected_payloads
 
-                final_content = assistant_text or getattr(
-                    completion, "output_text", None
-                )
+                final_content = assistant_text
                 if isinstance(response_format, dict) and response_format.get(
-                    "format", ""
+                    "type", ""
                 ).startswith("json"):
                     if final_content:
                         try:
@@ -282,10 +245,11 @@ class OpenAIProvider(BaseProvider):
             collected_payloads.extend(payloads)
             iteration_count += 1
             module_logger.debug(
-                f"Completed tool iteration {iteration_count}. Current messages: {[m['role'] for m in current_messages]}"
+                "Completed tool iteration %s. Current messages: %s",
+                iteration_count,
+                [m.get("role") or m.get("type") for m in current_messages],
             )
 
-        # --- Max Iterations Reached ---
         final_content = self._aggregate_final_content(
             current_messages, max_tool_iterations
         )
@@ -313,8 +277,8 @@ class OpenAIProvider(BaseProvider):
             ):
                 api_call_args["text_format"] = response_format
                 use_parse = True
-            elif isinstance(response_format, dict):
-                api_call_args["text"] = response_format
+            else:
+                api_call_args["text"] = {"format": response_format}
 
         if temperature is not None:
             api_call_args["temperature"] = temperature
@@ -323,51 +287,31 @@ class OpenAIProvider(BaseProvider):
 
         request_payload = {**api_call_args, "input": list(input)}
 
-        # --- Tool Configuration (using refactored logic) ---
         tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
-            use_tools, kwargs
+            use_tools, request_payload
         )
         if tools_for_payload is not None:
             request_payload["tools"] = tools_for_payload
         if tool_choice_for_payload is not None:
             request_payload["tool_choice"] = tool_choice_for_payload
-        # --- End Tool Configuration ---
 
         completion = await self._make_api_call(
             request_payload, active_model, len(input)
         )
 
-        assistant_text = ""
-        tool_call_items: List[Any] = []
-        for item in getattr(completion, "output", []):
-            if getattr(item, "type", None) == "message" and getattr(
-                item, "content", None
-            ):
-                parts = [
-                    getattr(c, "text", "")
-                    for c in item.content
-                    if getattr(c, "type", "") == "output_text"
-                ]
-                assistant_text += "".join(parts)
-            elif getattr(item, "type", None) in {"function_call", "custom_tool_call"}:
-                tool_call_items.append(item)
+        assistant_text = getattr(completion, "output_text", "") or ""
+        tool_call_items = [
+            item
+            for item in getattr(completion, "output", [])
+            if getattr(item, "type", None) in {"function_call", "custom_tool_call"}
+        ]
 
-        raw_assistant_msg_dict: Dict[str, Any] = {
-            "role": "assistant",
-            "content": assistant_text,
-        }
-        if tool_call_items:
-            raw_assistant_msg_dict["tool_calls"] = [
-                {
-                    "id": getattr(tc, "id", None) or getattr(tc, "call_id", ""),
-                    "type": "function",
-                    "function": {
-                        "name": getattr(tc, "name", ""),
-                        "arguments": getattr(tc, "arguments", getattr(tc, "input", "")),
-                    },
-                }
-                for tc in tool_call_items
-            ]
+        raw_assistant_items: List[Dict[str, Any]] = []
+        for item in getattr(completion, "output", []):
+            if getattr(item, "type", None) in {"function_call", "custom_tool_call"}:
+                dump = item.model_dump()
+                dump.pop("parsed_arguments", None)
+                raw_assistant_items.append(dump)
 
         parsed_tool_calls_list: List[ParsedToolCall] = []
         if tool_call_items:
@@ -377,6 +321,10 @@ class OpenAIProvider(BaseProvider):
                 args_str = getattr(tc, "arguments", getattr(tc, "input", None))
                 if func_name and self.tool_factory:
                     self.tool_factory.increment_tool_usage(func_name)
+
+                call_identifier = getattr(tc, "call_id", None) or getattr(
+                    tc, "id", None
+                )
 
                 args_dict_or_str: Union[Dict[str, Any], str]
                 parsing_error: Optional[str] = None
@@ -403,21 +351,24 @@ class OpenAIProvider(BaseProvider):
 
                 parsed_tool_calls_list.append(
                     ParsedToolCall(
-                        id=str(getattr(tc, "id", "")),
+                        id=str(call_identifier or ""),
                         name=func_name or "",
                         arguments=args_dict_or_str,
                         arguments_parsing_error=parsing_error,
                     )
                 )
 
-        if use_parse and getattr(completion, "output", None):
-            first = completion.output[0]
-            if (
-                getattr(first, "content", None)
-                and getattr(first.content[0], "parsed", None) is not None
-            ):
-                content_val = first.content[0].parsed.model_dump_json()
-            else:
+        if use_parse:
+            content_val = ""
+            for item in getattr(completion, "output", []):
+                for content in getattr(item, "content", []):
+                    parsed_obj = getattr(content, "parsed", None)
+                    if parsed_obj is not None:
+                        content_val = parsed_obj.model_dump_json()
+                        break
+                if content_val:
+                    break
+            if not content_val:
                 content_val = assistant_text
         else:
             content_val = assistant_text
@@ -425,7 +376,7 @@ class OpenAIProvider(BaseProvider):
         return ToolIntentOutput(
             content=content_val,
             tool_calls=parsed_tool_calls_list if parsed_tool_calls_list else None,
-            raw_assistant_message=raw_assistant_msg_dict,
+            raw_assistant_message=raw_assistant_items,
         )
 
     def _prepare_tool_payload(
@@ -458,41 +409,33 @@ class OpenAIProvider(BaseProvider):
 
         tools_payload = None
         if final_tool_definitions:
-            converted_tools: List[Any] = []
+            converted_tools: List[Dict[str, Any]] = []
             for tool in final_tool_definitions:
-                func = tool.get("function") if tool.get("type") == "function" else None
-                if func:
-                    params_schema = func.get("parameters", {})
-                    properties = params_schema.get("properties", {})
-                    required = set(params_schema.get("required", []))
-                    model_name = f"{func.get('name', 'Tool')}Params"
-                    if properties:
-                        type_map = {
-                            "string": str,
-                            "integer": int,
-                            "number": float,
-                            "boolean": bool,
-                            "array": list,
-                            "object": dict,
-                        }
-                        ParamModel = create_model(
-                            model_name,
-                            **{
-                                name: (
-                                    type_map.get(prop.get("type"), Any),
-                                    Field(default=... if name in required else None),
-                                )
-                                for name, prop in properties.items()
-                            },
-                        )  # type: ignore[call-overload]
-                    else:
-                        ParamModel = create_model(model_name)
+                if tool.get("type") == "function":
+                    func = tool.get("function", {})
+                    params = func.get("parameters", {}) or {}
+                    if params and "additionalProperties" not in params:
+                        params = {**params, "additionalProperties": False}
+
+                    properties = params.get("properties", {}) or {}
+                    required = params.get("required")
+                    if required is None:
+                        required = list(properties.keys())
+                        params["required"] = required
+                    all_keys = set(properties.keys())
+                    required_keys = set(required)
+                    strict_val = func.get("strict")
+                    if strict_val is None:
+                        strict_val = required_keys == all_keys
+
                     converted_tools.append(
-                        pydantic_function_tool(
-                            ParamModel,
-                            name=func.get("name"),
-                            description=func.get("description"),
-                        )
+                        {
+                            "type": "function",
+                            "name": func.get("name"),
+                            "description": func.get("description"),
+                            "parameters": params,
+                            "strict": strict_val,
+                        }
                     )
                 else:
                     converted_tools.append(tool)
@@ -598,12 +541,14 @@ class OpenAIProvider(BaseProvider):
                 if getattr(call, "function", None):
                     func_name = getattr(call.function, "name", None)
                     func_args_str = getattr(call.function, "arguments", None)
-                    call_id = getattr(call, "id", None)
+                    call_id = getattr(call, "call_id", None) or getattr(
+                        call, "id", None
+                    )
                 else:
                     func_name = getattr(call, "name", None)
                     func_args_str = getattr(call, "arguments", None)
-                    call_id = getattr(call, "id", None) or getattr(
-                        call, "call_id", None
+                    call_id = getattr(call, "call_id", None) or getattr(
+                        call, "id", None
                     )
             elif getattr(call, "type", None) == "custom_tool_call":
                 func_name = getattr(call, "name", None)
@@ -623,10 +568,9 @@ class OpenAIProvider(BaseProvider):
                     f"Malformed tool call received: ID={call_id}, Name={func_name}, Args={func_args_str}"
                 )
                 return {
-                    "role": "tool",
-                    "tool_call_id": call_id or "unknown",
-                    "name": func_name or "unknown",
-                    "content": json.dumps(
+                    "type": "function_call_output",
+                    "call_id": call_id or "unknown",
+                    "output": json.dumps(
                         {"error": "Malformed tool call received by client."}
                     ),
                 }, None
@@ -650,10 +594,9 @@ class OpenAIProvider(BaseProvider):
                 )
 
                 return {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": func_name,
-                    "content": tool_exec_result.content,
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": tool_exec_result.content,
                 }, payload
 
             except ToolError as e:
@@ -661,10 +604,9 @@ class OpenAIProvider(BaseProvider):
                     f"Error processing tool call {call_id} ({func_name}): {e}"
                 )
                 return {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": func_name,
-                    "content": json.dumps({"error": str(e)}),
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": json.dumps({"error": str(e)}),
                 }, None
             except Exception as e:
                 module_logger.error(
@@ -672,10 +614,9 @@ class OpenAIProvider(BaseProvider):
                     exc_info=True,
                 )
                 return {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": func_name,
-                    "content": json.dumps(
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": json.dumps(
                         {"error": f"Unexpected client-side error handling tool: {e}"}
                     ),
                 }, None
@@ -700,11 +641,32 @@ class OpenAIProvider(BaseProvider):
         """Return assistant content when max iterations reached."""
         final_content = None
         for m in reversed(current_messages):
-            if m.get("role") == "assistant" and m.get("content"):
+            if (
+                m.get("role") == "assistant"
+                and isinstance(m.get("content"), str)
+                and m.get("content")
+            ):
                 warning_msg = (
                     f"\n\n[Warning: Max tool iterations ({max_tool_iterations}) reached. "
                     "Result might be incomplete.]"
                 )
                 final_content = str(m.get("content", "")) + warning_msg
                 break
+            if m.get("type") == "message" and m.get("role") == "assistant":
+                parts = m.get("content", [])
+                text_accum = ""
+                if isinstance(parts, list):
+                    for p in parts:
+                        if isinstance(p, dict) and p.get("type") in {
+                            "output_text",
+                            "text",
+                        }:
+                            text_accum += p.get("text", "")
+                if text_accum:
+                    warning_msg = (
+                        f"\n\n[Warning: Max tool iterations ({max_tool_iterations}) reached. "
+                        "Result might be incomplete.]"
+                    )
+                    final_content = text_accum + warning_msg
+                    break
         return final_content

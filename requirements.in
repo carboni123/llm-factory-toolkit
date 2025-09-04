@@ -7,6 +7,5 @@ pydantic
 pytest
 pytest-asyncio
 pytest-cov
-black
 mypy
-flake8
+ruff

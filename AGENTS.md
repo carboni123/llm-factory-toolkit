@@ -43,8 +43,8 @@ llm_factory_toolkit/
 
 ### 3.1. Python Style
 
-*   **Formatter:** **Black** (latest stable), Import Sorter: **isort**.
-*   **Static Analysis:** **flake8** + **mypy (strict)** – both must pass with zero errors.
+*   **Formatter:** **ruff** (latest stable).
+*   **Static Analysis:** **ruff** + **mypy (strict)** – both must pass with zero errors.
 *   **Docstrings:** Use Google-style for all public classes/methods. Include type hints and examples.
 *   **Async-First:** Use `asyncio` for I/O-bound operations; mark methods `async def` where appropriate.
 
@@ -101,7 +101,7 @@ The CI/CD pipeline (via `.github/workflows/ci.yml`) will block any PR that fails
 | Check                               | Command                                                      | Required? |
 | ----------------------------------- | ------------------------------------------------------------ | :-------: |
 | Unit tests (≥ 80% cov)              | `pytest --cov=llm_factory_toolkit --cov-fail-under=80 tests/`|     ✅     |
-| Flake8 Linting                      | `flake8 llm_factory_toolkit/`                                |     ✅     |
+| ruff Linting                      | `ruff format llm_factory_toolkit/`                                |     ✅     |
 | MyPy Strict Type-Checking           | `mypy llm_factory_toolkit/`                                  |     ✅     |
 
 ---

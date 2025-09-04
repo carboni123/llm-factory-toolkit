@@ -329,6 +329,22 @@ class ToolFactory:
                     result = await result
 
             if not isinstance(result, ToolExecutionResult):
+                # Support simple return types for convenience
+                if isinstance(result, dict):
+                    module_logger.warning(
+                        "Tool '%s' returned a raw dict; converting to ToolExecutionResult.",
+                        function_name,
+                    )
+                    return ToolExecutionResult(
+                        content=json.dumps(result),
+                        payload=result,
+                    )
+                if isinstance(result, str):
+                    module_logger.warning(
+                        "Tool '%s' returned a raw string; converting to ToolExecutionResult.",
+                        function_name,
+                    )
+                    return ToolExecutionResult(content=result, payload=result)
                 module_logger.error(
                     "Tool function '%s' did not return a ToolExecutionResult object. Returned: %s",
                     function_name,
@@ -337,14 +353,13 @@ class ToolFactory:
                 try:
                     llm_content = json.dumps(
                         {
-                            "result": str(result),
-                            "warning": "Tool returned unexpected format.",
+                            "error": f"Tool returned non-serializable, unexpected format: {type(result)}"
                         }
-                    )  # str(result) for safety
+                    )
                 except TypeError:
                     llm_content = json.dumps(
                         {
-                            "error": f"Tool returned non-serializable, unexpected format: {type(result)}"
+                            "error": "Tool returned unexpected, non-serializable value",
                         }
                     )
                 return ToolExecutionResult(

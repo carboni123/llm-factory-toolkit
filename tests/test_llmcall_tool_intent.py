@@ -30,7 +30,10 @@ Your task is to retrieve three separate parts of a master access code using the 
 Once you have all three parts, combine them in the exact order: Part 1, Part 2, Part 3.
 Present the final combined code clearly.
 """
-USER_PROMPT_MULTI_TOOL = "Please retrieve the master access code. Use 'source_A' for part 1, 'key_B' for part 2, and 'vault_C' for part 3, then combine them."
+USER_PROMPT_MULTI_TOOL = (
+    "Please retrieve the master access code. Use 'source_A' for part 1, "
+    "'key_B' for part 2, and 'vault_C' for part 3, then combine them."
+)
 
 TEST_MODEL = "gpt-4o-mini"  # Model known to handle parallel tool calls well
 
@@ -204,7 +207,7 @@ async def test_openai_three_tool_calls_combined_secret():
         ]
 
         # 4. Make API call to retrieve tools
-        print(f"Calling client.generate_tool_intent (Planner)")
+        print("Calling client.generate_tool_intent (Planner)")
         intent_output: ToolIntentOutput = await client.generate_tool_intent(
             input=messages,
             model=TEST_MODEL,
@@ -215,7 +218,7 @@ async def test_openai_three_tool_calls_combined_secret():
         print(f"Planner output:\n{intent_output.model_dump_json(indent=2)}")
         # Add the planner's turn (which contains the tool_calls structure)
         if intent_output.raw_assistant_message:
-            messages.append(intent_output.raw_assistant_message)
+            messages.extend(intent_output.raw_assistant_message)
 
         # Minimal check on planner output to ensure we can proceed
         if not intent_output.tool_calls or len(intent_output.tool_calls) == 0:
@@ -254,7 +257,7 @@ async def test_openai_three_tool_calls_combined_secret():
         # Add the tool results
         messages.extend(tool_result_messages)
 
-        print(f"Calling client.generate (Explainer)")
+        print("Calling client.generate (Explainer)")
         final_response_content, _ = await client.generate(
             input=messages,
             model=TEST_MODEL,
