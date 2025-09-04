@@ -1,7 +1,7 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/models.py
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # --- Existing models ---
@@ -21,9 +21,10 @@ class ToolIntentOutput(BaseModel):
         None  # Text content if LLM replied directly without a tool call
     )
     tool_calls: Optional[List[ParsedToolCall]] = None  # List of parsed tool calls
-    raw_assistant_message: Dict[
-        str, Any
-    ]  # The full, raw message object from the assistant
+    raw_assistant_message: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Raw output items from the assistant (e.g., function_call items)",
+    )
 
 
 class ToolExecutionResult(BaseModel):
