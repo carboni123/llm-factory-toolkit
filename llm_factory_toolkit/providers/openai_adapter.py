@@ -40,6 +40,10 @@ class OpenAIProvider(BaseProvider):
 
     DEFAULT_MODEL = "gpt-4o-mini"
     API_ENV_VAR = "OPENAI_API_KEY"
+    TEMPERATURE_UNSUPPORTED_MODELS = {
+        "gpt-5",
+        "o4-mini",
+    }
 
     def __init__(
         self,
@@ -451,8 +455,16 @@ class OpenAIProvider(BaseProvider):
         active_model: str,
         num_messages: int,
     ) -> Any:
-        """Wrapper for OpenAI API call with error handling."""
+        """Wrapper for OpenAI API call with error handling.
+
+        Filters out parameters not supported by the target model before
+        dispatching the request.
+        """
         client = self._ensure_client()
+        for unsupported_model in self.TEMPERATURE_UNSUPPORTED_MODELS:
+            if active_model.startswith(unsupported_model):
+                request_payload.pop("temperature", None)
+                break
         try:
             completion = await client.responses.parse(**request_payload)
             usage = getattr(completion, "usage", None)
