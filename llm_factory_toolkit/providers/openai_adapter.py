@@ -10,8 +10,9 @@ from openai import (
     AsyncOpenAI,
     BadRequestError,
     RateLimitError,
+    pydantic_function_tool,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 
 from ..exceptions import (
     ConfigurationError,
@@ -178,30 +179,20 @@ class OpenAIProvider(BaseProvider):
                 "input": current_messages,
             }  # Combine base args + current messages
 
-            # --- Add Tools (Filtered) ---
-            tools = []
-            if self.tool_factory:
-                # Determine which tools to expose based on the use_tools argument
-                if use_tools is None:
-                    # None explicitly disables tools
-                    if request_payload.get("tool_choice", "auto") == "auto":
-                        request_payload["tool_choice"] = "none"
-                elif use_tools == []:
-                    tools = self.tool_factory.get_tool_definitions()
-                else:
-                    tools = self.tool_factory.get_tool_definitions(
-                        filter_tool_names=use_tools
-                    )
-
-            if tools or use_tools is None:
-                request_payload["tools"] = tools
+            # --- Tool Configuration ---
+            tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
+                use_tools, request_payload
+            )
+            if tools_for_payload is not None:
+                request_payload["tools"] = tools_for_payload
+            if tool_choice_for_payload is not None:
+                request_payload["tool_choice"] = tool_choice_for_payload
 
             # --- API Call ---
             completion = await self._make_api_call(
                 request_payload,
                 active_model,
                 len(current_messages),
-                use_parse=use_parse,
             )
 
             assistant_text = ""
@@ -343,7 +334,7 @@ class OpenAIProvider(BaseProvider):
         # --- End Tool Configuration ---
 
         completion = await self._make_api_call(
-            request_payload, active_model, len(input), use_parse=use_parse
+            request_payload, active_model, len(input)
         )
 
         assistant_text = ""
@@ -467,7 +458,45 @@ class OpenAIProvider(BaseProvider):
 
         tools_payload = None
         if final_tool_definitions:
-            tools_payload = final_tool_definitions
+            converted_tools: List[Any] = []
+            for tool in final_tool_definitions:
+                func = tool.get("function") if tool.get("type") == "function" else None
+                if func:
+                    params_schema = func.get("parameters", {})
+                    properties = params_schema.get("properties", {})
+                    required = set(params_schema.get("required", []))
+                    model_name = f"{func.get('name', 'Tool')}Params"
+                    if properties:
+                        type_map = {
+                            "string": str,
+                            "integer": int,
+                            "number": float,
+                            "boolean": bool,
+                            "array": list,
+                            "object": dict,
+                        }
+                        ParamModel = create_model(
+                            model_name,
+                            **{
+                                name: (
+                                    type_map.get(prop.get("type"), Any),
+                                    Field(default=... if name in required else None),
+                                )
+                                for name, prop in properties.items()
+                            },
+                        )  # type: ignore[call-overload]
+                    else:
+                        ParamModel = create_model(model_name)
+                    converted_tools.append(
+                        pydantic_function_tool(
+                            ParamModel,
+                            name=func.get("name"),
+                            description=func.get("description"),
+                        )
+                    )
+                else:
+                    converted_tools.append(tool)
+            tools_payload = converted_tools
         elif use_tools is None:
             tools_payload = []
 
@@ -478,16 +507,11 @@ class OpenAIProvider(BaseProvider):
         request_payload: Dict[str, Any],
         active_model: str,
         num_messages: int,
-        *,
-        use_parse: bool = False,
     ) -> Any:
         """Wrapper for OpenAI API call with error handling."""
         client = self._ensure_client()
         try:
-            if use_parse:
-                completion = await client.responses.parse(**request_payload)
-            else:
-                completion = await client.responses.create(**request_payload)
+            completion = await client.responses.parse(**request_payload)
             usage = getattr(completion, "usage", None)
             if usage:
                 module_logger.info(
@@ -523,10 +547,7 @@ class OpenAIProvider(BaseProvider):
             # retry the api call with the corrected payload
             if new_request is not None:
                 try:
-                    if use_parse:
-                        completion = await client.responses.parse(**request_payload)
-                    else:
-                        completion = await client.responses.create(**request_payload)
+                    completion = await client.responses.parse(**request_payload)
                     if completion.usage:
                         module_logger.info(
                             f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"

@@ -6,10 +6,10 @@ from llm_factory_toolkit.providers.openai_adapter import OpenAIProvider
 
 
 @pytest.mark.asyncio
-async def test_generate_uses_responses_create():
+async def test_generate_uses_responses_parse():
     provider = OpenAIProvider(api_key="test")
 
-    async def mock_create(**kwargs):
+    async def mock_parse(**kwargs):
         from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
         msg = ResponseOutputMessage.model_construct(
@@ -26,7 +26,7 @@ async def test_generate_uses_responses_create():
         return SimpleNamespace(output=[msg], output_text="hi", usage=None)
 
     provider.async_client = SimpleNamespace(
-        responses=SimpleNamespace(create=mock_create)
+        responses=SimpleNamespace(parse=mock_parse)
     )
     result, payloads = await provider.generate(
         input=[{"role": "user", "content": "hello"}]
