@@ -5,8 +5,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from pydantic import BaseModel  # Import for type hinting
 
-from .exceptions import (ConfigurationError, LLMToolkitError, ProviderError,
-                         ToolError, UnsupportedFeatureError)
+from .exceptions import (
+    ConfigurationError,
+    LLMToolkitError,
+    ProviderError,
+    ToolError,
+    UnsupportedFeatureError,
+)
 from .providers import BaseProvider, create_provider_instance
 from .tools.models import ToolExecutionResult, ToolIntentOutput
 from .tools.tool_factory import ToolFactory
@@ -96,10 +101,10 @@ class LLMClient:
 
     async def generate(
         self,
-        messages: List[Dict[str, Any]],
+        input: List[Dict[str, Any]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
@@ -111,10 +116,10 @@ class LLMClient:
         potentially handling tool calls and returning deferred action payloads.
 
         Args:
-            messages (List[Dict[str, Any]]): The conversation history.
+            input (List[Dict[str, Any]]): The conversation history.
             model (str, optional): Override the default model for this request.
             temperature (float, optional): Sampling temperature.
-            max_tokens (int, optional): Max tokens to generate.
+            max_output_tokens (int, optional): Max tokens to generate.
             response_format (Dict | Type[BaseModel], optional): Desired response format (e.g., JSON).
                                                                 Accepts dict or Pydantic model.
             use_tools (Optional[List[str]]): A list of tool names to make available for this
@@ -146,10 +151,10 @@ class LLMClient:
         )
 
         provider_args = {
-            "messages": messages,
+            "input": input,
             "model": model,
             "temperature": temperature,
-            "max_completion_tokens": max_tokens,
+            "max_output_tokens": max_output_tokens,
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_execution_context": tool_execution_context,
@@ -187,10 +192,10 @@ class LLMClient:
 
     async def generate_tool_intent(
         self,
-        messages: List[Dict[str, Any]],
+        input: List[Dict[str, Any]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         **kwargs: Any,
@@ -200,10 +205,10 @@ class LLMClient:
         but does not execute them.
 
         Args:
-            messages: The conversation history.
+            input: The conversation history.
             model: Override the default model for this request.
             temperature: Sampling temperature.
-            max_tokens: Max tokens to generate.
+            max_output_tokens: Max tokens to generate.
             response_format: Desired response format if the LLM replies directly.
             use_tools: List of tool names to make available. Defaults to ``[]``
                        which exposes all registered tools. Pass ``None`` to
@@ -223,10 +228,10 @@ class LLMClient:
         )
 
         provider_args = {
-            "messages": messages,
+            "input": input,
             "model": model,
             "temperature": temperature,
-            "max_completion_tokens": max_tokens,
+            "max_output_tokens": max_output_tokens,
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_choice": "required",

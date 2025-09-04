@@ -30,8 +30,9 @@ from .exceptions import LLMToolkitError  # noqa: E402
 from .exceptions import ProviderError  # noqa: E402
 from .exceptions import ToolError  # noqa: E402
 from .exceptions import UnsupportedFeatureError  # noqa: E402
-from .providers import \
-    create_provider_instance  # noqa: E402; Allow direct provider creation if needed
+from .providers import (  # noqa: E402; Allow direct provider creation if needed
+    create_provider_instance,
+)
 from .providers.base import BaseProvider  # noqa: E402
 from .tools import builtins  # noqa: E402
 from .tools.base_tool import BaseTool  # noqa: E402

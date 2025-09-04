@@ -22,4 +22,4 @@ async def test_generate_fails_without_key(monkeypatch):
     client = LLMClient(provider_type="openai")
     messages = [{"role": "user", "content": "hi"}]
     with pytest.raises(ConfigurationError):
-        await client.generate(messages=messages)
+        await client.generate(input=messages)

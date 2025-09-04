@@ -13,7 +13,9 @@ import json
 # Imports from your library
 from llm_factory_toolkit import LLMClient
 from llm_factory_toolkit.tools import ToolFactory
-from llm_factory_toolkit.tools.models import ToolExecutionResult  # Import for mock tools
+from llm_factory_toolkit.tools.models import (
+    ToolExecutionResult,
+)  # Import for mock tools
 from llm_factory_toolkit.exceptions import (
     ConfigurationError,
     ProviderError,
@@ -54,7 +56,9 @@ EXPECTED_ARG_1 = "source_A"
 
 def mock_get_secret_part_1(retrieval_source: str) -> ToolExecutionResult:
     """Retrieves the FIRST part of the master access code."""
-    print(f"[Mock Tool 1] '{MOCK_TOOL_NAME_1}' called with retrieval_source: {retrieval_source}")
+    print(
+        f"[Mock Tool 1] '{MOCK_TOOL_NAME_1}' called with retrieval_source: {retrieval_source}"
+    )
     result_data = {"secret_part": SECRET_PART_1}
     print(f"[Mock Tool 1] Returning data: {result_data}")
     return ToolExecutionResult(content=json.dumps(result_data))
@@ -80,7 +84,9 @@ EXPECTED_ARG_2 = "key_B"
 
 def mock_get_secret_part_2(key_identifier: str) -> ToolExecutionResult:
     """Retrieves the SECOND part of the master access code."""
-    print(f"[Mock Tool 2] '{MOCK_TOOL_NAME_2}' called with key_identifier: {key_identifier}")
+    print(
+        f"[Mock Tool 2] '{MOCK_TOOL_NAME_2}' called with key_identifier: {key_identifier}"
+    )
     result_data = {"secret_part": SECRET_PART_2}
     print(f"[Mock Tool 2] Returning data: {result_data}")
     return ToolExecutionResult(content=json.dumps(result_data))
@@ -89,11 +95,16 @@ def mock_get_secret_part_2(key_identifier: str) -> ToolExecutionResult:
 MOCK_TOOL_PARAMS_2 = {
     "type": "object",
     "properties": {
-        "key_identifier": {"type": "string", "description": "The key identifier for the second part (e.g., 'key_B')."}
+        "key_identifier": {
+            "type": "string",
+            "description": "The key identifier for the second part (e.g., 'key_B').",
+        }
     },
     "required": ["key_identifier"],
 }
-MOCK_TOOL_DESC_2 = "Gets the SECOND part of the master access code using a key identifier."
+MOCK_TOOL_DESC_2 = (
+    "Gets the SECOND part of the master access code using a key identifier."
+)
 
 # Tool 3
 MOCK_TOOL_NAME_3 = "get_secret_part_3"
@@ -119,7 +130,9 @@ MOCK_TOOL_PARAMS_3 = {
     },
     "required": ["vault_name"],
 }
-MOCK_TOOL_DESC_3 = "Gets the THIRD part of the master access code from a specific vault."
+MOCK_TOOL_DESC_3 = (
+    "Gets the THIRD part of the master access code from a specific vault."
+)
 
 # Tool 4 (Unused in multi-tool test)
 MOCK_TOOL_NAME_4_UNUSED = "unused_utility_tool"
@@ -127,16 +140,24 @@ MOCK_TOOL_NAME_4_UNUSED = "unused_utility_tool"
 
 def mock_unused_utility_tool(parameter: str) -> ToolExecutionResult:
     """A utility tool that should not be called in the multi-tool test."""
-    print(f"[Mock Tool 4 - UNUSED] '{MOCK_TOOL_NAME_4_UNUSED}' called with parameter: {parameter}")
-    return ToolExecutionResult(content=json.dumps({"status": "this tool should not have been called"}))
+    print(
+        f"[Mock Tool 4 - UNUSED] '{MOCK_TOOL_NAME_4_UNUSED}' called with parameter: {parameter}"
+    )
+    return ToolExecutionResult(
+        content=json.dumps({"status": "this tool should not have been called"})
+    )
 
 
 MOCK_TOOL_PARAMS_4_UNUSED = {
     "type": "object",
-    "properties": {"parameter": {"type": "string", "description": "A generic parameter."}},
+    "properties": {
+        "parameter": {"type": "string", "description": "A generic parameter."}
+    },
     "required": ["parameter"],
 }
-MOCK_TOOL_DESC_4_UNUSED = "A general purpose utility tool that is not relevant for the secret codes."
+MOCK_TOOL_DESC_4_UNUSED = (
+    "A general purpose utility tool that is not relevant for the secret codes."
+)
 
 
 # Expected combined result
@@ -181,12 +202,18 @@ async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
     Tests tool usage counts after client.generate() calls three distinct tools.
     Also checks that counts can be reset.
     """
-    api_key_display = f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "Not Set"
-    print(f"\n--- Starting Test: `generate` Tool Usage Counts (Key: {api_key_display}) ---")
+    api_key_display = (
+        f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "Not Set"
+    )
+    print(
+        f"\n--- Starting Test: `generate` Tool Usage Counts (Key: {api_key_display}) ---"
+    )
 
     try:
         tool_factory = tool_factory_with_tools
-        assert len(tool_factory.get_tool_definitions()) == 4, "Expected four tools to be registered"
+        assert (
+            len(tool_factory.get_tool_definitions()) == 4
+        ), "Expected four tools to be registered"
 
         # Initial counts should be zero for all registered tools
         initial_counts = tool_factory.get_tool_usage_counts()
@@ -196,7 +223,9 @@ async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
         assert initial_counts.get(MOCK_TOOL_NAME_3, 0) == 0
         assert initial_counts.get(MOCK_TOOL_NAME_4_UNUSED, 0) == 0
 
-        client = LLMClient(provider_type="openai", model=TEST_MODEL, tool_factory=tool_factory)
+        client = LLMClient(
+            provider_type="openai", model=TEST_MODEL, tool_factory=tool_factory
+        )
         print(f"LLMClient initialized with model: {client.provider.model}")
 
         messages = [
@@ -206,7 +235,7 @@ async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
 
         print("Calling client.generate (three tool calls expected)...")
         response_content, _ = await client.generate(
-            messages=messages,
+            input=messages,
             model=TEST_MODEL,
             temperature=0.1,
         )
@@ -222,9 +251,15 @@ async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
 
         # For this specific prompt, we expect each of the 3 relevant tools to be called once.
         # GPT-4o-mini is usually good at this with parallel tool calls.
-        assert counts_after_generate.get(MOCK_TOOL_NAME_1) == 1, f"Tool '{MOCK_TOOL_NAME_1}' count mismatch"
-        assert counts_after_generate.get(MOCK_TOOL_NAME_2) == 1, f"Tool '{MOCK_TOOL_NAME_2}' count mismatch"
-        assert counts_after_generate.get(MOCK_TOOL_NAME_3) == 1, f"Tool '{MOCK_TOOL_NAME_3}' count mismatch"
+        assert (
+            counts_after_generate.get(MOCK_TOOL_NAME_1) == 1
+        ), f"Tool '{MOCK_TOOL_NAME_1}' count mismatch"
+        assert (
+            counts_after_generate.get(MOCK_TOOL_NAME_2) == 1
+        ), f"Tool '{MOCK_TOOL_NAME_2}' count mismatch"
+        assert (
+            counts_after_generate.get(MOCK_TOOL_NAME_3) == 1
+        ), f"Tool '{MOCK_TOOL_NAME_3}' count mismatch"
         assert (
             counts_after_generate.get(MOCK_TOOL_NAME_4_UNUSED) == 0
         ), f"Tool '{MOCK_TOOL_NAME_4_UNUSED}' should not have been called"
@@ -241,7 +276,17 @@ async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
 
         print("`generate` tool usage counts test successful.")
 
-    except (ConfigurationError, ToolError, ProviderError, UnsupportedFeatureError, LLMToolkitError) as e:
-        pytest.fail(f"Error during `generate` tool usage count test: {type(e).__name__}: {e}")
+    except (
+        ConfigurationError,
+        ToolError,
+        ProviderError,
+        UnsupportedFeatureError,
+        LLMToolkitError,
+    ) as e:
+        pytest.fail(
+            f"Error during `generate` tool usage count test: {type(e).__name__}: {e}"
+        )
     except Exception as e:
-        pytest.fail(f"Unexpected error during `generate` tool usage count test: {type(e).__name__}: {e}")
+        pytest.fail(
+            f"Unexpected error during `generate` tool usage count test: {type(e).__name__}: {e}"
+        )

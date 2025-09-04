@@ -98,7 +98,7 @@ class BaseProvider(ABC):
     @abstractmethod
     async def generate(
         self,
-        messages: list[dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -119,12 +119,12 @@ class BaseProvider(ABC):
     @abstractmethod
     async def generate_tool_intent(
         self,
-        messages: List[Dict[str, Any]],
+        input: List[Dict[str, Any]],
         *,
         model: Optional[str] = None,
         use_tools: Optional[List[str]] = [],
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         **kwargs: Any,
     ) -> ToolIntentOutput:
@@ -134,13 +134,13 @@ class BaseProvider(ABC):
         Tool usage counts may be updated in the ToolFactory instance if one is used.
 
         Args:
-            messages: List of message dictionaries.
+            input: List of message dictionaries.
             model: Specific model override.
             use_tools: List of tool names to make available. Defaults to ``[]``
                        (all registered tools). Passing ``None`` disables tools.
                        Providing a non-empty list restricts to specific tools.
             temperature: Sampling temperature.
-            max_tokens: Max tokens to generate.
+            max_output_tokens: Max tokens to generate.
             response_format: Desired response format if LLM replies directly.
             **kwargs: Additional provider-specific arguments.
 

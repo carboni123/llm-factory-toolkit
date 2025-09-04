@@ -73,9 +73,9 @@ async def run_generation():
 
     try:
         response = await client.generate(
-            messages=messages,
+            input=messages,
             temperature=0.5, # Optional: Control creativity
-            max_completion_tokens=50    # Optional: Limit response length
+            max_output_tokens=50    # Optional: Limit response length
         )
         print(f"Response: {response}")
 
@@ -86,6 +86,24 @@ async def run_generation():
 
 # Run the async function
 # asyncio.run(run_generation())
+```
+
+### Structured JSON output
+
+```python
+schema = {
+    "format": "json_schema",
+    "json_schema": {
+        "name": "person",
+        "schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+}
+response = await client.generate(input=messages, response_format=schema)
+print(response)
 ```
 
 ## Tool Integration (`ToolFactory`)
@@ -165,7 +183,7 @@ async def ask_weather():
         {"role": "user", "content": "What's the weather like in Tokyo?"}
     ]
     print("Asking about weather (tool call expected)...")
-    response = await client.generate(messages=messages)
+    response = await client.generate(input=messages)
     print(f"\nFinal Response:\n{response}")
 
 # Run it
@@ -223,7 +241,7 @@ client = LLMClient(provider_type='openai', model='gpt-4o-mini', tool_factory=too
 async def ask_profile():
     messages = [{"role": "user", "content": "Can you get me Alice's email? Her ID is u123."}]
     print("Asking for user profile (class tool call expected)...")
-    response = await client.generate(messages=messages)
+    response = await client.generate(input=messages)
     print(f"\nFinal Response:\n{response}")
 
 # Run it
@@ -273,7 +291,7 @@ async def run_json_mode():
     try:
         # Request JSON output
         json_response = await client.generate(
-            messages=messages,
+            input=messages,
             response_format={"type": "json_object"} # Request JSON mode
         )
 
@@ -321,7 +339,7 @@ async def run_pydantic_mode():
 
     try:
         structured_response, _ = await client.generate(
-            messages=messages,
+            input=messages,
             response_format=UserInfo
         )
 
@@ -359,7 +377,7 @@ async def safe_generate():
     try:
         client = LLMClient(provider_type='openai') # Might raise ConfigurationError
         messages = [{"role": "user", "content": "Tell me a joke."}]
-        response = await client.generate(messages=messages) # Might raise ProviderError or ToolError
+        response = await client.generate(input=messages) # Might raise ProviderError or ToolError
         print(f"Response: {response}")
 
     except ConfigurationError as e:
@@ -385,7 +403,7 @@ async def safe_generate():
 While `LLMClient` provides a unified interface, some parameters during initialization or in the `generate` call might be specific to a provider.
 
 *   **Initialization:** Kwargs passed to `LLMClient` (beyond `provider_type`, `api_key`, `tool_factory`) are forwarded to the specific provider's constructor (e.g., `model`, `timeout` for OpenAI).
-*   **Generation:** Kwargs passed to `client.generate` (beyond `messages`, `model`, `temperature`, `max_completion_tokens`, `response_format`) are passed directly to the provider's underlying API call method (e.g., `top_p`, `frequency_penalty` for OpenAI).
+*   **Generation:** Kwargs passed to `client.generate` (beyond `input`, `model`, `temperature`, `max_output_tokens`, `response_format`) are passed directly to the provider's underlying API call method (e.g., `top_p`, `frequency_penalty` for OpenAI).
 
 Consult the source code of the specific provider adapter (e.g., `llm_factory_toolkit/providers/openai_adapter.py`) for details on supported arguments.
 
