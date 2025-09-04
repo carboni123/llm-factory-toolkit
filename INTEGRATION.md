@@ -75,7 +75,7 @@ async def run_generation():
         response = await client.generate(
             messages=messages,
             temperature=0.5, # Optional: Control creativity
-            max_tokens=50    # Optional: Limit response length
+            max_completion_tokens=50    # Optional: Limit response length
         )
         print(f"Response: {response}")
 
@@ -385,7 +385,7 @@ async def safe_generate():
 While `LLMClient` provides a unified interface, some parameters during initialization or in the `generate` call might be specific to a provider.
 
 *   **Initialization:** Kwargs passed to `LLMClient` (beyond `provider_type`, `api_key`, `tool_factory`) are forwarded to the specific provider's constructor (e.g., `model`, `timeout` for OpenAI).
-*   **Generation:** Kwargs passed to `client.generate` (beyond `messages`, `model`, `temperature`, `max_tokens`, `response_format`) are passed directly to the provider's underlying API call method (e.g., `top_p`, `frequency_penalty` for OpenAI).
+*   **Generation:** Kwargs passed to `client.generate` (beyond `messages`, `model`, `temperature`, `max_completion_tokens`, `response_format`) are passed directly to the provider's underlying API call method (e.g., `top_p`, `frequency_penalty` for OpenAI).
 
 Consult the source code of the specific provider adapter (e.g., `llm_factory_toolkit/providers/openai_adapter.py`) for details on supported arguments.
 

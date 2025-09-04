@@ -170,7 +170,7 @@ class OpenAIProvider(BaseProvider):
         if temperature is not None:
             api_call_args["temperature"] = temperature
         if max_tokens is not None:
-            api_call_args["max_tokens"] = max_tokens
+            api_call_args["max_completion_tokens"] = max_tokens
 
         # --- Main Generation Loop ---
         while iteration_count < max_tool_iterations:
@@ -296,7 +296,7 @@ class OpenAIProvider(BaseProvider):
         if temperature is not None:
             api_call_args["temperature"] = temperature
         if max_tokens is not None:
-            api_call_args["max_tokens"] = max_tokens
+            api_call_args["max_completion_tokens"] = max_tokens
 
         request_payload = {**api_call_args, "messages": list(messages)}
 
@@ -456,22 +456,28 @@ class OpenAIProvider(BaseProvider):
             module_logger.error(f"OpenAI API operation timed out: {e}")
             raise ProviderError(f"API operation timed out: {e}")
         except BadRequestError as e:
-            message = str(e)
-            if (
-                "max_tokens" in message
-                and "max_completion_tokens" in message
-                and "max_tokens" in request_payload
-            ):
-                max_tok = request_payload.pop("max_tokens")
-                request_payload["max_completion_tokens"] = max_tok
-                module_logger.info(
-                    "Retrying with 'max_completion_tokens' as 'max_tokens' is unsupported"
-                )
+            module_logger.warning(f"OpenAI API bad request: {e}")
+            new_request = None
+            # remove bad parameters from request
+            body = getattr(e, "body", {})
+            param = body.get("param") if isinstance(body, dict) else None
+            if param == "max_completion_tokens":
+                new_request = request_payload.pop("max_completion_tokens", None)
+            elif param == "max_tokens":
+                new_request = request_payload.pop("max_tokens", None)
+            elif param == "temperature":
+                new_request = request_payload.pop("temperature", None)
+            # retry the api call with the corrected payload
+            if new_request is not None:
                 try:
                     if use_parse:
-                        completion = await client.chat.completions.parse(**request_payload)
+                        completion = await client.chat.completions.parse(
+                            **request_payload
+                        )
                     else:
-                        completion = await client.chat.completions.create(**request_payload)
+                        completion = await client.chat.completions.create(
+                            **request_payload
+                        )
                     if completion.usage:
                         module_logger.info(
                             f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
