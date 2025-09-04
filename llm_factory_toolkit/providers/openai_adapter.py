@@ -469,9 +469,13 @@ class OpenAIProvider(BaseProvider):
                 )
                 try:
                     if use_parse:
-                        completion = await client.chat.completions.parse(**request_payload)
+                        completion = await client.chat.completions.parse(
+                            **request_payload
+                        )
                     else:
-                        completion = await client.chat.completions.create(**request_payload)
+                        completion = await client.chat.completions.create(
+                            **request_payload
+                        )
                     if completion.usage:
                         module_logger.info(
                             f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
@@ -480,6 +484,36 @@ class OpenAIProvider(BaseProvider):
                 except Exception as retry_error:
                     module_logger.error(
                         f"Retry after removing 'max_tokens' failed: {retry_error}"
+                    )
+                    raise ProviderError(
+                        f"API bad request: {retry_error}"
+                    ) from retry_error
+            elif (
+                "temperature" in message
+                and "Only the default" in message
+                and "temperature" in request_payload
+            ):
+                request_payload.pop("temperature")
+                module_logger.info(
+                    "Retrying without 'temperature' as the model only supports the default value"
+                )
+                try:
+                    if use_parse:
+                        completion = await client.chat.completions.parse(
+                            **request_payload
+                        )
+                    else:
+                        completion = await client.chat.completions.create(
+                            **request_payload
+                        )
+                    if completion.usage:
+                        module_logger.info(
+                            f"OpenAI API Usage: {completion.usage.model_dump_json(exclude_unset=True)}"
+                        )
+                    return completion
+                except Exception as retry_error:
+                    module_logger.error(
+                        f"Retry after removing 'temperature' failed: {retry_error}"
                     )
                     raise ProviderError(
                         f"API bad request: {retry_error}"
