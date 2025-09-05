@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
+from openai.types.responses import ParsedResponse
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -184,6 +185,7 @@ class OpenAIProvider(BaseProvider):
             if tool_choice_for_payload is not None:
                 request_payload["tool_choice"] = tool_choice_for_payload
 
+            completion: ParsedResponse = {}
             completion = await self._make_api_call(
                 request_payload, active_model, len(current_messages)
             )
