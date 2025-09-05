@@ -206,7 +206,14 @@ class OpenAIProvider(BaseProvider):
             if not tool_calls:
                 if use_parse:
                     for item in getattr(completion, "output", []):
-                        for content in getattr(item, "content", []):
+                        item_content = getattr(item, "content", None)
+                        if not item_content:
+                            module_logger.warning(
+                                "Received an empty message content. Finish reason: %s",
+                                getattr(item, "finish_reason", "N/A"),
+                            )
+                            continue
+                        for content in item_content:
                             parsed_obj = getattr(content, "parsed", None)
                             if parsed_obj is not None:
                                 return parsed_obj, collected_payloads
@@ -365,7 +372,14 @@ class OpenAIProvider(BaseProvider):
         if use_parse:
             content_val = ""
             for item in getattr(completion, "output", []):
-                for content in getattr(item, "content", []):
+                item_content = getattr(item, "content", None)
+                if not item_content:
+                    module_logger.warning(
+                        "Received an empty message content. Finish reason: %s",
+                        getattr(item, "finish_reason", "N/A"),
+                    )
+                    continue
+                for content in item_content:
                     parsed_obj = getattr(content, "parsed", None)
                     if parsed_obj is not None:
                         content_val = parsed_obj.model_dump_json()
