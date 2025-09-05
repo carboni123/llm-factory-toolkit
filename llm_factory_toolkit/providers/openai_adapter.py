@@ -30,6 +30,9 @@ logging.basicConfig(
 )
 module_logger = logging.getLogger(__name__)
 
+DEFAULT_REASONING_BUFFER = 1024
+REASONING_MODEL_PREFIXES = ("gpt-5", "o4", "o3")
+
 
 @register_provider("openai")
 class OpenAIProvider(BaseProvider):
@@ -41,10 +44,6 @@ class OpenAIProvider(BaseProvider):
 
     DEFAULT_MODEL = "gpt-4o-mini"
     API_ENV_VAR = "OPENAI_API_KEY"
-    TEMPERATURE_UNSUPPORTED_MODELS = {
-        "gpt-5",
-        "o4-mini",
-    }
 
     def __init__(
         self,
@@ -54,6 +53,7 @@ class OpenAIProvider(BaseProvider):
             ToolFactory
         ] = None,  # ToolFactory instance is required for tool use
         timeout: float = 180.0,
+        reasoning_token_buffer: int = DEFAULT_REASONING_BUFFER,
         **kwargs: Any,
     ) -> None:
         """
@@ -65,6 +65,8 @@ class OpenAIProvider(BaseProvider):
             tool_factory (ToolFactory, optional): Instance of ToolFactory for tool handling.
                                                   Required if tool usage is expected.
             timeout (float): API request timeout in seconds.
+            reasoning_token_buffer (int): Extra tokens reserved for reasoning models.
+                Defaults to ``DEFAULT_REASONING_BUFFER``.
             **kwargs: Additional arguments passed to BaseProvider.
         """
         super().__init__(api_key=api_key, api_env_var=self.API_ENV_VAR, **kwargs)
@@ -86,6 +88,7 @@ class OpenAIProvider(BaseProvider):
         # Ensure tool_factory is stored. It's needed for get_tool_definitions
         self.tool_factory = tool_factory
         self.timeout = timeout
+        self.reasoning_token_buffer = reasoning_token_buffer
 
         if self.tool_factory:
             module_logger.info(
@@ -107,6 +110,11 @@ class OpenAIProvider(BaseProvider):
                 "or the OPENAI_API_KEY environment variable."
             )
         return self.async_client
+
+    @staticmethod
+    def _is_reasoning_model(model_name: str) -> bool:
+        """Return True if the model is a reasoning-capable model."""
+        return model_name.startswith(REASONING_MODEL_PREFIXES)
 
     async def generate(
         self,
@@ -169,9 +177,20 @@ class OpenAIProvider(BaseProvider):
             else:
                 api_call_args["text"] = {"format": response_format}
 
-        if temperature is not None:
+        if temperature is not None and not self._is_reasoning_model(active_model):
             api_call_args["temperature"] = temperature
-        if max_output_tokens is not None:
+            
+        if max_output_tokens is not None and self._is_reasoning_model(active_model):
+            api_call_args["max_output_tokens"] = (
+                max_output_tokens + self.reasoning_token_buffer
+            )
+            module_logger.info(
+                "Adding reasoning token buffer. Requested=%s, buffer=%s, sending=%s",
+                max_output_tokens,
+                self.reasoning_token_buffer,
+                api_call_args["max_output_tokens"],
+            )
+        elif max_output_tokens is not None:
             api_call_args["max_output_tokens"] = max_output_tokens
 
         while iteration_count < max_tool_iterations:
@@ -185,8 +204,7 @@ class OpenAIProvider(BaseProvider):
             if tool_choice_for_payload is not None:
                 request_payload["tool_choice"] = tool_choice_for_payload
 
-            completion: ParsedResponse = {}
-            completion = await self._make_api_call(
+            completion: ParsedResponse[Any] = await self._make_api_call(
                 request_payload, active_model, len(current_messages)
             )
 
@@ -293,10 +311,19 @@ class OpenAIProvider(BaseProvider):
             else:
                 api_call_args["text"] = {"format": response_format}
 
-        if temperature is not None:
+        if temperature is not None and not self._is_reasoning_model(active_model):
             api_call_args["temperature"] = temperature
-        if max_output_tokens is not None:
-            api_call_args["max_output_tokens"] = max_output_tokens
+            
+        if max_output_tokens is not None and self._is_reasoning_model(active_model):
+            api_call_args["max_output_tokens"] = (
+                max_output_tokens + self.reasoning_token_buffer
+            )
+            module_logger.info(
+                "Adding reasoning token buffer. Requested=%s, buffer=%s, sending=%s",
+                max_output_tokens,
+                self.reasoning_token_buffer,
+                api_call_args["max_output_tokens"],
+            )
 
         request_payload = {**api_call_args, "input": list(input)}
 
@@ -477,10 +504,6 @@ class OpenAIProvider(BaseProvider):
         dispatching the request.
         """
         client = self._ensure_client()
-        for unsupported_model in self.TEMPERATURE_UNSUPPORTED_MODELS:
-            if active_model.startswith(unsupported_model):
-                request_payload.pop("temperature", None)
-                break
         try:
             completion = await client.responses.parse(**request_payload)
             usage = getattr(completion, "usage", None)
