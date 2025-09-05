@@ -98,6 +98,34 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## Reasoning Models
+
+Reasoning-oriented models such as GPT‑5 generate hidden reasoning tokens that
+can consume the entire `max_output_tokens` budget. The toolkit automatically
+adds a buffer and may retry the call if those reasoning tokens exhaust the
+limit, so you can reuse the same values you set for non-reasoning models.
+
+```python
+from llm_factory_toolkit import LLMClient
+
+client = LLMClient(provider_type="openai", model="gpt-5-mini")
+response, _ = await client.generate(
+    input=[{"role": "user", "content": "The capital of France?"}],
+    max_output_tokens=500,
+)
+print(response)
+```
+
+If needed, adjust the reasoning token buffer when creating the provider:
+
+```python
+client = LLMClient(
+    provider_type="openai",
+    model="gpt-5-mini",
+    reasoning_token_buffer=512,
+)
+```
+
 ## Advanced Usage
 
 This toolkit also supports:
