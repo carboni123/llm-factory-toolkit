@@ -127,6 +127,7 @@ class OpenAIProvider(BaseProvider):
         max_output_tokens: Optional[int] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
         parallel_tools: bool = False,
         **kwargs: Any,
     ) -> Tuple[Optional[BaseModel | str], List[Any]]:
@@ -147,6 +148,8 @@ class OpenAIProvider(BaseProvider):
                                              Passing ``None`` disables tool usage. A non-empty list
                                              restricts to the specified tools.
             tool_execution_context: Context to be injected into tool calls.
+            mock_tools (bool): If True, executes tools in mock mode and returns
+                stubbed responses.
             parallel_tools (bool): If True, dispatch multiple tool calls concurrently
                 using ``asyncio.gather``. Defaults to ``False``.
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
@@ -179,7 +182,7 @@ class OpenAIProvider(BaseProvider):
 
         if temperature is not None and not self._is_reasoning_model(active_model):
             api_call_args["temperature"] = temperature
-            
+
         if max_output_tokens is not None and self._is_reasoning_model(active_model):
             api_call_args["max_output_tokens"] = (
                 max_output_tokens + self.reasoning_token_buffer
@@ -270,6 +273,7 @@ class OpenAIProvider(BaseProvider):
             tool_results, payloads = await self._handle_tool_calls(
                 tool_calls,
                 tool_execution_context=tool_execution_context,
+                mock_tools=mock_tools,
                 parallel_tools=parallel_tools,
             )
             current_messages.extend(tool_results)
@@ -313,7 +317,7 @@ class OpenAIProvider(BaseProvider):
 
         if temperature is not None and not self._is_reasoning_model(active_model):
             api_call_args["temperature"] = temperature
-            
+
         if max_output_tokens is not None and self._is_reasoning_model(active_model):
             api_call_args["max_output_tokens"] = (
                 max_output_tokens + self.reasoning_token_buffer
@@ -572,9 +576,11 @@ class OpenAIProvider(BaseProvider):
 
     async def _handle_tool_calls(
         self,
-        tool_calls: Any,
-        tool_execution_context: Optional[Dict[str, Any]],
-        parallel_tools: bool,
+        tool_calls: List[Any],
+        *,
+        tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
+        parallel_tools: bool = False,
     ) -> Tuple[List[Dict[str, Any]], List[Any]]:
         """Dispatch tool calls either sequentially or in parallel."""
         assert self.tool_factory is not None
@@ -631,6 +637,7 @@ class OpenAIProvider(BaseProvider):
                     func_name,
                     func_args_str,
                     tool_execution_context=tool_execution_context,
+                    use_mock=mock_tools,
                 )
 
                 payload: Dict[str, Any] = {

@@ -101,6 +101,7 @@ class BaseProvider(ABC):
         input: list[dict[str, Any]],
         *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
         **kwargs: Any,
     ) -> Tuple[Optional[BaseModel | str], List[Any]]:
         """
@@ -108,6 +109,8 @@ class BaseProvider(ABC):
         potentially handling tool calls and returning deferred action payloads.
         The tool_execution_context is passed to the ToolFactory for injection.
         Tool usage counts are updated within the ToolFactory instance if one is used.
+        When ``mock_tools`` is ``True`` providers should avoid executing real tool
+        side effects and return stubbed tool responses instead.
 
         Returns:
         Tuple[Optional[BaseModel | str], List[Any]]:

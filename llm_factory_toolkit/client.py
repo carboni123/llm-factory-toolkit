@@ -108,6 +108,7 @@ class LLMClient:
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
         parallel_tools: bool = False,
         **kwargs: Any,
     ) -> Tuple[Optional[BaseModel | str], List[Any]]:
@@ -127,6 +128,8 @@ class LLMClient:
                                              registered tools. Passing ``None`` disables tool
                                              usage entirely. Providing a non-empty list restricts
                                              the available tools to those names.
+            mock_tools (bool): If True, executes tools in mock mode and returns
+                stubbed responses without triggering real side effects.
             parallel_tools (bool): If True, instructs the provider to dispatch
                 multiple tool calls concurrently. Defaults to ``False``.
             **kwargs: Additional arguments passed directly to the provider's generate method
@@ -148,6 +151,7 @@ class LLMClient:
             model,
             use_tools,
             tool_execution_context is not None,
+            mock_tools,
         )
 
         provider_args = {
@@ -158,6 +162,7 @@ class LLMClient:
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_execution_context": tool_execution_context,
+            "mock_tools": mock_tools,
             "parallel_tools": parallel_tools,
             **kwargs,  # Pass through other args like 'max_tool_iterations', 'tool_choice'
         }
@@ -268,6 +273,7 @@ class LLMClient:
         self,
         intent_output: ToolIntentOutput,
         tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Executes a list of tool call intents using the client's ToolFactory
@@ -279,6 +285,8 @@ class LLMClient:
 
         Args:
             intent_output: The ToolIntentOutput containing tool_calls from the planner.
+            mock_tools: If True, executes each tool in mock mode and returns
+                stubbed results instead of invoking the real implementation.
 
         Returns:
             A list of tool result items (each a ``dict`` with ``type`` set to
@@ -364,6 +372,7 @@ class LLMClient:
                 tool_call_id,
                 tool_args_str,
                 tool_execution_context is not None,
+                mock_tools,
             )
 
             try:
@@ -372,6 +381,7 @@ class LLMClient:
                         tool_name,
                         tool_args_str,
                         tool_execution_context=tool_execution_context,
+                        use_mock=mock_tools,
                     )
                 )
 

@@ -132,8 +132,25 @@ This toolkit also supports:
 
 *   **Registering custom tools:** Allow the LLM to call your Python functions (see `INTEGRATION.md`).
 *   **Structured JSON/Pydantic output:** Get responses formatted according to a specific schema (see `INTEGRATION.md`).
+*   **Mock tool execution:** Enable `mock_tools=True` to surface stubbed tool results without triggering side effects.
 
 For detailed instructions on integrating this toolkit into your projects, including tool usage and structured output examples, please see **[INTEGRATION.md](INTEGRATION.md)**.
+
+### Mocking tool execution
+
+When showcasing the toolkit (for example, in the demo UI) you can prevent real
+network calls or database writes by enabling mock mode:
+
+```python
+response, tool_payloads = await client.generate(
+    input=messages,
+    mock_tools=True,
+)
+```
+
+Any tool registered through `ToolFactory` will return a stubbed
+`ToolExecutionResult`. Class-based tools can customize this behaviour by
+overriding `BaseTool.mock_execute`.
 
 ## Development & Testing
 

@@ -18,6 +18,24 @@ class BaseTool(ABC):
         """Execute the tool logic."""
         raise NotImplementedError
 
+    def mock_execute(self, *args: Any, **kwargs: Any) -> ToolExecutionResult:
+        """Return a stubbed result when the tool is executed in mock mode.
+
+        Args:
+            *args: Positional arguments provided to the tool.
+            **kwargs: Keyword arguments provided to the tool.
+
+        Returns:
+            ToolExecutionResult: A stubbed response that can be surfaced to the
+            LLM without triggering real side effects.
+        """
+
+        tool_name = getattr(self, "NAME", self.__class__.__name__)
+        return ToolExecutionResult(
+            content=f"Mocked execution for tool '{tool_name}'.",
+            metadata={"mock": True, "tool_name": tool_name},
+        )
+
     @classmethod
     def from_config(cls, **config: Any) -> "BaseTool":
         """Instantiate the tool with optional config."""

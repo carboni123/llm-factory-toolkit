@@ -1,18 +1,34 @@
-# llm_factory_toolkit/llm_factory_toolkit/tools/tool_factory.py
+"""Facilities for registering and dispatching tools."""
+
+from __future__ import annotations
+
 import asyncio
 import importlib
 import inspect
 import json
 import logging
-from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, cast
 
 from ..exceptions import ToolError
 from .models import ToolExecutionResult
 
 module_logger = logging.getLogger(__name__)
 
-# Mapping of built-in tool metadata. Keys are tool names.
+
+ToolHandler = Callable[..., ToolExecutionResult | Awaitable[ToolExecutionResult]]
+
+
+@dataclass
+class ToolRegistration:
+    """Container describing how a tool should be executed."""
+
+    name: str
+    executor: ToolHandler
+    mock_executor: ToolHandler
+    definition: Dict[str, Any]
+
+
 BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
     "safe_math_evaluator": {
         "function": "builtins.safe_math_evaluator",
@@ -43,71 +59,60 @@ BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
 
 
 class ToolFactory:
-    """
-    Manages the definition and dispatching of custom tools (functions)
-    that an LLM provider can call.
-    Supports filtering which tools are exposed for a specific call,
-    injecting execution context into tool calls, and tracking tool usage.
-    """
+    """Registry and dispatcher for tools exposed to language models."""
 
     def __init__(self) -> None:
-        self.tools: Dict[str, Callable[..., ToolExecutionResult]] = {}
-        self.tool_definitions: List[Dict[str, Any]] = []
-        self._tool_names: set[str] = set()  # Keep track of registered names
-        self.tool_usage_counts: Dict[str, int] = defaultdict(int)  # Stores usage counts
+        self._registry: Dict[str, ToolRegistration] = {}
+        self.tool_usage_counts: Dict[str, int] = {}
         module_logger.info("ToolFactory initialized.")
+
+    @property
+    def tool_definitions(self) -> List[Dict[str, Any]]:
+        """Return provider ready tool definitions in registration order."""
+
+        return [registration.definition for registration in self._registry.values()]
+
+    @property
+    def tools(self) -> Dict[str, ToolHandler]:
+        """Expose registered executors for compatibility with existing integrations."""
+
+        return {
+            name: registration.executor for name, registration in self._registry.items()
+        }
+
+    @property
+    def mock_tool_handlers(self) -> Dict[str, ToolHandler]:
+        """Expose registered mock executors for compatibility."""
+
+        return {
+            name: registration.mock_executor
+            for name, registration in self._registry.items()
+        }
 
     def register_tool(
         self,
-        function: Callable[..., ToolExecutionResult],
+        function: ToolHandler,
         name: str,
         description: str,
-        parameters: Dict[str, Any] | None = None,
+        parameters: Optional[Dict[str, Any]] = None,
+        mock_function: Optional[ToolHandler] = None,
     ) -> None:
-        """
-        Registers a custom tool function and its definition (schema).
+        """Register a callable tool along with its metadata."""
 
-        Args:
-            function: The callable Python function to execute.
-            name: The name the LLM will use to call the function. Should be unique.
-            description: A description for the LLM explaining what the tool does.
-            parameters: A dictionary representing the JSON Schema for the function's
-                        parameters. Follows OpenAI's parameter schema structure.
-        """
-        if name in self.tools:
-            module_logger.warning(f"Tool '{name}' is already registered. Overwriting.")
-            # Remove existing definition before adding the new one
-            self.tool_definitions = [
-                t
-                for t in self.tool_definitions
-                if t.get("function", {}).get("name") != name
-            ]
-            # Reset usage count for the overwritten tool if it existed
-            if name in self.tool_usage_counts:
-                del self.tool_usage_counts[name]
-        else:
-            self._tool_names.add(name)
+        if name in self._registry:
+            module_logger.warning("Tool '%s' is already registered. Overwriting.", name)
 
-        self.tools[name] = function
-        tool_def: Dict[str, Any] = {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-            },
-        }
-        if parameters:
-            if not isinstance(parameters, dict) or parameters.get("type") != "object":
-                module_logger.warning(
-                    "Tool '%s' parameters does not seem to be a valid JSON "
-                    "Schema object. Ensure it follows the provider's expected format.",
-                    name,
-                )
-            tool_def["function"]["parameters"] = parameters
+        definition = self._build_definition(name, description, parameters)
+        mock_executor = self._select_mock_executor(name, function, mock_function)
 
-        self.tool_definitions.append(tool_def)
-        self.tool_usage_counts[name] = 0  # Initialize count for new/overwritten tool
-        module_logger.info(f"Registered tool: {name}")
+        self._registry[name] = ToolRegistration(
+            name=name,
+            executor=function,
+            mock_executor=mock_executor,
+            definition=definition,
+        )
+        self.tool_usage_counts[name] = 0
+        module_logger.info("Registered tool: %s", name)
 
     def register_tool_class(
         self,
@@ -117,7 +122,8 @@ class ToolFactory:
         description_override: Optional[str] = None,
         parameters_override: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Registers a tool class that inherits from BaseTool."""
+        """Register a :class:`BaseTool` subclass by wiring wrappers for execution."""
+
         from .base_tool import BaseTool
 
         if not issubclass(tool_class, BaseTool):
@@ -132,36 +138,47 @@ class ToolFactory:
                 f"Tool class {tool_class.__name__} missing required NAME or DESCRIPTION."
             )
 
-        def tool_wrapper(**kwargs: Any) -> ToolExecutionResult:
-            attr = tool_class.__dict__.get("execute")
-            if isinstance(attr, classmethod):
-                return tool_class.execute(**kwargs)
-            instance = tool_class.from_config(**(config or {}))
-            return instance.execute(**kwargs)
+        tool_config = dict(config or {})
+
+        execute_wrapper = self._build_tool_class_callable(
+            tool_class=tool_class,
+            config=tool_config,
+            method_name="execute",
+        )
+        mock_wrapper = self._build_tool_class_callable(
+            tool_class=tool_class,
+            config=tool_config,
+            method_name="mock_execute",
+        )
 
         self.register_tool(
-            function=tool_wrapper,
+            function=execute_wrapper,
             name=name,
             description=description,
             parameters=parameters,
+            mock_function=mock_wrapper,
         )
-        module_logger.info(f"Registered tool class: {tool_class.__name__} as '{name}'")
+        module_logger.info(
+            "Registered tool class: %s as '%s'", tool_class.__name__, name
+        )
 
-    def register_builtins(self, names: Optional[List[str]] = None) -> None:
-        """Registers a selection of built-in tools by name."""
-        if names is None:
-            names = list(BUILTIN_TOOLS.keys())
+    def register_builtins(self, names: Optional[Sequence[str]] = None) -> None:
+        """Register a selection of built-in tools by name."""
 
+        selected = list(names) if names is not None else list(BUILTIN_TOOLS.keys())
         builtins_mod = importlib.import_module("llm_factory_toolkit.tools.builtins")
-        for name in names:
+
+        for name in selected:
             info = BUILTIN_TOOLS.get(name)
             if not info:
-                module_logger.warning(f"Built-in tool '{name}' not found.")
+                module_logger.warning("Built-in tool '%s' not found.", name)
                 continue
+
             func = getattr(builtins_mod, info["function"].split(".")[-1], None)
             if func is None:
-                module_logger.warning(f"Function for built-in '{name}' not available.")
+                module_logger.warning("Function for built-in '%s' not available.", name)
                 continue
+
             self.register_tool(
                 function=func,
                 name=name,
@@ -170,265 +187,348 @@ class ToolFactory:
             )
 
     def get_tool_definitions(
-        self, filter_tool_names: Optional[List[str]] = None
+        self, filter_tool_names: Optional[Sequence[str]] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Returns the list of provider-compatible tool definitions, optionally filtered.
+        """Return definitions optionally filtered by ``filter_tool_names``."""
 
-        Args:
-            filter_tool_names (Optional[List[str]]): A list of tool names to include.
-                If None, all registered tool definitions are returned.
-                If an empty list is provided, an empty list is returned.
-
-        Returns:
-            List[Dict[str, Any]]: The list of tool definitions for the provider.
-        """
         if filter_tool_names is None:
-            # Default: return all tools
             module_logger.debug("Returning all tool definitions.")
             return self.tool_definitions
-        else:
-            # Filter the definitions based on the provided list
-            allowed_names = set(filter_tool_names)
-            filtered_definitions = [
-                tool_def
-                for tool_def in self.tool_definitions
-                if tool_def.get("function", {}).get("name") in allowed_names
-            ]
 
-            # Log warnings for requested names that were not found/registered
-            requested_names = set(filter_tool_names)
-            found_names = {t["function"]["name"] for t in filtered_definitions}
-            missing_names = requested_names - found_names
-            if missing_names:
-                module_logger.warning(
-                    f"Requested tools not found in factory: {list(missing_names)}. They will be excluded."
-                )
-            module_logger.debug(
-                f"Returning filtered tool definitions for names: {list(found_names)}"
+        allowed = set(filter_tool_names)
+        ordered_names = [registration.name for registration in self._registry.values()]
+        definitions = [
+            registration.definition
+            for registration in self._registry.values()
+            if registration.name in allowed
+        ]
+
+        missing = allowed - set(ordered_names)
+        if missing:
+            module_logger.warning(
+                "Requested tools not found in factory: %s. They will be excluded.",
+                list(missing),
             )
-            return filtered_definitions
+
+        module_logger.debug(
+            "Returning filtered tool definitions for names: %s",
+            [name for name in ordered_names if name in allowed],
+        )
+        return definitions
 
     async def dispatch_tool(
         self,
         function_name: str,
         function_args_str: str,
         tool_execution_context: Optional[Dict[str, Any]] = None,
+        use_mock: bool = False,
     ) -> ToolExecutionResult:
-        """
-        Executes the appropriate tool function based on the name and arguments,
-        injecting any relevant ``tool_execution_context`` and returning a
-        ``ToolExecutionResult``.
+        """Execute a registered tool and return its :class:`ToolExecutionResult`."""
 
-        This method is ``async`` to allow tool functions that perform I/O to be
-        awaited. Synchronous tools are executed directly and their results
-        returned. Tool usage counting is handled separately by the provider.
-        """
-        if function_name not in self.tools:
+        registration = self._registry.get(function_name)
+        if registration is None:
             error_msg = f"Tool '{function_name}' not found."
             module_logger.error(error_msg)
-            return ToolExecutionResult(
-                content=json.dumps({"error": error_msg, "status": "tool_not_found"}),
-                error=error_msg,
-            )
+            return self._build_error_result(error_msg, "tool_not_found")
 
-        try:
-            actual_args_to_parse = function_args_str if function_args_str else "{}"
-            llm_provided_arguments = json.loads(actual_args_to_parse)
-            if not isinstance(llm_provided_arguments, dict):
-                raise TypeError(
-                    "Expected JSON object (dict) for arguments of tool '%s', "
-                    "but got %s",
-                    function_name,
-                    type(llm_provided_arguments),
-                )
-        except json.JSONDecodeError as e:
-            error_msg = (
-                f"Failed to decode JSON arguments for tool '{function_name}': {e}. "
-                f"Args: '{actual_args_to_parse}'"
-            )
-            module_logger.error(error_msg)
-            return ToolExecutionResult(
-                content=json.dumps(
-                    {"error": error_msg, "status": "argument_decode_error"}
-                ),
-                error=error_msg,
-            )
-        except TypeError as e:
-            error_msg = str(e)
-            module_logger.error(
-                f"Argument type error for tool '{function_name}': {error_msg}"
-            )
-            return ToolExecutionResult(
-                content=json.dumps(
-                    {"error": error_msg, "status": "argument_type_error"}
-                ),
-                error=error_msg,
-            )
+        parsed_arguments = self._parse_arguments(function_name, function_args_str)
+        if isinstance(parsed_arguments, ToolExecutionResult):
+            return parsed_arguments
 
-        tool_function = self.tools[function_name]
-        final_arguments = llm_provided_arguments.copy()
+        handler = registration.mock_executor if use_mock else registration.executor
+        final_arguments = dict(parsed_arguments)
 
         if tool_execution_context:
-            # tool_function is the registered callable (e.g., an instance of a tool class)
-            # We need to inspect its __call__ method if it's a class instance,
-            # or the function itself if it's a raw function.
-            target_callable = tool_function
-            if (
-                hasattr(tool_function, "__call__")
-                and callable(tool_function.__call__)
-                and not inspect.isfunction(tool_function)
-                and not inspect.ismethod(tool_function)
-            ):
-                # It's likely a class instance, inspect its __call__ method
-                if inspect.isroutine(
-                    getattr(tool_function, "__call__", None)
-                ):  # Check if __call__ is a method/function
-                    target_callable = tool_function.__call__
-                else:  # Fallback if __call__ is not directly inspectable as routine (e.g. functools.partial)
-                    pass  # Keep target_callable as tool_function, inspect might work on the partial's func
-
-            try:
-                sig = inspect.signature(target_callable)
-                accepts_var_kw = any(
-                    p.kind == inspect.Parameter.VAR_KEYWORD
-                    for p in sig.parameters.values()
-                )
-                for param_name, param_value in tool_execution_context.items():
-                    if param_name in final_arguments:
-                        module_logger.warning(
-                            f"Context parameter '{param_name}' for tool '{function_name}' "
-                            f"collides with an LLM-provided argument. Context will NOT override."
-                        )
-                    elif param_name in sig.parameters or accepts_var_kw:
-                        final_arguments[param_name] = param_value
-                        module_logger.debug(
-                            f"Injected context param '{param_name}' for tool '{function_name}'"
-                        )
-            except (
-                ValueError,
-                TypeError,
-            ) as e:  # Handle cases where signature cannot be determined
-                module_logger.error(
-                    "Could not inspect signature for tool '%s' (target: %s): %s. "
-                    "Context injection might be incomplete.",
-                    function_name,
-                    target_callable,
-                    e,
-                )
+            final_arguments = self._inject_context(
+                handler=handler,
+                arguments=final_arguments,
+                context=tool_execution_context,
+                tool_name=function_name,
+            )
 
         try:
             module_logger.debug(
-                f"Executing tool '{function_name}' with final args: {final_arguments}"
+                "Executing tool '%s' with final args: %s (mock=%s)",
+                function_name,
+                final_arguments,
+                use_mock,
             )
-            if asyncio.iscoroutinefunction(tool_function):
-                result: ToolExecutionResult = await tool_function(**final_arguments)
-            else:
-                result = tool_function(**final_arguments)
-                if asyncio.iscoroutine(result):
-                    result = await result
-
-            if not isinstance(result, ToolExecutionResult):
-                # Support simple return types for convenience
-                if isinstance(result, dict):
-                    module_logger.warning(
-                        "Tool '%s' returned a raw dict; converting to ToolExecutionResult.",
-                        function_name,
-                    )
-                    return ToolExecutionResult(
-                        content=json.dumps(result),
-                        payload=result,
-                    )
-                if isinstance(result, str):
-                    module_logger.warning(
-                        "Tool '%s' returned a raw string; converting to ToolExecutionResult.",
-                        function_name,
-                    )
-                    return ToolExecutionResult(content=result, payload=result)
-                module_logger.error(
-                    "Tool function '%s' did not return a ToolExecutionResult object. Returned: %s",
-                    function_name,
-                    type(result),
-                )
-                try:
-                    llm_content = json.dumps(
-                        {
-                            "error": f"Tool returned non-serializable, unexpected format: {type(result)}"
-                        }
-                    )
-                except TypeError:
-                    llm_content = json.dumps(
-                        {
-                            "error": "Tool returned unexpected, non-serializable value",
-                        }
-                    )
-                return ToolExecutionResult(
-                    content=llm_content,
-                    error=f"Tool function '{function_name}' returned unexpected type: {type(result)}.",
-                )
-            module_logger.debug(
-                f"Tool '{function_name}' executed. LLM Content: {result.content}"
-            )
-            return result
-        except Exception as e:
+            raw_result = await self._call_handler(handler, final_arguments)
+        except Exception as exc:  # noqa: BLE001 - propagate sanitized error result
             error_msg = (
-                f"Execution failed unexpectedly within tool '{function_name}': {e}"
+                f"Execution failed unexpectedly within tool '{function_name}': {exc}"
             )
-            module_logger.exception(f"Error during tool execution for {function_name}")
-            return ToolExecutionResult(
-                content=json.dumps({"error": error_msg, "status": "execution_error"}),
-                error=error_msg,
+            module_logger.exception(
+                "Error during tool execution for %s", function_name, exc_info=True
             )
+            return self._build_error_result(error_msg, "execution_error")
+
+        result = self._normalize_result(function_name, raw_result)
+        module_logger.debug(
+            "Tool '%s' executed. LLM Content: %s (mock=%s)",
+            function_name,
+            result.content,
+            use_mock,
+        )
+        return result
 
     def increment_tool_usage(self, tool_name: str) -> None:
-        """Increments the usage count for the given tool name."""
-        if tool_name in self._tool_names:
-            self.tool_usage_counts[tool_name] += 1
+        """Increment usage count for ``tool_name`` if registered."""
+
+        if tool_name in self._registry:
+            self.tool_usage_counts[tool_name] = (
+                self.tool_usage_counts.get(tool_name, 0) + 1
+            )
             module_logger.debug(
-                f"Incremented usage count for tool '{tool_name}'. New count: {self.tool_usage_counts[tool_name]}"
+                "Incremented usage count for tool '%s'. New count: %s",
+                tool_name,
+                self.tool_usage_counts[tool_name],
             )
         else:
-            # This case should ideally not happen if the tool_name comes from a provider
-            # which only knows about tools registered with this factory.
-            # However, good to log if it does.
             module_logger.warning(
-                f"Attempted to increment usage for unregistered tool: '{tool_name}'. Count not incremented."
+                "Attempted to increment usage for unregistered tool: '%s'. Count not incremented.",
+                tool_name,
             )
 
     def get_tool_usage_counts(self) -> Dict[str, int]:
-        """Returns a dictionary of tool names and their usage counts."""
-        return dict(self.tool_usage_counts)  # Return a copy
+        """Return a copy of tool usage counters."""
+
+        return dict(self.tool_usage_counts)
 
     def reset_tool_usage_counts(self) -> None:
-        """Resets all tool usage counts to zero."""
-        for tool_name in self.tool_usage_counts:
-            self.tool_usage_counts[tool_name] = 0
+        """Reset usage counters for all tools to zero."""
+
+        for name in list(self.tool_usage_counts.keys()):
+            self.tool_usage_counts[name] = 0
         module_logger.info("All tool usage counts have been reset.")
 
     def get_and_reset_tool_usage_counts(self) -> Dict[str, int]:
-        """
-        Atomically retrieves the current tool usage counts and then resets them to zero.
-        This is useful for periodic logging to ensure counts represent usage
-        within a specific interval. The operations are atomic in the sense that
-        no other call to increment or reset counts on this instance should interleave
-        between getting the copy and performing the reset within this method in a
-        typical single-threaded execution of this method.
+        """Return usage counts and reset them in a single operation."""
 
-        Returns:
-            Dict[str, int]: A copy of the tool usage counts before they were reset.
-        """
-        # In a single-threaded context for this method's execution (common for periodic tasks),
-        # this sequence is safe. If multiple threads could concurrently call this *specific*
-        # method on the *same* factory instance, a lock around these two operations would be needed.
-        # However, typical usage (one periodic logger per process) doesn't require this.
-        counts_to_return = dict(self.tool_usage_counts)  # Get a copy
-        self.reset_tool_usage_counts()  # Then reset
+        counts = dict(self.tool_usage_counts)
+        self.reset_tool_usage_counts()
         module_logger.info(
-            f"Retrieved and reset tool usage counts. Counts returned: {counts_to_return}"
+            "Retrieved and reset tool usage counts. Counts returned: %s", counts
         )
-        return counts_to_return
+        return counts
 
     @property
     def available_tool_names(self) -> List[str]:
-        """Returns a list of all registered tool names."""
-        return list(self._tool_names)
+        """Names of all registered tools."""
+
+        return list(self._registry.keys())
+
+    def _build_definition(
+        self, name: str, description: str, parameters: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        definition: Dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+            },
+        }
+
+        if parameters is not None:
+            if not isinstance(parameters, dict) or parameters.get("type") != "object":
+                module_logger.warning(
+                    "Tool '%s' parameters do not appear to be valid JSON schema objects.",
+                    name,
+                )
+            definition["function"]["parameters"] = parameters
+
+        return definition
+
+    def _select_mock_executor(
+        self,
+        name: str,
+        function: ToolHandler,
+        explicit_mock: Optional[ToolHandler],
+    ) -> ToolHandler:
+        if explicit_mock is not None:
+            return explicit_mock
+
+        candidate = self._extract_mock_from_callable(function)
+        if candidate is not None:
+            return candidate
+
+        return self._default_mock_handler(name)
+
+    def _extract_mock_from_callable(
+        self, function: ToolHandler
+    ) -> Optional[ToolHandler]:
+        bound_owner = getattr(function, "__self__", None)
+        if bound_owner is not None:
+            candidate = getattr(bound_owner, "mock_execute", None)
+            if callable(candidate):
+                return cast(ToolHandler, candidate)
+
+        candidate = getattr(function, "mock_execute", None)
+        if callable(candidate):
+            return cast(ToolHandler, candidate)
+
+        return None
+
+    def _default_mock_handler(self, tool_name: str) -> ToolHandler:
+        def _handler(**_: Any) -> ToolExecutionResult:
+            return ToolExecutionResult(
+                content=f"Mocked execution for tool '{tool_name}'.",
+                metadata={"mock": True, "tool_name": tool_name},
+            )
+
+        return _handler
+
+    def _build_tool_class_callable(
+        self,
+        tool_class: type,
+        config: Dict[str, Any],
+        method_name: str,
+    ) -> ToolHandler:
+        descriptor = tool_class.__dict__.get(method_name)
+
+        if isinstance(descriptor, classmethod):
+            method = getattr(tool_class, method_name)
+
+            def _call(**kwargs: Any) -> Any:
+                return method(**kwargs)
+
+        else:
+            if not hasattr(tool_class, "from_config"):
+                raise ToolError(
+                    f"Tool class {tool_class.__name__} must define from_config method."
+                )
+
+            def _call(**kwargs: Any) -> Any:
+                instance = tool_class.from_config(**config)
+                method = getattr(instance, method_name)
+                return method(**kwargs)
+
+        setattr(_call, "__wrapped_tool_class__", tool_class)
+        setattr(_call, "__tool_config__", dict(config))
+        setattr(_call, "__name__", f"{tool_class.__name__}_{method_name}")
+        return _call
+
+    def _parse_arguments(
+        self, function_name: str, function_args_str: str
+    ) -> Dict[str, Any] | ToolExecutionResult:
+        actual_args = function_args_str if function_args_str else "{}"
+
+        try:
+            parsed = json.loads(actual_args)
+        except json.JSONDecodeError as exc:
+            error_msg = (
+                f"Failed to decode JSON arguments for tool '{function_name}': {exc}. "
+                f"Args: '{actual_args}'"
+            )
+            module_logger.error(error_msg)
+            return self._build_error_result(error_msg, "argument_decode_error")
+
+        if not isinstance(parsed, dict):
+            error_msg = (
+                f"Expected JSON object (dict) for arguments of tool '{function_name}', "
+                f"but got {type(parsed)}"
+            )
+            module_logger.error(error_msg)
+            return self._build_error_result(error_msg, "argument_type_error")
+
+        return parsed
+
+    async def _call_handler(
+        self, handler: ToolHandler, arguments: Dict[str, Any]
+    ) -> Any:
+        if asyncio.iscoroutinefunction(handler):
+            return await handler(**arguments)
+
+        result = handler(**arguments)
+        if asyncio.iscoroutine(result):
+            return await result
+
+        return result
+
+    def _normalize_result(self, function_name: str, result: Any) -> ToolExecutionResult:
+        if isinstance(result, ToolExecutionResult):
+            return result
+
+        if isinstance(result, dict):
+            module_logger.warning(
+                "Tool '%s' returned a raw dict; converting to ToolExecutionResult.",
+                function_name,
+            )
+            return ToolExecutionResult(content=json.dumps(result), payload=result)
+
+        if isinstance(result, str):
+            module_logger.warning(
+                "Tool '%s' returned a raw string; converting to ToolExecutionResult.",
+                function_name,
+            )
+            return ToolExecutionResult(content=result, payload=result)
+
+        module_logger.error(
+            "Tool function '%s' returned unexpected type: %s",
+            function_name,
+            type(result),
+        )
+        try:
+            content = json.dumps(
+                {
+                    "error": f"Tool returned non-serializable, unexpected format: {type(result)}"
+                }
+            )
+        except TypeError:
+            content = json.dumps(
+                {"error": "Tool returned unexpected, non-serializable value"}
+            )
+
+        return ToolExecutionResult(
+            content=content,
+            error=f"Tool function '{function_name}' returned unexpected type: {type(result)}.",
+        )
+
+    def _inject_context(
+        self,
+        handler: ToolHandler,
+        arguments: Dict[str, Any],
+        context: Dict[str, Any],
+        tool_name: str,
+    ) -> Dict[str, Any]:
+        if not context:
+            return arguments
+
+        try:
+            signature = inspect.signature(handler)
+        except (TypeError, ValueError) as exc:
+            module_logger.error(
+                "Could not inspect signature for tool '%s' (handler: %s): %s. Context injection might be incomplete.",
+                tool_name,
+                handler,
+                exc,
+            )
+            return arguments
+
+        accepts_var_kw = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+
+        for param_name, param_value in context.items():
+            if param_name in arguments:
+                module_logger.warning(
+                    "Context parameter '%s' for tool '%s' collides with an LLM-provided argument. Context will NOT override.",
+                    param_name,
+                    tool_name,
+                )
+                continue
+
+            if param_name in signature.parameters or accepts_var_kw:
+                arguments[param_name] = param_value
+                module_logger.debug(
+                    "Injected context param '%s' for tool '%s'", param_name, tool_name
+                )
+
+        return arguments
+
+    def _build_error_result(self, message: str, status: str) -> ToolExecutionResult:
+        return ToolExecutionResult(
+            content=json.dumps({"error": message, "status": status}),
+            error=message,
+        )
