@@ -24,7 +24,7 @@ idna==3.10
     #   httpx
 jiter==0.10.0
     # via openai
-openai==1.101.0
+openai==1.107.3
     # via llm-factory-toolkit (pyproject.toml)
 pydantic==2.11.7
     # via

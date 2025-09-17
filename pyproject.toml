@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm_factory_toolkit"
-version = "0.5.0"
+version = "0.5.1"
 authors = [
   { name="Diego Carboni", email="carboni123@hotmail.com" },
 ]
@@ -33,7 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
    "pytest>=8.3.0",
-   "pytest-asyncio>=0.26.0",
+   "pytest-asyncio>=1.2.0",
 ]
 builtins = [
    "sympy>=1.12",

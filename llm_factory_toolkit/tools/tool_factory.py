@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, cas
 
 from ..exceptions import ToolError
 from .models import ToolExecutionResult
+from .runtime import ToolRuntime
 
 module_logger = logging.getLogger(__name__)
 
@@ -222,6 +223,7 @@ class ToolFactory:
         function_args_str: str,
         tool_execution_context: Optional[Dict[str, Any]] = None,
         use_mock: bool = False,
+        runtime: Optional[ToolRuntime] = None,
     ) -> ToolExecutionResult:
         """Execute a registered tool and return its :class:`ToolExecutionResult`."""
 
@@ -238,11 +240,22 @@ class ToolFactory:
         handler = registration.mock_executor if use_mock else registration.executor
         final_arguments = dict(parsed_arguments)
 
+        runtime_to_use = runtime or ToolRuntime(
+            factory=self,
+            base_context=tool_execution_context,
+            use_mock=use_mock,
+        )
+        context_payload = runtime_to_use.base_context
         if tool_execution_context:
+            context_payload.update(tool_execution_context)
+        context_payload.setdefault("tool_runtime", runtime_to_use)
+        context_payload.setdefault("tool_call_depth", runtime_to_use.depth)
+
+        if context_payload:
             final_arguments = self._inject_context(
                 handler=handler,
                 arguments=final_arguments,
-                context=tool_execution_context,
+                context=context_payload,
                 tool_name=function_name,
             )
 
@@ -402,6 +415,29 @@ class ToolFactory:
                 instance = tool_class.from_config(**config)
                 method = getattr(instance, method_name)
                 return method(**kwargs)
+
+        target_callable = getattr(tool_class, method_name)
+        signature = None
+        try:
+            signature = inspect.signature(target_callable)
+        except (TypeError, ValueError):
+            signature = None
+        else:
+            parameters = list(signature.parameters.values())
+            if (
+                parameters
+                and parameters[0].name in {"self", "cls"}
+                and parameters[0].kind
+                in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+                and not isinstance(descriptor, classmethod)
+            ):
+                signature = signature.replace(parameters=parameters[1:])
+
+        if signature is not None:
+            setattr(_call, "__signature__", signature)
 
         setattr(_call, "__wrapped_tool_class__", tool_class)
         setattr(_call, "__tool_config__", dict(config))
