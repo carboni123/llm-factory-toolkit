@@ -116,6 +116,22 @@ class OpenAIProvider(BaseProvider):
         """Return True if the model is a reasoning-capable model."""
         return model_name.startswith(REASONING_MODEL_PREFIXES)
 
+    @staticmethod
+    def _strip_response_metadata(value: Any) -> Any:
+        """Remove metadata fields the Responses API does not accept."""
+
+        if isinstance(value, dict):
+            return {
+                key: OpenAIProvider._strip_response_metadata(inner_value)
+                for key, inner_value in value.items()
+                if key != "status"
+            }
+
+        if isinstance(value, list):
+            return [OpenAIProvider._strip_response_metadata(item) for item in value]
+
+        return value
+
     async def generate(
         self,
         input: List[Dict[str, Any]],
@@ -165,7 +181,7 @@ class OpenAIProvider(BaseProvider):
 
         collected_payloads: List[Any] = []
         active_model = model or self.model
-        current_messages = list(input)
+        current_messages = [self._strip_response_metadata(msg) for msg in input]
         iteration_count = 0
 
         api_call_args = {"model": active_model, **kwargs}
@@ -197,7 +213,13 @@ class OpenAIProvider(BaseProvider):
             api_call_args["max_output_tokens"] = max_output_tokens
 
         while iteration_count < max_tool_iterations:
-            request_payload = {**api_call_args, "input": current_messages}
+            request_payload = {
+                **api_call_args,
+                "input": [
+                    self._strip_response_metadata(message)
+                    for message in current_messages
+                ],
+            }
 
             tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
                 use_tools, request_payload
@@ -223,7 +245,7 @@ class OpenAIProvider(BaseProvider):
                 dump = out_item.model_dump()
                 if dump.get("type") in {"function_call", "custom_tool_call"}:
                     dump.pop("parsed_arguments", None)
-                new_items.append(dump)
+                new_items.append(self._strip_response_metadata(dump))
             current_messages.extend(new_items)
 
             if not tool_calls:
@@ -276,7 +298,9 @@ class OpenAIProvider(BaseProvider):
                 mock_tools=mock_tools,
                 parallel_tools=parallel_tools,
             )
-            current_messages.extend(tool_results)
+            current_messages.extend(
+                self._strip_response_metadata(result) for result in tool_results
+            )
             collected_payloads.extend(payloads)
             iteration_count += 1
             module_logger.debug(
@@ -329,7 +353,10 @@ class OpenAIProvider(BaseProvider):
                 api_call_args["max_output_tokens"],
             )
 
-        request_payload = {**api_call_args, "input": list(input)}
+        request_payload = {
+            **api_call_args,
+            "input": [self._strip_response_metadata(msg) for msg in input],
+        }
 
         tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
             use_tools, request_payload
@@ -352,10 +379,11 @@ class OpenAIProvider(BaseProvider):
 
         raw_assistant_items: List[Dict[str, Any]] = []
         for item in getattr(completion, "output", []):
-            if getattr(item, "type", None) in {"function_call", "custom_tool_call"}:
-                dump = item.model_dump()
+            dump = item.model_dump()
+            if dump.get("type") in {"function_call", "custom_tool_call"}:
                 dump.pop("parsed_arguments", None)
-                raw_assistant_items.append(dump)
+            if dump.get("type") in {"function_call", "custom_tool_call", "message", "reasoning"}:
+                raw_assistant_items.append(self._strip_response_metadata(dump))
 
         parsed_tool_calls_list: List[ParsedToolCall] = []
         if tool_call_items:
@@ -727,4 +755,17 @@ class OpenAIProvider(BaseProvider):
                     )
                     final_content = text_accum + warning_msg
                     break
-        return final_content
+        if final_content is not None:
+            return final_content
+
+        tool_output_detected = any(
+            isinstance(m, dict) and m.get("type") == "function_call_output"
+            for m in current_messages
+        )
+        if tool_output_detected:
+            return (
+                "[Tool executions completed without a final assistant message. "
+                "Review returned payloads for actionable results.]"
+            )
+
+        return None

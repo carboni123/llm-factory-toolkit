@@ -9,6 +9,7 @@ import os
 import pytest
 import asyncio
 import json
+from typing import Any, Dict
 
 # Imports from your library
 from llm_factory_toolkit import LLMClient
@@ -174,12 +175,18 @@ async def test_openai_tool_call_with_context_injection(
         print("Calling client.generate (tool use with context expected)...")
         # The LLM should generate a final response that includes the password.
         # The tool itself returns a snippet to the LLM, but the LLM might rephrase.
+        generation_kwargs: Dict[str, Any] = {}
+        if client.provider._is_reasoning_model(openai_test_model):
+            generation_kwargs["tool_choice"] = "required"
+
         response_content, tool_payloads = await client.generate(
             input=messages,
             model=openai_test_model,
             temperature=0.1,
+            use_tools=[MOCK_TOOL_NAME_CONTEXT],
             tool_execution_context=execution_context,  # <--- Pass the context here
             # max_tool_iterations defaults to 5 in provider
+            **generation_kwargs,
         )
         print(
             f"Received final response snippet: {response_content[:150] if response_content else 'None'}..."

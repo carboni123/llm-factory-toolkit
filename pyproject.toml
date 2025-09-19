@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm_factory_toolkit"
-version = "0.5.1"
+version = "0.5.2"
 authors = [
   { name="Diego Carboni", email="carboni123@hotmail.com" },
 ]
@@ -37,4 +37,10 @@ dev = [
 ]
 builtins = [
    "sympy>=1.12",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "asyncio: mark a test as running with asyncio support",
 ]

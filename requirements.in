@@ -9,3 +9,6 @@ pytest-asyncio
 pytest-cov
 mypy
 ruff
+
+# Builtin tool dependencies
+sympy

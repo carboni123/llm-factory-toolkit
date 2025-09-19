@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import os
+
 import pytest
 from dotenv import load_dotenv
+
+# Ensure pytest-asyncio is always available so async tests execute without
+# requiring plugins to be explicitly enabled via command line options.
+pytest_plugins = ("pytest_asyncio",)
 
 load_dotenv()
 
