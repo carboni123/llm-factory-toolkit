@@ -117,18 +117,24 @@ class OpenAIProvider(BaseProvider):
         return model_name.startswith(REASONING_MODEL_PREFIXES)
 
     @staticmethod
-    def _strip_response_metadata(value: Any) -> Any:
-        """Remove metadata fields the Responses API does not accept."""
+    def _strip_response_metadata(value: Any, *, _strip_status: bool = True) -> Any:
+        """Remove top-level metadata fields the Responses API does not accept."""
 
         if isinstance(value, dict):
-            return {
-                key: OpenAIProvider._strip_response_metadata(inner_value)
-                for key, inner_value in value.items()
-                if key != "status"
-            }
+            cleaned: Dict[str, Any] = {}
+            for key, inner_value in value.items():
+                if _strip_status and key == "status":
+                    continue
+                cleaned[key] = OpenAIProvider._strip_response_metadata(
+                    inner_value, _strip_status=False
+                )
+            return cleaned
 
         if isinstance(value, list):
-            return [OpenAIProvider._strip_response_metadata(item) for item in value]
+            return [
+                OpenAIProvider._strip_response_metadata(item, _strip_status=False)
+                for item in value
+            ]
 
         return value
 
@@ -382,7 +388,12 @@ class OpenAIProvider(BaseProvider):
             dump = item.model_dump()
             if dump.get("type") in {"function_call", "custom_tool_call"}:
                 dump.pop("parsed_arguments", None)
-            if dump.get("type") in {"function_call", "custom_tool_call", "message", "reasoning"}:
+            if dump.get("type") in {
+                "function_call",
+                "custom_tool_call",
+                "message",
+                "reasoning",
+            }:
                 raw_assistant_items.append(self._strip_response_metadata(dump))
 
         parsed_tool_calls_list: List[ParsedToolCall] = []
