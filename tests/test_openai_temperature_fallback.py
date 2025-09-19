@@ -16,9 +16,6 @@ pytestmark = pytest.mark.asyncio
 SYSTEM_PROMPT = "You are a helpful assistant."
 USER_PROMPT = "What is the capital of France?"
 EXPECTED_ANSWER_FRAGMENT = "Paris"
-TEST_MODEL = "gpt-5-mini-2025-08-07"
-# TEST_MODEL = "gpt-4o-mini"
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -26,9 +23,11 @@ skip_reason = "OPENAI_API_KEY environment variable not set"
 
 
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_make_api_call_retries_without_temperature():
+async def test_make_api_call_retries_without_temperature(
+    openai_unsupported_model: str,
+) -> None:
     """Ensure unsupported ``temperature`` is removed and retried."""
-    client = LLMClient(provider_type="openai", model=TEST_MODEL)
+    client = LLMClient(provider_type="openai", model=openai_unsupported_model)
     assert client is not None
 
     if hasattr(client.provider, "model"):
@@ -44,7 +43,7 @@ async def test_make_api_call_retries_without_temperature():
     print("Calling client.generate...")
     response_content, _ = await client.generate(
         input=messages,
-        model=TEST_MODEL,
+        model=openai_unsupported_model,
         max_output_tokens=100,
         temperature=0.7,
     )

@@ -39,8 +39,6 @@ and state that the final secret will be assembled externally. For example: "I ha
 USER_PROMPT_DEFERRED = "Please retrieve the master access code. Use 'source_A' for part 1, 'key_B' for part 2, and 'vault_C' for part 3."
 
 # Use a model capable of following instructions and tool use
-TEST_MODEL = "gpt-4o-mini"
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -134,7 +132,7 @@ COMBINED_SECRET_PAYLOAD = SECRET_PART_1 + SECRET_PART_2 + SECRET_PART_3
 
 # --- Test Case: Deferred Payload Processing ---
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_openai_deferred_payload_processing():
+async def test_openai_deferred_payload_processing(openai_test_model: str) -> None:
     """
     Tests that tool payloads are returned by generate() and can be processed
     by the caller after the LLM interaction completes.
@@ -174,7 +172,7 @@ async def test_openai_deferred_payload_processing():
 
         # 2. Instantiate the LLMClient
         client = LLMClient(
-            provider_type="openai", model=TEST_MODEL, tool_factory=tool_factory
+            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
         )
         print(
             f"LLMClient initialized for payload test with model: {client.provider.model}"
@@ -191,7 +189,7 @@ async def test_openai_deferred_payload_processing():
         # The generate function now returns the final text AND the collected payloads
         final_response_content, collected_payloads = await client.generate(
             input=messages,
-            model=TEST_MODEL,  # Ensure model capable of parallel/multi-tool calls if needed
+            model=openai_test_model,  # Ensure model capable of parallel/multi-tool calls if needed
             temperature=0.0,
             # use_tools=None # Allow all registered tools by default
         )

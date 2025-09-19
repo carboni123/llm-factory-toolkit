@@ -24,8 +24,6 @@ pytestmark = pytest.mark.asyncio
 SYSTEM_PROMPT = "You are a helpful assistant."
 USER_PROMPT = "What is the capital of France?"
 EXPECTED_ANSWER_FRAGMENT = "Paris"  # We expect 'Paris' to be in the response
-TEST_MODEL = "gpt-4o-mini"  # Use a standard, cheaper model for this test
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -35,7 +33,7 @@ skip_reason = "OPENAI_API_KEY environment variable not set"
 
 
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_openai_simple_call():
+async def test_openai_simple_call(openai_test_model: str) -> None:
     """
     Tests a simple request-response interaction with the OpenAI provider via LLMClient.
     Requires OPENAI_API_KEY to be set in the environment.
@@ -50,7 +48,7 @@ async def test_openai_simple_call():
     try:
         # 1. Instantiate the LLMClient
         # API key loading is handled internally by the client/provider
-        client = LLMClient(provider_type="openai", model=TEST_MODEL)
+        client = LLMClient(provider_type="openai", model=openai_test_model)
         assert client is not None
         # Accessing the internal provider details for logging/debug if needed
         # Note: This relies on the internal structure, use with caution in tests
@@ -69,7 +67,7 @@ async def test_openai_simple_call():
         print("Calling client.generate...")
         response_content, _ = await client.generate(
             input=messages,
-            model=TEST_MODEL,  # Can override the client's default model here
+            model=openai_test_model,  # Can override the client's default model here
             temperature=0.7,  # Adjusted temperature slightly
         )
         print(

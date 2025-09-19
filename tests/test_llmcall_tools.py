@@ -32,8 +32,6 @@ EXPECTED_ANSWER_FRAGMENT_TOOL = (
     MOCK_PASSWORD  # Expect the password in the final response
 )
 
-TEST_MODEL = "gpt-4o-mini"  # Use a standard, cheaper model for these tests
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -69,7 +67,7 @@ MOCK_TOOL_DESCRIPTION = "Retrieves secret data based on a provided data ID. Use 
 
 
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_openai_tool_call():
+async def test_openai_tool_call(openai_test_model: str) -> None:
     """
     Tests an interaction where the LLM is expected to use a provided mock tool via LLMClient.
     Requires OPENAI_API_KEY.
@@ -95,7 +93,7 @@ async def test_openai_tool_call():
         # Use a capable model that's good with tools
         client = LLMClient(
             provider_type="openai",
-            model=TEST_MODEL,
+            model=openai_test_model,
             tool_factory=tool_factory,  # Pass the configured factory
         )
         assert client is not None
@@ -114,7 +112,7 @@ async def test_openai_tool_call():
         print("Calling client.generate (tool use expected)...")
         response_content, _ = await client.generate(
             input=messages,
-            model=TEST_MODEL,  # Explicitly use a model known for tool use
+            model=openai_test_model,  # Explicitly use a model known for tool use
             temperature=0.1,  # Low temp for predictable tool use and response
             # max_tool_iterations is handled inside the provider's generate method
         )

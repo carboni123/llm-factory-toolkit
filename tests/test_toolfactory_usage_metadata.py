@@ -38,8 +38,6 @@ USER_PROMPT_MULTI_TOOL = "Please retrieve the master access code. Use 'source_A'
 
 USER_PROMPT_SINGLE_TOOL_INTENT = "What's the secret for source_A?"
 
-TEST_MODEL = "gpt-4o-mini"  # Model known to handle parallel tool calls well
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -197,7 +195,9 @@ def tool_factory_with_tools():
 
 # --- Test Case: `generate` - Three Tool Calls, Combined Result, and Usage Counts ---
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
+async def test_generate_tool_usage_counts(
+    tool_factory_with_tools: ToolFactory, openai_test_model: str
+) -> None:
     """
     Tests tool usage counts after client.generate() calls three distinct tools.
     Also checks that counts can be reset.
@@ -224,7 +224,7 @@ async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
         assert initial_counts.get(MOCK_TOOL_NAME_4_UNUSED, 0) == 0
 
         client = LLMClient(
-            provider_type="openai", model=TEST_MODEL, tool_factory=tool_factory
+            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
         )
         print(f"LLMClient initialized with model: {client.provider.model}")
 
@@ -236,7 +236,7 @@ async def test_generate_tool_usage_counts(tool_factory_with_tools: ToolFactory):
         print("Calling client.generate (three tool calls expected)...")
         response_content, _ = await client.generate(
             input=messages,
-            model=TEST_MODEL,
+            model=openai_test_model,
             temperature=0.1,
         )
         print(f"Received final response:\n---\n{response_content}\n---")

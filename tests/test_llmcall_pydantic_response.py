@@ -52,8 +52,6 @@ EXPECTED_LOCATION = "Paris"
 EXPECTED_SENTIMENT = "positive"  # The LLM needs to infer this
 
 # Use a model capable of following JSON instructions reliably
-TEST_MODEL_PYDANTIC = "gpt-4o-mini"  # gpt-4-turbo or gpt-4o-mini are good choices
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -63,7 +61,7 @@ skip_reason = "OPENAI_API_KEY environment variable not set"
 
 
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_openai_pydantic_response_format():
+async def test_openai_pydantic_response_format(openai_test_model: str) -> None:
     """
     Tests client.generate with a Pydantic model in response_format.
     Verifies the output is valid JSON conforming to the model schema.
@@ -76,7 +74,7 @@ async def test_openai_pydantic_response_format():
 
     try:
         # 1. Initialize LLMClient
-        client = LLMClient(provider_type="openai", model=TEST_MODEL_PYDANTIC)
+        client = LLMClient(provider_type="openai", model=openai_test_model)
         assert client is not None
         print(f"LLMClient initialized with model: {client.provider.model}")
 

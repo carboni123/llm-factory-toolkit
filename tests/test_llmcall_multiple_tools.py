@@ -33,8 +33,6 @@ Present the final combined code clearly.
 """
 USER_PROMPT_MULTI_TOOL = "Please retrieve the master access code. Use 'source_A' for part 1, 'key_B' for part 2, and 'vault_C' for part 3, then combine them."
 
-TEST_MODEL = "gpt-4o-mini"  # Model known to handle parallel tool calls well
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -138,7 +136,7 @@ COMBINED_SECRET = SECRET_PART_1 + SECRET_PART_2 + SECRET_PART_3
 
 # --- Test Case: Three Tool Calls, Combined Result ---
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_openai_three_tool_calls_combined_secret():
+async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -> None:
     """
     Tests an interaction where the LLM must call three distinct tools
     and combine their results as instructed. Requires OPENAI_API_KEY.
@@ -180,7 +178,7 @@ async def test_openai_three_tool_calls_combined_secret():
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
-            provider_type="openai", model=TEST_MODEL, tool_factory=tool_factory
+            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
         )
         assert client is not None
         assert client.tool_factory is tool_factory
@@ -198,7 +196,7 @@ async def test_openai_three_tool_calls_combined_secret():
         print("Calling client.generate (three tool calls expected)...")
         response_content, _ = await client.generate(
             input=messages,
-            model=TEST_MODEL,
+            model=openai_test_model,
             temperature=0.1,  # Lower temperature for more predictable combination behavior
             parallel_tools=True,
         )

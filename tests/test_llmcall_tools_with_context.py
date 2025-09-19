@@ -45,8 +45,6 @@ EXPECTED_PASSWORD = USER_PASSWORDS[TARGET_USER_ID]
 USER_PROMPT_CONTEXT_TOOL = f"I need the password for our system."  # LLM should infer to use the tool without needing user_id
 MOCK_TOOL_NAME_CONTEXT = "get_user_password"
 
-TEST_MODEL = "gpt-4o-mini"  # Or your preferred model
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -120,7 +118,9 @@ class GetUserPasswordTool:
 
 
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_openai_tool_call_with_context_injection():
+async def test_openai_tool_call_with_context_injection(
+    openai_test_model: str,
+) -> None:
     """
     Tests an interaction where the LLM uses a tool, and 'user_id' is injected
     via tool_execution_context.
@@ -154,7 +154,7 @@ async def test_openai_tool_call_with_context_injection():
 
         # 2. Instantiate the LLMClient
         client = LLMClient(
-            provider_type="openai", model=TEST_MODEL, tool_factory=tool_factory
+            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
         )
         print(
             f"LLMClient initialized with model: {client.provider.model} and Tool Factory"
@@ -176,7 +176,7 @@ async def test_openai_tool_call_with_context_injection():
         # The tool itself returns a snippet to the LLM, but the LLM might rephrase.
         response_content, tool_payloads = await client.generate(
             input=messages,
-            model=TEST_MODEL,
+            model=openai_test_model,
             temperature=0.1,
             tool_execution_context=execution_context,  # <--- Pass the context here
             # max_tool_iterations defaults to 5 in provider

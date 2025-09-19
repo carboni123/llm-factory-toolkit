@@ -72,8 +72,6 @@ SYSTEM_PROMPT_TOOL = "You are a helpful assistant with access to class-based too
 USER_PROMPT_TOOL = "Please use the tool to get the secret data for 'access_code_class'."
 EXPECTED_ANSWER_FRAGMENT_TOOL = SecretDataTool.MOCK_PASSWORD  # Use the class's password
 
-TEST_MODEL = "gpt-4o-mini"
-
 # --- Skip Condition ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 should_skip = not OPENAI_API_KEY
@@ -81,7 +79,7 @@ skip_reason = "OPENAI_API_KEY environment variable not set"
 
 
 @pytest.mark.skipif(should_skip, reason=skip_reason)
-async def test_openai_custom_tool_class_call():
+async def test_openai_custom_tool_class_call(openai_test_model: str) -> None:
     """
     Tests an interaction where the LLM uses a tool defined as a class instance.
     Requires OPENAI_API_KEY.
@@ -116,7 +114,7 @@ async def test_openai_custom_tool_class_call():
         # 3. Instantiate the LLMClient WITH the tool factory
         client = LLMClient(
             provider_type="openai",
-            model=TEST_MODEL,
+            model=openai_test_model,
             tool_factory=tool_factory,  # Pass the factory with the registered tool method
         )
         assert client is not None
@@ -135,7 +133,7 @@ async def test_openai_custom_tool_class_call():
         print("Calling client.generate (class-based tool use expected)...")
         response_content, _ = await client.generate(
             input=messages,
-            model=TEST_MODEL,
+            model=openai_test_model,
             temperature=0.1,
         )
         print(

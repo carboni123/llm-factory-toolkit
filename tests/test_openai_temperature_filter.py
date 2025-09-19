@@ -12,14 +12,16 @@ class DummyCompletion:
 
 
 @pytest.mark.asyncio
-async def test_temperature_removed_for_unsupported_models() -> None:
+async def test_temperature_removed_for_unsupported_models(
+    openai_unsupported_model: str,
+) -> None:
     with patch(
         "llm_factory_toolkit.providers.openai_adapter.AsyncOpenAI"
     ) as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.responses.parse = AsyncMock(return_value=DummyCompletion())
 
-        provider = OpenAIProvider(api_key="test", model="gpt-5-mini-2025-08-07")
+        provider = OpenAIProvider(api_key="test", model=openai_unsupported_model)
 
         await provider.generate(
             input=[{"role": "user", "content": "hi"}], temperature=0.7
@@ -30,14 +32,16 @@ async def test_temperature_removed_for_unsupported_models() -> None:
 
 
 @pytest.mark.asyncio
-async def test_temperature_retained_for_supported_models() -> None:
+async def test_temperature_retained_for_supported_models(
+    openai_test_model: str,
+) -> None:
     with patch(
         "llm_factory_toolkit.providers.openai_adapter.AsyncOpenAI"
     ) as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.responses.parse = AsyncMock(return_value=DummyCompletion())
 
-        provider = OpenAIProvider(api_key="test", model="gpt-4o-mini")
+        provider = OpenAIProvider(api_key="test", model=openai_test_model)
 
         await provider.generate(
             input=[{"role": "user", "content": "hi"}], temperature=0.7
