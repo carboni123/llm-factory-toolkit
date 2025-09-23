@@ -9,7 +9,7 @@ A flexible Python toolkit designed to simplify interactions with various Large L
 
 ## Key Features
 
-*   **Provider Agnostic (Pluggable):** Easily switch between different LLM providers (currently supports OpenAI). Designed for adding more providers.
+*   **Provider Agnostic (Pluggable):** Easily switch between different LLM providers (currently supports OpenAI and xAI/Grok). Designed for adding more providers.
 *   **Tool Integration:** Define and register custom Python functions or class methods as tools that the LLM can call to interact with external systems or data.
 *   **Structured Output:** Request responses in specific JSON formats, optionally validated using Pydantic models.
 *   **Async First:** Built with `asyncio` for non-blocking I/O operations.
@@ -40,6 +40,7 @@ A flexible Python toolkit designed to simplify interactions with various Large L
     ```dotenv
     # .env
     OPENAI_API_KEY="your_openai_api_key_here"
+    XAI_API_KEY="your_xai_api_key_here"
     # Add other keys as needed for future providers
     ```
     The library uses `python-dotenv` to load these automatically.
@@ -96,6 +97,27 @@ if __name__ == "__main__":
          # exit(1) # Example: exit if key is missing
 
     asyncio.run(main())
+```
+
+To target xAI's Grok models instead, pass `provider_type='xai'` and, if
+needed, override the default base URL:
+
+```python
+import asyncio
+from llm_factory_toolkit import LLMClient
+
+async def demo_xai() -> None:
+    client = LLMClient(
+        provider_type="xai",
+        model="grok-beta",
+        base_url="https://api.x.ai/v1",  # optional override
+    )
+    response, _ = await client.generate(
+        input=[{"role": "user", "content": "Summarise the latest launch."}],
+    )
+    print(response)
+
+asyncio.run(demo_xai())
 ```
 
 ## Reasoning Models
