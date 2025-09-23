@@ -1,4 +1,5 @@
 # llm_factory_toolkit/llm_factory_toolkit/client.py
+import copy
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
@@ -110,6 +111,7 @@ class LLMClient:
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
+        merge_history: bool = False,
         **kwargs: Any,
     ) -> Tuple[Optional[BaseModel | str], List[Any]]:
         """
@@ -132,6 +134,11 @@ class LLMClient:
                 stubbed responses without triggering real side effects.
             parallel_tools (bool): If True, instructs the provider to dispatch
                 multiple tool calls concurrently. Defaults to ``False``.
+            merge_history (bool): If True, sequential ``user`` and ``assistant``
+                messages are merged together prior to dispatching the request.
+                This may help accommodate providers that expect consolidated
+                turns, but can cause unexpected model behaviour in some
+                scenarios. Tool call messages are never merged.
             **kwargs: Additional arguments passed directly to the provider's generate method
                       (e.g., tool_choice, max_tool_iterations).
 
@@ -154,8 +161,14 @@ class LLMClient:
             mock_tools,
         )
 
+        processed_input = (
+            self._merge_conversation_history(input)
+            if merge_history
+            else copy.deepcopy(input)
+        )
+
         provider_args = {
-            "input": input,
+            "input": processed_input,
             "model": model,
             "temperature": temperature,
             "max_output_tokens": max_output_tokens,
@@ -194,6 +207,73 @@ class LLMClient:
                 f"An unexpected error occurred during generation: {e}", exc_info=True
             )
             raise LLMToolkitError(f"Unexpected generation error: {e}") from e
+
+    @staticmethod
+    def _merge_conversation_history(
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Merge sequential user or assistant messages into single turns."""
+
+        merged: List[Dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+            if role not in {"user", "assistant"}:
+                merged.append(copy.deepcopy(message))
+                continue
+
+            if not merged:
+                merged.append(copy.deepcopy(message))
+                continue
+
+            last_message = merged[-1]
+            last_role = last_message.get("role")
+
+            if last_role != role or last_role not in {"user", "assistant"}:
+                merged.append(copy.deepcopy(message))
+                continue
+
+            combined = copy.deepcopy(last_message)
+            combined["content"] = LLMClient._merge_message_content(
+                last_message.get("content"), message.get("content")
+            )
+
+            for key, value in message.items():
+                if key in {"role", "content"}:
+                    continue
+                combined.setdefault(key, value)
+
+            merged[-1] = combined
+
+        return merged
+
+    @staticmethod
+    def _merge_message_content(first: Any, second: Any) -> Any:
+        """Merge message content values depending on their type."""
+
+        if first is None:
+            return copy.deepcopy(second)
+        if second is None:
+            return copy.deepcopy(first)
+
+        if isinstance(first, str) and isinstance(second, str):
+            if not first:
+                return second
+            if not second:
+                return first
+            return f"{first}\n\n{second}"
+
+        if isinstance(first, list) and isinstance(second, list):
+            return [*first, *second]
+
+        if isinstance(first, dict) and isinstance(second, dict):
+            merged_dict = copy.deepcopy(first)
+            merged_dict.update(second)
+            return merged_dict
+
+        if first == second:
+            return copy.deepcopy(first)
+
+        return [copy.deepcopy(first), copy.deepcopy(second)]
 
     async def generate_tool_intent(
         self,
