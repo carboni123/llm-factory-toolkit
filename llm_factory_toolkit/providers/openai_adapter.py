@@ -152,6 +152,7 @@ class OpenAIProvider(BaseProvider):
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
+        web_search: bool = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -175,6 +176,9 @@ class OpenAIProvider(BaseProvider):
                 stubbed responses.
             parallel_tools (bool): If True, dispatch multiple tool calls concurrently
                 using ``asyncio.gather``. Defaults to ``False``.
+            web_search (bool): When ``True`` exposes the OpenAI web search tool in
+                addition to any registered tools or filters applied via
+                ``use_tools``.
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
@@ -204,7 +208,9 @@ class OpenAIProvider(BaseProvider):
             payloads_override: Optional[List[Any]] = None,
         ) -> GenerationResult:
             payload_source = (
-                payloads_override if payloads_override is not None else list(collected_payloads)
+                payloads_override
+                if payloads_override is not None
+                else list(collected_payloads)
             )
             return GenerationResult(
                 content=final_content,
@@ -248,7 +254,7 @@ class OpenAIProvider(BaseProvider):
             }
 
             tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
-                use_tools, request_payload
+                use_tools, web_search, request_payload
             )
             if tools_for_payload is not None:
                 request_payload["tools"] = tools_for_payload
@@ -328,7 +334,9 @@ class OpenAIProvider(BaseProvider):
                 self._strip_response_metadata(result) for result in tool_results
             ]
             current_messages.extend(stripped_tool_messages)
-            tool_result_messages.extend(copy.deepcopy(msg) for msg in stripped_tool_messages)
+            tool_result_messages.extend(
+                copy.deepcopy(msg) for msg in stripped_tool_messages
+            )
             collected_payloads.extend(payloads)
             iteration_count += 1
             module_logger.debug(
@@ -350,8 +358,29 @@ class OpenAIProvider(BaseProvider):
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        web_search: bool = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
+        """Generate tool intents without executing tool calls.
+
+        Requests the model to plan tool calls while skipping execution.
+
+        Args:
+            input: Conversation history for the planner call.
+            model: Specific model override for the request.
+            use_tools: Tool filters applied to registered tools. ``None`` disables
+                registered tools, while an empty list exposes all registered
+                tools. A non-empty list restricts to the named tools.
+            temperature: Sampling temperature for the planning call.
+            max_output_tokens: Maximum tokens for the assistant reply.
+            response_format: Desired response format for direct replies.
+            web_search: When ``True`` exposes OpenAI's web search tool so the
+                planner can opt into performing searches.
+            **kwargs: Additional provider-specific overrides forwarded to the API.
+
+        Returns:
+            ToolIntentOutput: Parsed intent information from the model.
+        """
         self._ensure_client()
 
         active_model = model or self.model
@@ -387,7 +416,7 @@ class OpenAIProvider(BaseProvider):
         }
 
         tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
-            use_tools, request_payload
+            use_tools, web_search, request_payload
         )
         if tools_for_payload is not None:
             request_payload["tools"] = tools_for_payload
@@ -492,20 +521,23 @@ class OpenAIProvider(BaseProvider):
         )
 
     def _prepare_tool_payload(
-        self, use_tools: Optional[List[str]], existing_kwargs: Dict[str, Any]
+        self,
+        use_tools: Optional[List[str]],
+        web_search: bool,
+        existing_kwargs: Dict[str, Any],
     ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Any]]:
         """
         Prepares the 'tools' and 'tool_choice' parts of the API request payload.
         Returns a tuple: (tool_definitions_for_payload, effective_tool_choice_for_payload)
         """
-        final_tool_definitions = []
+        final_tool_definitions: List[Dict[str, Any]] = []
         effective_tool_choice = existing_kwargs.get("tool_choice")
 
+        if web_search:
+            final_tool_definitions.append({"type": "web_search"})
+
         if use_tools is None:
-            # Explicitly disable all tools
-            if self.tool_factory and (
-                effective_tool_choice is None or effective_tool_choice == "auto"
-            ):
+            if not final_tool_definitions and (effective_tool_choice in (None, "auto")):
                 effective_tool_choice = "none"
         elif self.tool_factory:
             if use_tools == []:
@@ -515,9 +547,7 @@ class OpenAIProvider(BaseProvider):
                     filter_tool_names=use_tools
                 )
             if definitions:
-                final_tool_definitions = definitions
-            elif effective_tool_choice is None or effective_tool_choice == "auto":
-                effective_tool_choice = "none"
+                final_tool_definitions.extend(definitions)
 
         tools_payload = None
         if final_tool_definitions:
@@ -553,7 +583,7 @@ class OpenAIProvider(BaseProvider):
                     converted_tools.append(tool)
             tools_payload = converted_tools
         elif use_tools is None:
-            tools_payload = []
+            tools_payload = final_tool_definitions if final_tool_definitions else []
 
         return tools_payload, effective_tool_choice
 

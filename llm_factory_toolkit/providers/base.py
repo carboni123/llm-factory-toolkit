@@ -136,6 +136,7 @@ class BaseProvider(ABC):
         *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
+        web_search: bool = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -155,6 +156,13 @@ class BaseProvider(ABC):
               callers can append back into conversation history.
             * ``messages`` – Optional snapshot of the provider transcript including
               tool calls and outputs.
+
+        Args:
+            input: Conversation history dispatched to the provider.
+            tool_execution_context: Context injected into tool executions.
+            mock_tools: When ``True`` tools should not perform side effects.
+            web_search: Whether to expose the provider's built-in web search tool
+                for this request when available.
         """
         pass
 
@@ -168,6 +176,7 @@ class BaseProvider(ABC):
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        web_search: bool = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """
@@ -184,6 +193,8 @@ class BaseProvider(ABC):
             temperature: Sampling temperature.
             max_output_tokens: Max tokens to generate.
             response_format: Desired response format if LLM replies directly.
+            web_search: Whether to expose the provider's built-in web search tool
+                for the intent planning request when available.
             **kwargs: Additional provider-specific arguments.
 
         Returns:

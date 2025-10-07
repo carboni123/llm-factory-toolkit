@@ -145,6 +145,12 @@ for payload in result.payloads:
 
 # Persist tool interactions for the next turn
 messages.extend(result.tool_messages)
+
+# Opt-in to OpenAI's built-in web search alongside your registered tools
+news_result = await client.generate(
+    input=[{"role": "user", "content": "Share a positive news story from today."}],
+    web_search=True,
+)
 ```
 
 ## Reasoning Models

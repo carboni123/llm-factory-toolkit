@@ -112,6 +112,7 @@ class LLMClient:
         mock_tools: bool = False,
         parallel_tools: bool = False,
         merge_history: bool = False,
+        web_search: bool = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -139,6 +140,9 @@ class LLMClient:
                 This may help accommodate providers that expect consolidated
                 turns, but can cause unexpected model behaviour in some
                 scenarios. Tool call messages are never merged.
+            web_search (bool): When ``True`` exposes the provider's built-in web
+                search capability (if supported) alongside any registered
+                tools, regardless of ``use_tools`` filters.
             **kwargs: Additional arguments passed directly to the provider's generate method
                       (e.g., tool_choice, max_tool_iterations).
 
@@ -178,6 +182,7 @@ class LLMClient:
             "tool_execution_context": tool_execution_context,
             "mock_tools": mock_tools,
             "parallel_tools": parallel_tools,
+            "web_search": web_search,
             **kwargs,  # Pass through other args like 'max_tool_iterations', 'tool_choice'
         }
         # Filter out None values to avoid overriding provider defaults unintentionally,
@@ -281,6 +286,7 @@ class LLMClient:
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
+        web_search: bool = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """
@@ -297,6 +303,8 @@ class LLMClient:
                        which exposes all registered tools. Pass ``None`` to
                        disable tool usage or provide a non-empty list of names
                        to restrict the available tools.
+            web_search: When ``True`` exposes the provider's built-in web search
+                capability (if supported) for the intent planning call.
             **kwargs: Additional arguments passed to the provider's generate_tool_intent method.
 
         Returns:
@@ -318,6 +326,7 @@ class LLMClient:
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_choice": "required",
+            "web_search": web_search,
             **kwargs,
         }
         # Filter out None values to avoid overriding provider defaults unintentionally,

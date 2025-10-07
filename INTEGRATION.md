@@ -287,6 +287,9 @@ history.append({"role": "assistant", "content": result.content or ""})
 
 # Next turn now contains the tool outputs
 follow_up = await client.generate(input=history)
+
+# Allow the model to use OpenAI's built-in web search without registering a tool
+news_run = await client.generate(input=history, web_search=True)
 ```
 
 If you need to inspect the complete provider transcript (including hidden tool

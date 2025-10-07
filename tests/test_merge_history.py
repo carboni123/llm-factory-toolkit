@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 import pytest
 
 from llm_factory_toolkit.client import LLMClient
-from llm_factory_toolkit.providers.base import BaseProvider
+from llm_factory_toolkit.providers.base import BaseProvider, GenerationResult
 
 
 pytestmark = pytest.mark.asyncio
@@ -28,11 +28,16 @@ class _RecordingProvider(BaseProvider):
         *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
+        web_search: bool = False,
         **kwargs: Any,
-    ) -> Tuple[Optional[Any], List[Any]]:
+    ) -> GenerationResult:
         self.last_messages = copy.deepcopy(input)
-        self.last_kwargs = {"tool_execution_context": tool_execution_context, **kwargs}
-        return None, []
+        self.last_kwargs = {
+            "tool_execution_context": tool_execution_context,
+            "web_search": web_search,
+            **kwargs,
+        }
+        return GenerationResult(content=None)
 
     async def generate_tool_intent(
         self,
@@ -43,6 +48,7 @@ class _RecordingProvider(BaseProvider):
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[Any]] = None,
+        web_search: bool = False,
         **kwargs: Any,
     ) -> Any:
         raise NotImplementedError
