@@ -179,7 +179,7 @@ async def test_openai_tool_call_with_context_injection(
         if client.provider._is_reasoning_model(openai_test_model):
             generation_kwargs["tool_choice"] = "required"
 
-        response_content, tool_payloads = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,
             temperature=0.1,
@@ -188,10 +188,15 @@ async def test_openai_tool_call_with_context_injection(
             # max_tool_iterations defaults to 5 in provider
             **generation_kwargs,
         )
+        response_content = generation_result.content
+        tool_payloads = generation_result.payloads
         print(
             f"Received final response snippet: {response_content[:150] if response_content else 'None'}..."
         )
         print(f"Received tool payloads: {tool_payloads}")
+        print(
+            f"Tool transcript ({len(generation_result.tool_messages)}): {generation_result.tool_messages}"
+        )
 
         # 6. Assertions
         assert response_content is not None, "API call returned None for content"
@@ -207,6 +212,7 @@ async def test_openai_tool_call_with_context_injection(
         # Assertions for the programmatically retrieved tool_payloads
         assert tool_payloads is not None, "Tool payloads should not be None"
         assert len(tool_payloads) > 0, "Expected at least one tool payload"
+        assert len(generation_result.tool_messages) >= 1
 
         found_correct_payload = False
         for p_item in tool_payloads:

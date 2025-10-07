@@ -234,16 +234,18 @@ async def test_generate_tool_usage_counts(
         ]
 
         print("Calling client.generate (three tool calls expected)...")
-        response_content, _ = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,
             temperature=0.1,
         )
+        response_content = generation_result.content
         print(f"Received final response:\n---\n{response_content}\n---")
         assert response_content is not None
         assert (
             COMBINED_SECRET.lower() in response_content.lower()
         ), f"Expected combined secret '{COMBINED_SECRET}' in response, got: {response_content}"
+        assert len(generation_result.tool_messages) == 3
 
         # Check tool usage counts AFTER generate call
         counts_after_generate = tool_factory.get_tool_usage_counts()

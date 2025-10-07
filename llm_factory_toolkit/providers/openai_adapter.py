@@ -1,5 +1,6 @@
 # llm_factory_toolkit/llm_factory_toolkit/providers/openai_adapter.py
 import asyncio
+import copy
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
@@ -23,7 +24,7 @@ from ..exceptions import (
 from ..tools.models import ParsedToolCall, ToolExecutionResult, ToolIntentOutput
 from ..tools.tool_factory import ToolFactory
 from . import register_provider
-from .base import BaseProvider
+from .base import BaseProvider, GenerationResult
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -152,7 +153,7 @@ class OpenAIProvider(BaseProvider):
         mock_tools: bool = False,
         parallel_tools: bool = False,
         **kwargs: Any,
-    ) -> Tuple[Optional[BaseModel | str], List[Any]]:
+    ) -> GenerationResult:
         """
         Generates text using the OpenAI API, handling tool calls iteratively,
         supporting tool filtering, and Pydantic response formatting.
@@ -177,21 +178,40 @@ class OpenAIProvider(BaseProvider):
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
-            Tuple[Optional[BaseModel | str], List[Any]]:
-                - Final assistant content as text or parsed model (or None).
-                - List of payloads collected from tool calls that require action.
+            GenerationResult: Structured response information containing the
+            final assistant message, deferred tool payloads, the transcript of
+            executed tool messages, and the full provider message history.
         Raises:
             ProviderError, ToolError, UnsupportedFeatureError, ConfigurationError.
         """
         self._ensure_client()
 
         collected_payloads: List[Any] = []
+        tool_result_messages: List[Dict[str, Any]] = []
         active_model = model or self.model
         current_messages = [self._strip_response_metadata(msg) for msg in input]
         iteration_count = 0
 
         api_call_args = {"model": active_model, **kwargs}
         use_parse = False
+
+        def snapshot_messages() -> List[Dict[str, Any]]:
+            return [copy.deepcopy(msg) for msg in current_messages]
+
+        def build_result(
+            final_content: Optional[BaseModel | str],
+            *,
+            payloads_override: Optional[List[Any]] = None,
+        ) -> GenerationResult:
+            payload_source = (
+                payloads_override if payloads_override is not None else list(collected_payloads)
+            )
+            return GenerationResult(
+                content=final_content,
+                payloads=payload_source,
+                tool_messages=[copy.deepcopy(msg) for msg in tool_result_messages],
+                messages=snapshot_messages(),
+            )
 
         if response_format:
             if isinstance(response_format, type) and issubclass(
@@ -267,7 +287,7 @@ class OpenAIProvider(BaseProvider):
                         for content in item_content:
                             parsed_obj = getattr(content, "parsed", None)
                             if parsed_obj is not None:
-                                return parsed_obj, collected_payloads
+                                return build_result(parsed_obj)
 
                 final_content = assistant_text
                 if isinstance(response_format, dict) and response_format.get(
@@ -276,18 +296,18 @@ class OpenAIProvider(BaseProvider):
                     if final_content:
                         try:
                             _ = json.loads(final_content)
-                            return final_content, collected_payloads
+                            return build_result(final_content)
                         except json.JSONDecodeError:
                             module_logger.warning(
                                 "Model did not return valid JSON despite request. Returning raw content."
                             )
-                            return final_content, collected_payloads
+                            return build_result(final_content)
                     else:
                         module_logger.warning(
                             "Model returned no content when JSON format was requested."
                         )
-                        return None, []
-                return final_content, collected_payloads
+                        return build_result(None, payloads_override=[])
+                return build_result(final_content)
 
             module_logger.info(f"Tool calls received: {len(tool_calls)}")
             if not self.tool_factory:
@@ -304,9 +324,11 @@ class OpenAIProvider(BaseProvider):
                 mock_tools=mock_tools,
                 parallel_tools=parallel_tools,
             )
-            current_messages.extend(
+            stripped_tool_messages = [
                 self._strip_response_metadata(result) for result in tool_results
-            )
+            ]
+            current_messages.extend(stripped_tool_messages)
+            tool_result_messages.extend(copy.deepcopy(msg) for msg in stripped_tool_messages)
             collected_payloads.extend(payloads)
             iteration_count += 1
             module_logger.debug(
@@ -318,7 +340,7 @@ class OpenAIProvider(BaseProvider):
         final_content = self._aggregate_final_content(
             current_messages, max_tool_iterations
         )
-        return final_content, collected_payloads
+        return build_result(final_content)
 
     async def generate_tool_intent(
         self,

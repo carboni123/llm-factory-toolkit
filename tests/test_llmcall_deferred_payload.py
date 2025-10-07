@@ -187,14 +187,19 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
         # 4. Call generate() - This should handle the tool calls internally
         print(f"\nCalling client.generate() which should trigger tools...")
         # The generate function now returns the final text AND the collected payloads
-        final_response_content, collected_payloads = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,  # Ensure model capable of parallel/multi-tool calls if needed
             temperature=0.0,
             # use_tools=None # Allow all registered tools by default
         )
+        final_response_content = generation_result.content
+        collected_payloads = generation_result.payloads
         print(f"Final Assistant Response:\n---\n{final_response_content}\n---")
         print(f"Collected Payloads ({len(collected_payloads)}): {collected_payloads}")
+        print(
+            f"Tool Transcript ({len(generation_result.tool_messages)}): {generation_result.tool_messages}"
+        )
 
         # 5. Assertions on LLM's Final Response
         assert (
@@ -226,6 +231,7 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
         assert (
             len(collected_payloads) == 3
         ), f"Expected 3 payloads, got {len(collected_payloads)}"
+        assert len(generation_result.tool_messages) == 3
 
         # 7. Process Payloads (Deferred Action)
         print("\n--- Processing Collected Payloads (Deferred Action) ---")

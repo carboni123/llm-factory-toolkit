@@ -110,12 +110,13 @@ async def test_openai_tool_call(openai_test_model: str) -> None:
 
         # 4. Make the API call using the client, allowing tool iterations
         print("Calling client.generate (tool use expected)...")
-        response_content, _ = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,  # Explicitly use a model known for tool use
             temperature=0.1,  # Low temp for predictable tool use and response
             # max_tool_iterations is handled inside the provider's generate method
         )
+        response_content = generation_result.content
         print(
             f"Received final response snippet: {response_content[:150] if response_content else 'None'}..."
         )

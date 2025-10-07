@@ -71,11 +71,11 @@ async def main():
         ]
 
         print("Generating response...")
-        response = await client.generate(input=messages)
+        result = await client.generate(input=messages)
 
-        if response:
+        if result.content:
             print("\nAssistant Response:")
-            print(response)
+            print(result.content)
         else:
             print("\nFailed to get a response.")
 
@@ -112,12 +112,39 @@ async def demo_xai() -> None:
         model="grok-beta",
         base_url="https://api.x.ai/v1",  # optional override
     )
-    response, _ = await client.generate(
+    result = await client.generate(
         input=[{"role": "user", "content": "Summarise the latest launch."}],
     )
-    print(response)
+    print(result.content)
 
 asyncio.run(demo_xai())
+```
+
+### Understanding `GenerationResult`
+
+`LLMClient.generate` now returns a [`GenerationResult`](llm_factory_toolkit/providers/base.py)
+instance rather than a bare tuple. The object still supports tuple-unpacking
+(`content, payloads = await client.generate(...)`) for backward compatibility,
+but it also exposes extra attributes that make multi-turn workflows easier:
+
+- `content`: Final assistant response (text or a parsed Pydantic model).
+- `payloads`: Deferred tool payloads you may need to action out-of-band.
+- `tool_messages`: The exact ``function_call_output`` items generated during the
+  run. Append these to your stored history before the next turn to maintain the
+  tool transcript required for RAG-style conversations.
+- `messages`: Snapshot of the full transcript (input, tool calls, outputs, and
+  final assistant message) after the provider finished processing.
+
+```python
+result = await client.generate(input=messages, use_tools=["lookup_weather"])
+
+# Work with the structured fields directly
+print(result.content)
+for payload in result.payloads:
+    dispatch_follow_up(payload)
+
+# Persist tool interactions for the next turn
+messages.extend(result.tool_messages)
 ```
 
 ## Reasoning Models
@@ -131,11 +158,11 @@ limit, so you can reuse the same values you set for non-reasoning models.
 from llm_factory_toolkit import LLMClient
 
 client = LLMClient(provider_type="openai", model="gpt-5-mini")
-response, _ = await client.generate(
+result = await client.generate(
     input=[{"role": "user", "content": "The capital of France?"}],
     max_output_tokens=500,
 )
-print(response)
+print(result.content)
 ```
 
 If needed, adjust the reasoning token buffer when creating the provider:

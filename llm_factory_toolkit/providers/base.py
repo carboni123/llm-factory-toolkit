@@ -1,8 +1,11 @@
 # llm_factory_toolkit/llm_factory_toolkit/providers/base.py
+from __future__ import annotations
+
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterator, List, Optional, Type
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -11,6 +14,37 @@ from ..exceptions import ConfigurationError
 from ..tools.models import ToolIntentOutput
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class GenerationResult:
+    """Container for responses emitted by :meth:`BaseProvider.generate`.
+
+    The class behaves like the historical ``(content, payloads)`` tuple for
+    backwards compatibility while exposing additional metadata required by
+    multi-turn conversations that rely on persisted tool transcripts.
+    """
+
+    content: Optional[BaseModel | str]
+    payloads: List[Any] = field(default_factory=list)
+    tool_messages: List[Dict[str, Any]] = field(default_factory=list)
+    messages: Optional[List[Dict[str, Any]]] = None
+
+    def __iter__(self) -> Iterator[Any]:
+        """Yield items so callers can unpack the result like a tuple."""
+
+        yield self.content
+        yield self.payloads
+
+    def __len__(self) -> int:  # pragma: no cover - trivial
+        return 2
+
+    def __getitem__(self, index: int) -> Any:  # pragma: no cover - tuple compat
+        if index == 0:
+            return self.content
+        if index == 1:
+            return self.payloads
+        raise IndexError(index)
 
 
 class BaseProvider(ABC):
@@ -103,7 +137,7 @@ class BaseProvider(ABC):
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         **kwargs: Any,
-    ) -> Tuple[Optional[BaseModel | str], List[Any]]:
+    ) -> GenerationResult:
         """
         Abstract method to generate text based on a list of messages,
         potentially handling tool calls and returning deferred action payloads.
@@ -113,9 +147,14 @@ class BaseProvider(ABC):
         side effects and return stubbed tool responses instead.
 
         Returns:
-        Tuple[Optional[BaseModel | str], List[Any]]:
-            - The generated content as text or a parsed Pydantic model (or None).
-            - A list of payloads from executed tools requiring deferred action.
+            GenerationResult: Structured response information containing:
+
+            * ``content`` – Final assistant message (text or parsed Pydantic model).
+            * ``payloads`` – Deferred action payloads yielded by executed tools.
+            * ``tool_messages`` – Messages representing executed tool outputs that
+              callers can append back into conversation history.
+            * ``messages`` – Optional snapshot of the provider transcript including
+              tool calls and outputs.
         """
         pass
 

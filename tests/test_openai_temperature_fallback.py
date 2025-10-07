@@ -41,10 +41,11 @@ async def test_make_api_call_retries_without_temperature(
     ]
 
     print("Calling client.generate...")
-    response_content, _ = await client.generate(
+    generation_result = await client.generate(
         input=messages,
         model=openai_unsupported_model,
         max_output_tokens=100,
         temperature=0.7,
     )
+    response_content = generation_result.content
     print(f"Received response snippet: {response_content}")

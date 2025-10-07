@@ -2,7 +2,7 @@
 import copy
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from pydantic import BaseModel  # Import for type hinting
 
@@ -13,7 +13,7 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
-from .providers import BaseProvider, create_provider_instance
+from .providers import BaseProvider, GenerationResult, create_provider_instance
 from .tools.models import ToolExecutionResult, ToolIntentOutput
 from .tools.tool_factory import ToolFactory
 
@@ -113,7 +113,7 @@ class LLMClient:
         parallel_tools: bool = False,
         merge_history: bool = False,
         **kwargs: Any,
-    ) -> Tuple[Optional[BaseModel | str], List[Any]]:
+    ) -> GenerationResult:
         """
         Generates a response from the configured LLM provider based on the message history,
         potentially handling tool calls and returning deferred action payloads.
@@ -143,9 +143,10 @@ class LLMClient:
                       (e.g., tool_choice, max_tool_iterations).
 
         Returns:
-            Tuple[Optional[BaseModel | str], List[Any]]:
-                - The generated content as plain text or a parsed Pydantic model (or None).
-                - A list of payloads from executed tools requiring deferred action.
+            GenerationResult: Structured response data containing the assistant
+            reply, deferred tool payloads, tool output messages, and the
+            provider's message transcript. The object can still be unpacked into
+            ``(content, payloads)`` for backwards compatibility.
 
         Raises:
             ProviderError: If the provider encounters an API error.
@@ -190,10 +191,7 @@ class LLMClient:
 
         try:
             # Delegate to the provider, which now returns a tuple
-            result_content, result_payloads = await self.provider.generate(
-                **provider_args
-            )
-            return result_content, result_payloads
+            return await self.provider.generate(**provider_args)
         except (
             ProviderError,
             ToolError,

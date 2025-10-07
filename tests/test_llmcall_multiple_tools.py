@@ -194,12 +194,13 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
 
         # 4. Make the API call
         print("Calling client.generate (three tool calls expected)...")
-        response_content, _ = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,
             temperature=0.1,  # Lower temperature for more predictable combination behavior
             parallel_tools=True,
         )
+        response_content = generation_result.content
         print(f"Received final response:\n---\n{response_content}\n---")
 
         # 5. Assertions
@@ -208,6 +209,11 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
             response_content, str
         ), f"Expected string response, got {type(response_content)}"
         assert len(response_content) > 0, "API response content is empty"
+        assert len(generation_result.tool_messages) == 3
+        assert all(
+            message.get("type") == "function_call_output"
+            for message in generation_result.tool_messages
+        )
 
         # **Crucial Assertion**: Check if the COMBINED secret is present in the final response
         # Use lower() for case-insensitive comparison, although the mock results are fixed case.

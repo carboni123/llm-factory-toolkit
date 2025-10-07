@@ -5,7 +5,7 @@ import os
 from typing import Any, Callable, Type
 
 from ..exceptions import ConfigurationError
-from .base import BaseProvider
+from .base import BaseProvider, GenerationResult
 
 _provider_registry: dict[str, Type[BaseProvider]] = {}
 _providers_discovered = False
@@ -134,4 +134,9 @@ def create_provider_instance(
 
 
 # Expose key elements if needed directly from this package level
-__all__ = ["BaseProvider", "register_provider", "create_provider_instance"]
+__all__ = [
+    "BaseProvider",
+    "GenerationResult",
+    "register_provider",
+    "create_provider_instance",
+]

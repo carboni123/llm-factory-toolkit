@@ -131,11 +131,12 @@ async def test_openai_custom_tool_class_call(openai_test_model: str) -> None:
 
         # 5. Make the API call
         print("Calling client.generate (class-based tool use expected)...")
-        response_content, _ = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,
             temperature=0.1,
         )
+        response_content = generation_result.content
         print(
             f"Received final response snippet: {response_content[:150] if response_content else 'None'}..."
         )

@@ -258,12 +258,13 @@ async def test_openai_three_tool_calls_combined_secret(
         messages.extend(tool_result_messages)
 
         print("Calling client.generate (Explainer)")
-        final_response_content, _ = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,
             temperature=0.0,
             use_tools=None,
         )
+        final_response_content = generation_result.content
         print(f"Explainer final response:\n---\n{final_response_content}\n---")
 
         # Primary Assertion: Focus on the final output

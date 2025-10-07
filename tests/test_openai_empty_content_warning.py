@@ -1,5 +1,7 @@
 import logging
 
+import logging
+
 import pytest
 from pydantic import BaseModel
 
@@ -36,12 +38,13 @@ async def test_generate_logs_empty_content(monkeypatch, caplog):
     messages = [{"role": "user", "content": "Hi"}]
 
     with caplog.at_level(logging.WARNING):
-        result, payloads = await provider.generate(
+        generation_result = await provider.generate(
             input=messages,
             response_format=DummyModel,
         )
 
-    assert result == ""
-    assert payloads == []
+    assert generation_result.content == ""
+    assert generation_result.payloads == []
+    assert generation_result.tool_messages == []
     assert "Received an empty message content" in caplog.text
     assert "Finish reason: stop" in caplog.text

@@ -65,11 +65,12 @@ async def test_openai_simple_call(openai_test_model: str) -> None:
 
         # 3. Make the API call using the client's method
         print("Calling client.generate...")
-        response_content, _ = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             model=openai_test_model,  # Can override the client's default model here
             temperature=0.7,  # Adjusted temperature slightly
         )
+        response_content = generation_result.content
         print(
             f"Received response snippet: {response_content[:100] if response_content else 'None'}..."
         )

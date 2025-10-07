@@ -86,10 +86,11 @@ async def test_openai_pydantic_response_format(openai_test_model: str) -> None:
 
         # 3. Make the API call requesting Pydantic-based structured output
         print(f"Calling client.generate with Pydantic model: {ExtractedInfo.__name__}")
-        response_obj, _ = await client.generate(
+        generation_result = await client.generate(
             input=messages,
             response_format=ExtractedInfo,  # Pass the Pydantic class
         )
+        response_obj = generation_result.content
         print(f"Received parsed response:\n{response_obj}")
 
         # 4. Primary Assertions

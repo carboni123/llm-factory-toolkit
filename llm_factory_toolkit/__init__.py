@@ -33,7 +33,7 @@ from .exceptions import UnsupportedFeatureError  # noqa: E402
 from .providers import (  # noqa: E402; Allow direct provider creation if needed
     create_provider_instance,
 )
-from .providers.base import BaseProvider  # noqa: E402
+from .providers.base import BaseProvider, GenerationResult  # noqa: E402
 from .tools import builtins  # noqa: E402
 from .tools.base_tool import BaseTool  # noqa: E402
 from .tools.tool_factory import ToolFactory  # noqa: E402
@@ -91,6 +91,7 @@ __all__ = [
     "ToolError",
     "UnsupportedFeatureError",
     "create_provider_instance",
+    "GenerationResult",
     "clean_json_string",
     "extract_json_from_markdown",
     "builtins",

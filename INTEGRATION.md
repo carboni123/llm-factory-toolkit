@@ -72,12 +72,12 @@ async def run_generation():
     ]
 
     try:
-        response = await client.generate(
+        result = await client.generate(
             input=messages,
             temperature=0.5, # Optional: Control creativity
             max_output_tokens=50    # Optional: Limit response length
         )
-        print(f"Response: {response}")
+        print(f"Response: {result.content}")
 
     except LLMToolkitError as e:
         print(f"Toolkit Error: {e}")
@@ -102,8 +102,8 @@ schema = {
         },
     },
 }
-response = await client.generate(input=messages, response_format=schema)
-print(response)
+result = await client.generate(input=messages, response_format=schema)
+print(result.content)
 ```
 
 ## Tool Integration (`ToolFactory`)
@@ -183,8 +183,9 @@ async def ask_weather():
         {"role": "user", "content": "What's the weather like in Tokyo?"}
     ]
     print("Asking about weather (tool call expected)...")
-    response = await client.generate(input=messages)
-    print(f"\nFinal Response:\n{response}")
+    result = await client.generate(input=messages)
+    print(f"\nFinal Response:\n{result.content}")
+    print(f"Tool messages to persist: {result.tool_messages}")
 
 # Run it
 # asyncio.run(ask_weather())
@@ -241,8 +242,8 @@ client = LLMClient(provider_type='openai', model='gpt-4o-mini', tool_factory=too
 async def ask_profile():
     messages = [{"role": "user", "content": "Can you get me Alice's email? Her ID is u123."}]
     print("Asking for user profile (class tool call expected)...")
-    response = await client.generate(input=messages)
-    print(f"\nFinal Response:\n{response}")
+    result = await client.generate(input=messages)
+    print(f"\nFinal Response:\n{result.content}")
 
 # Run it
 # asyncio.run(ask_profile())
@@ -261,9 +262,35 @@ async def ask_profile():
     *   JSON serialize the return value of your function/method.
 5.  The adapter sends the serialized result back to the LLM API.
 6.  The LLM uses the tool's result to formulate its final response to the user.
-7.  `client.generate()` returns the final text response from the LLM.
+7.  `client.generate()` returns a `GenerationResult` with the final assistant
+    message, any deferred payloads, and the tool transcript you should append to
+    your stored history before the next turn.
 
 This loop can repeat multiple times if the LLM needs to make sequential tool calls (up to `max_tool_iterations` configured in the provider, default is 5 for OpenAI).
+
+### Multi-turn conversations with tools
+
+For retrieval-augmented or chat-style workflows, persist the tool transcript so
+subsequent calls include the `{"role": "tool"}` messages produced during the
+previous turn. The `GenerationResult.tool_messages` list already contains
+OpenAI-compatible response items you can append directly:
+
+```python
+history = [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "Find tonight's forecast."},
+]
+
+result = await client.generate(input=history, use_tools=["get_forecast"])
+history.extend(result.tool_messages)
+history.append({"role": "assistant", "content": result.content or ""})
+
+# Next turn now contains the tool outputs
+follow_up = await client.generate(input=history)
+```
+
+If you need to inspect the complete provider transcript (including hidden tool
+calls or intermediate reasoning messages), refer to `GenerationResult.messages`.
 
 ## Structured Output (JSON / Pydantic)
 
@@ -290,16 +317,16 @@ async def run_json_mode():
 
     try:
         # Request JSON output
-        json_response = await client.generate(
+        result = await client.generate(
             input=messages,
             response_format={"type": "json_object"} # Request JSON mode
         )
 
-        if json_response:
-            print(f"Raw JSON string response:\n{json_response}")
+        if result.content:
+            print(f"Raw JSON string response:\n{result.content}")
             try:
                 # Validate and parse
-                data = json.loads(json_response)
+                data = json.loads(result.content)
                 print("\nParsed JSON data:")
                 print(data)
                 assert data.get("name") == "Alice"
@@ -338,11 +365,12 @@ async def run_pydantic_mode():
     ]
 
     try:
-        structured_response, _ = await client.generate(
+        result = await client.generate(
             input=messages,
             response_format=UserInfo
         )
 
+        structured_response = result.content
         if structured_response:
             print("Validated Pydantic object:")
             print(structured_response.model_dump_json(indent=2))
@@ -377,8 +405,8 @@ async def safe_generate():
     try:
         client = LLMClient(provider_type='openai') # Might raise ConfigurationError
         messages = [{"role": "user", "content": "Tell me a joke."}]
-        response = await client.generate(input=messages) # Might raise ProviderError or ToolError
-        print(f"Response: {response}")
+        result = await client.generate(input=messages) # Might raise ProviderError or ToolError
+        print(f"Response: {result.content}")
 
     except ConfigurationError as e:
         print(f"Configuration Error: {e}")
@@ -416,8 +444,8 @@ import asyncio
 
 async def my_async_app():
     # ... initialize client ...
-    response = await client.generate(...)
-    # ... use response ...
+    result = await client.generate(...)
+    # ... use result.content ...
 
 if __name__ == "__main__":
     asyncio.run(my_async_app())

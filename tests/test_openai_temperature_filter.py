@@ -48,4 +48,7 @@ async def test_temperature_retained_for_supported_models(
         )
 
         _, kwargs = mock_client.responses.parse.call_args
-        assert kwargs.get("temperature") == 0.7
+        if provider._is_reasoning_model(openai_test_model):
+            assert "temperature" not in kwargs
+        else:
+            assert kwargs.get("temperature") == 0.7
