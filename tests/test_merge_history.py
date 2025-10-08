@@ -29,12 +29,14 @@ class _RecordingProvider(BaseProvider):
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         web_search: Any = False,
+        file_search: Any = False,
         **kwargs: Any,
     ) -> GenerationResult:
         self.last_messages = copy.deepcopy(input)
         self.last_kwargs = {
             "tool_execution_context": tool_execution_context,
             "web_search": web_search,
+            "file_search": file_search,
             **kwargs,
         }
         return GenerationResult(content=None)
@@ -49,6 +51,7 @@ class _RecordingProvider(BaseProvider):
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[Any]] = None,
         web_search: bool = False,
+        file_search: bool = False,
         **kwargs: Any,
     ) -> Any:
         raise NotImplementedError

@@ -2,7 +2,7 @@
 import copy
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from pydantic import BaseModel  # Import for type hinting
 
@@ -113,6 +113,7 @@ class LLMClient:
         parallel_tools: bool = False,
         merge_history: bool = False,
         web_search: bool | Dict[str, Any] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -146,6 +147,11 @@ class LLMClient:
                 filters. Provide a dictionary such as
                 ``{"citations": False}`` to opt out of provider supplied
                 citations while keeping search enabled.
+            file_search (bool | Dict[str, Any] | List[str] | Tuple[str, ...]):
+                When truthy exposes the provider's file search tool. Provide a
+                list/tuple of vector store identifiers or a configuration
+                dictionary (for example ``{"vector_store_ids": ["vs_123"]}``)
+                to control retrieval behaviour.
             **kwargs: Additional arguments passed directly to the provider's generate method
                       (e.g., tool_choice, max_tool_iterations).
 
@@ -186,6 +192,7 @@ class LLMClient:
             "mock_tools": mock_tools,
             "parallel_tools": parallel_tools,
             "web_search": web_search,
+            "file_search": file_search,
             **kwargs,  # Pass through other args like 'max_tool_iterations', 'tool_choice'
         }
         # Filter out None values to avoid overriding provider defaults unintentionally,
@@ -194,7 +201,13 @@ class LLMClient:
             k: v
             for k, v in provider_args.items()
             if v is not None
-            or k in ["use_tools", "tool_execution_context", "parallel_tools"]
+            or k
+            in [
+                "use_tools",
+                "tool_execution_context",
+                "parallel_tools",
+                "file_search",
+            ]
         }
 
         try:
@@ -290,6 +303,7 @@ class LLMClient:
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         web_search: bool | Dict[str, Any] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """
@@ -310,6 +324,10 @@ class LLMClient:
                 capability (if supported) for the intent planning call. Provide
                 a dictionary (for example ``{"citations": False}``) to
                 customise provider behaviour such as disabling citations.
+            file_search: When truthy exposes the provider's file search tool
+                during intent planning. Provide a list/tuple of vector store
+                identifiers or a configuration dictionary containing
+                ``vector_store_ids`` and optional retrieval controls.
             **kwargs: Additional arguments passed to the provider's generate_tool_intent method.
 
         Returns:
@@ -332,12 +350,15 @@ class LLMClient:
             "use_tools": use_tools,
             "tool_choice": "required",
             "web_search": web_search,
+            "file_search": file_search,
             **kwargs,
         }
         # Filter out None values to avoid overriding provider defaults unintentionally,
         # but keep 'use_tools' as its specific values (None, []) are meaningful.
         provider_args = {
-            k: v for k, v in provider_args.items() if v is not None or k == "use_tools"
+            k: v
+            for k, v in provider_args.items()
+            if v is not None or k in {"use_tools", "file_search"}
         }
 
         try:

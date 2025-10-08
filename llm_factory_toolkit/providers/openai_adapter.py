@@ -4,7 +4,7 @@ import copy
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from openai.types.responses import ParsedResponse
@@ -43,6 +43,15 @@ class WebSearchConfig:
 
     enabled: bool
     citations: bool = True
+
+
+@dataclass(frozen=True)
+class FileSearchConfig:
+    """Normalized file search configuration."""
+
+    enabled: bool
+    vector_store_ids: Tuple[str, ...] = field(default_factory=tuple)
+    options: Dict[str, Any] = field(default_factory=dict)
 
 
 @register_provider("openai")
@@ -175,13 +184,34 @@ class OpenAIProvider(BaseProvider):
         if not text:
             return text
 
-        # remove Markdown links (label + URL) and images
-        text = re.sub(r'!?\[[^\]]+\]\([^)]+\)', '', text)
+        # remove Markdown links (label + URL) while preserving labels
+        def _replace_markdown(match: re.Match[str]) -> str:
+            token = match.group(0)
+            label = match.group(1)
+            if token.startswith("!["):
+                return ""
+            if label.strip().isdigit():
+                return ""
+            return label
+
+        def _strip_url(match: re.Match[str]) -> str:
+            url = match.group(0)
+            trailing = ""
+            while url and url[-1] in ".,!?;:":
+                trailing = url[-1] + trailing
+                url = url[:-1]
+            return trailing
+
+        text = re.sub(r'!?\[([^\]]+)\]\([^)]+\)', _replace_markdown, text)
+        # remove bare URLs (http/https) and common www. patterns while keeping trailing punctuation
+        text = re.sub(r'https?://\S+', _strip_url, text)
+        text = re.sub(r'www\.[^\s]+', _strip_url, text)
         # remove empty parentheses "()" or "(   )"
         text = re.sub(r'\(\s*\)', '', text)
         # quick tidy
         text = re.sub(r'[ \t]{2,}', ' ', text)
         text = re.sub(r'[ \t]+\n', '\n', text)
+        text = re.sub(r'\s+([.,!?])', r'\1', text)
         return text.strip()
 
     async def generate(
@@ -198,6 +228,12 @@ class OpenAIProvider(BaseProvider):
         mock_tools: bool = False,
         parallel_tools: bool = False,
         web_search: bool | Dict[str, Any] = False,
+        file_search: bool
+        | Dict[str, Any]
+        | List[str]
+        | Tuple[str, ...]
+        | FileSearchConfig
+        | None = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -226,6 +262,12 @@ class OpenAIProvider(BaseProvider):
                 applied via ``use_tools``. Provide a dictionary (for example
                 ``{"citations": False}``) to disable provider supplied
                 citations while keeping search enabled.
+            file_search (bool | Dict[str, Any] | List[str] | Tuple[str, ...]):
+                When truthy exposes the OpenAI file search tool and supplies
+                the vector stores that should be queried. Provide a list or
+                tuple of vector store identifiers or a dictionary containing
+                ``vector_store_ids`` and optional retrieval parameters such as
+                ``max_num_results``.
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
@@ -238,6 +280,7 @@ class OpenAIProvider(BaseProvider):
         self._ensure_client()
 
         web_search_config = self._normalize_web_search_config(web_search)
+        file_search_config = self._normalize_file_search_config(file_search)
 
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
@@ -310,7 +353,10 @@ class OpenAIProvider(BaseProvider):
             }
 
             tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
-                use_tools, web_search_config, request_payload
+                use_tools,
+                web_search_config,
+                file_search_config,
+                request_payload,
             )
             if tools_for_payload is not None:
                 request_payload["tools"] = tools_for_payload
@@ -415,6 +461,12 @@ class OpenAIProvider(BaseProvider):
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         web_search: bool | Dict[str, Any] = False,
+        file_search: bool
+        | Dict[str, Any]
+        | List[str]
+        | Tuple[str, ...]
+        | FileSearchConfig
+        | None = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """Generate tool intents without executing tool calls.
@@ -434,6 +486,11 @@ class OpenAIProvider(BaseProvider):
                 planner can opt into performing searches. Provide a dictionary
                 (for example ``{"citations": False}``) to disable provider
                 supplied citations while keeping search enabled.
+            file_search (bool | Dict[str, Any] | List[str] | Tuple[str, ...]):
+                When truthy exposes OpenAI's file search tool during planning.
+                Provide a list or tuple of vector store identifiers or a
+                dictionary containing ``vector_store_ids`` together with
+                optional retrieval parameters (for example ``{"max_num_results": 2}``).
             **kwargs: Additional provider-specific overrides forwarded to the API.
 
         Returns:
@@ -443,6 +500,7 @@ class OpenAIProvider(BaseProvider):
 
         active_model = model or self.model
         web_search_config = self._normalize_web_search_config(web_search)
+        file_search_config = self._normalize_file_search_config(file_search)
         api_call_args = {"model": active_model, **kwargs}
         use_parse = False
 
@@ -475,7 +533,10 @@ class OpenAIProvider(BaseProvider):
         }
 
         tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
-            use_tools, web_search_config, request_payload
+            use_tools,
+            web_search_config,
+            file_search_config,
+            request_payload,
         )
         if tools_for_payload is not None:
             request_payload["tools"] = tools_for_payload
@@ -589,20 +650,28 @@ class OpenAIProvider(BaseProvider):
     def _prepare_tool_payload(
         self,
         use_tools: Optional[List[str]],
-        web_search: bool | Dict[str, Any] | WebSearchConfig,
+        web_search: WebSearchConfig,
+        file_search: FileSearchConfig,
         existing_kwargs: Dict[str, Any],
     ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Any]]:
         """
         Prepares the 'tools' and 'tool_choice' parts of the API request payload.
         Returns a tuple: (tool_definitions_for_payload, effective_tool_choice_for_payload)
         """
-        config = self._normalize_web_search_config(web_search)
-
         final_tool_definitions: List[Dict[str, Any]] = []
         effective_tool_choice = existing_kwargs.get("tool_choice")
 
-        if config.enabled:
+        if web_search.enabled:
             final_tool_definitions.append({"type": "web_search"})
+
+        if file_search.enabled:
+            tool_definition: Dict[str, Any] = {
+                "type": "file_search",
+                "vector_store_ids": list(file_search.vector_store_ids),
+            }
+            if file_search.options:
+                tool_definition.update(file_search.options)
+            final_tool_definitions.append(tool_definition)
 
         if use_tools is None:
             if not final_tool_definitions and (effective_tool_choice in (None, "auto")):
@@ -654,6 +723,66 @@ class OpenAIProvider(BaseProvider):
             tools_payload = final_tool_definitions if final_tool_definitions else []
 
         return tools_payload, effective_tool_choice
+
+    @staticmethod
+    def _normalize_file_search_config(
+        value: bool
+        | Dict[str, Any]
+        | List[str]
+        | Tuple[str, ...]
+        | FileSearchConfig
+        | None,
+    ) -> FileSearchConfig:
+        """Return a normalized file search configuration."""
+
+        if isinstance(value, FileSearchConfig):
+            return value
+
+        if not value:
+            return FileSearchConfig(enabled=False)
+
+        if isinstance(value, bool):
+            if value:
+                raise ConfigurationError(
+                    "file_search requires vector_store_ids when enabled."
+                )
+            return FileSearchConfig(enabled=False)
+
+        if isinstance(value, dict):
+            vector_store_ids = value.get("vector_store_ids")
+            normalized_ids: Tuple[str, ...]
+            if isinstance(vector_store_ids, str):
+                vector_store_ids = [vector_store_ids]
+            if isinstance(vector_store_ids, (list, tuple, set)):
+                normalized_ids = tuple(
+                    str(item).strip()
+                    for item in vector_store_ids
+                    if str(item).strip()
+                )
+            else:
+                raise ConfigurationError(
+                    "file_search configuration requires 'vector_store_ids' as a sequence of strings."
+                )
+            if not normalized_ids:
+                raise ConfigurationError(
+                    "file_search configuration requires at least one vector store id."
+                )
+            options = {k: v for k, v in value.items() if k != "vector_store_ids"}
+            return FileSearchConfig(enabled=True, vector_store_ids=normalized_ids, options=options)
+
+        if isinstance(value, (list, tuple, set)):
+            normalized_ids = tuple(
+                str(item).strip() for item in value if str(item).strip()
+            )
+            if not normalized_ids:
+                raise ConfigurationError(
+                    "file_search configuration requires at least one vector store id."
+                )
+            return FileSearchConfig(enabled=True, vector_store_ids=normalized_ids)
+
+        raise ConfigurationError(
+            "file_search must be False, a sequence of vector store ids, or a configuration dictionary."
+        )
 
     async def _make_api_call(
         self,

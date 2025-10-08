@@ -297,6 +297,12 @@ news_run = await client.generate(
 
 # Passing a dictionary to ``web_search`` enables provider-specific options,
 # such as disabling citation links while keeping search enabled.
+
+# Provide vector stores for OpenAI's hosted file search tool during generation
+briefing = await client.generate(
+    input=history,
+    file_search={"vector_store_ids": ["vs_product_docs"], "max_num_results": 5},
+)
 ```
 
 If you need to inspect the complete provider transcript (including hidden tool

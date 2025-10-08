@@ -5,7 +5,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Type
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -137,6 +137,7 @@ class BaseProvider(ABC):
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         web_search: bool | Dict[str, Any] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -165,6 +166,11 @@ class BaseProvider(ABC):
                 for this request when available. Provide a dictionary (for
                 example ``{"citations": False}``) to customise provider
                 behaviour such as disabling citations.
+            file_search: Whether to expose the provider's built-in file search
+                tool. Provide a list of vector store identifiers or a
+                dictionary containing ``vector_store_ids`` and optional search
+                configuration (for example ``{"vector_store_ids": ["vs_123"],
+                "max_num_results": 4}``).
         """
         pass
 
@@ -179,6 +185,7 @@ class BaseProvider(ABC):
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         web_search: bool | Dict[str, Any] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """
@@ -199,6 +206,10 @@ class BaseProvider(ABC):
                 for the intent planning request when available. Provide a
                 dictionary (for example ``{"citations": False}``) to customise
                 provider behaviour such as disabling citations.
+            file_search: Whether to expose the provider's built-in file search
+                tool while planning tool calls. Provide a list of vector store
+                identifiers or a dictionary containing ``vector_store_ids`` and
+                optional retrieval configuration.
             **kwargs: Additional provider-specific arguments.
 
         Returns:
