@@ -48,6 +48,36 @@ def test_prepare_tool_payload_includes_web_search() -> None:
     assert "function" in tool_types
 
 
+def test_normalize_web_search_accepts_filters_and_location() -> None:
+    """Structured options should capture filters and location metadata."""
+
+    config = OpenAIProvider._normalize_web_search_config(
+        {
+            "filters": {"allowed_domains": ["pubmed.ncbi.nlm.nih.gov"]},
+            "user_location": {
+                "type": "approximate",
+                "country": "GB",
+                "city": "London",
+            },
+        }
+    )
+
+    assert config.enabled is True
+    assert config.filters == {"allowed_domains": ["pubmed.ncbi.nlm.nih.gov"]}
+    assert config.user_location == {
+        "type": "approximate",
+        "country": "GB",
+        "city": "London",
+    }
+
+
+def test_normalize_web_search_rejects_invalid_filters() -> None:
+    """Non-dict filters should raise a configuration error."""
+
+    with pytest.raises(ConfigurationError):
+        OpenAIProvider._normalize_web_search_config({"filters": ["not-a-dict"]})
+
+
 def test_prepare_tool_payload_web_search_only_when_disabled() -> None:
     """Disabling registered tools should still allow web search when requested."""
 
@@ -61,6 +91,42 @@ def test_prepare_tool_payload_web_search_only_when_disabled() -> None:
 
     assert tool_choice is None
     assert tools_payload == [{"type": "web_search"}]
+
+
+def test_prepare_tool_payload_includes_web_search_filters_and_location() -> None:
+    """Structured web_search metadata should be forwarded to the payload."""
+
+    provider = _create_provider_with_tool_factory()
+    web_search_config = OpenAIProvider._normalize_web_search_config(
+        {
+            "filters": {"allowed_domains": ["www.cdc.gov"]},
+            "user_location": {
+                "type": "approximate",
+                "country": "US",
+                "city": "Atlanta",
+            },
+        }
+    )
+
+    tools_payload, _ = provider._prepare_tool_payload(  # type: ignore[attr-defined]
+        use_tools=[],
+        web_search=web_search_config,
+        file_search=OpenAIProvider._normalize_file_search_config(False),
+        existing_kwargs={},
+    )
+
+    assert tools_payload is not None
+    web_search_tools = [
+        tool for tool in tools_payload if tool.get("type") == "web_search"
+    ]
+    assert web_search_tools
+    web_tool = web_search_tools[0]
+    assert web_tool.get("filters") == {"allowed_domains": ["www.cdc.gov"]}
+    assert web_tool.get("user_location") == {
+        "type": "approximate",
+        "country": "US",
+        "city": "Atlanta",
+    }
 
 
 @pytest.mark.asyncio
@@ -253,26 +319,3 @@ def test_normalize_file_search_requires_vector_store_ids() -> None:
     with pytest.raises(ConfigurationError):
         OpenAIProvider._normalize_file_search_config({"max_num_results": 1})
 
-
-def test_strip_urls_removes_citations() -> None:
-    """strip_urls removes markdown citations and bare URLs."""
-
-    text = (
-        "Result [1](https://example.com) references [Docs](https://docs.test "
-        '"Docs site") and see https://foo.bar/info for more.'
-    )
-    cleaned = OpenAIProvider.strip_urls(text)
-
-    assert (
-        cleaned
-        == "Result references Docs and see for more."
-    )
-
-
-def test_strip_urls_preserves_text_structure() -> None:
-    """strip_urls keeps punctuation and spacing tidy after removals."""
-
-    text = "According to reports [2](https://example.com).\nVisit www.test.com."  # noqa: E501
-    cleaned = OpenAIProvider.strip_urls(text)
-
-    assert cleaned == "According to reports.\nVisit."

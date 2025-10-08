@@ -165,7 +165,9 @@ class BaseProvider(ABC):
             web_search: Whether to expose the provider's built-in web search tool
                 for this request when available. Provide a dictionary (for
                 example ``{"citations": False}``) to customise provider
-                behaviour such as disabling citations.
+                behaviour such as disabling citations, constraining ``filters``
+                (for example ``{"allowed_domains": [...]}``), or setting an
+                approximate ``user_location`` for geolocated queries.
             file_search: Whether to expose the provider's built-in file search
                 tool. Provide a list of vector store identifiers or a
                 dictionary containing ``vector_store_ids`` and optional search
@@ -205,7 +207,9 @@ class BaseProvider(ABC):
             web_search: Whether to expose the provider's built-in web search tool
                 for the intent planning request when available. Provide a
                 dictionary (for example ``{"citations": False}``) to customise
-                provider behaviour such as disabling citations.
+                provider behaviour such as disabling citations, constraining
+                ``filters``, or configuring ``user_location`` for regional
+                results.
             file_search: Whether to expose the provider's built-in file search
                 tool while planning tool calls. Provide a list of vector store
                 identifiers or a dictionary containing ``vector_store_ids`` and

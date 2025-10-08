@@ -12,8 +12,8 @@ pytest_plugins = ("pytest_asyncio",)
 
 load_dotenv()
 
-_DEFAULT_SUPPORTED_MODEL = "gpt-4o-mini"
-_DEFAULT_UNSUPPORTED_MODEL = "gpt-5-mini-2025-08-07"
+_DEFAULT_SUPPORTED_MODEL = "gpt-4.1-mini"
+_DEFAULT_UNSUPPORTED_MODEL = "gpt-5-mini"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

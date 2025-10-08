@@ -43,6 +43,8 @@ class WebSearchConfig:
 
     enabled: bool
     citations: bool = True
+    filters: Optional[Dict[str, Any]] = None
+    user_location: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -62,7 +64,7 @@ class OpenAIProvider(BaseProvider):
     and Pydantic response formatting.
     """
 
-    DEFAULT_MODEL = "gpt-4o-mini"
+    DEFAULT_MODEL = "gpt-4.1-mini"
     API_ENV_VAR = "OPENAI_API_KEY"
 
     def __init__(
@@ -170,7 +172,22 @@ class OpenAIProvider(BaseProvider):
         if isinstance(value, dict):
             enabled = value.get("enabled", True)
             citations = value.get("citations", True)
-            return WebSearchConfig(enabled=bool(enabled), citations=bool(citations))
+            filters = value.get("filters")
+            if filters is not None and not isinstance(filters, dict):
+                raise ConfigurationError(
+                    "web_search configuration requires 'filters' to be a dictionary."
+                )
+            user_location = value.get("user_location")
+            if user_location is not None and not isinstance(user_location, dict):
+                raise ConfigurationError(
+                    "web_search configuration requires 'user_location' to be a dictionary."
+                )
+            return WebSearchConfig(
+                enabled=bool(enabled),
+                citations=bool(citations),
+                filters=copy.deepcopy(filters) or None,
+                user_location=copy.deepcopy(user_location) or None,
+            )
 
         if value:
             return WebSearchConfig(enabled=True, citations=True)
@@ -184,28 +201,8 @@ class OpenAIProvider(BaseProvider):
         if not text:
             return text
 
-        # remove Markdown links (label + URL) while preserving labels
-        def _replace_markdown(match: re.Match[str]) -> str:
-            token = match.group(0)
-            label = match.group(1)
-            if token.startswith("!["):
-                return ""
-            if label.strip().isdigit():
-                return ""
-            return label
-
-        def _strip_url(match: re.Match[str]) -> str:
-            url = match.group(0)
-            trailing = ""
-            while url and url[-1] in ".,!?;:":
-                trailing = url[-1] + trailing
-                url = url[:-1]
-            return trailing
-
-        text = re.sub(r'!?\[([^\]]+)\]\([^)]+\)', _replace_markdown, text)
-        # remove bare URLs (http/https) and common www. patterns while keeping trailing punctuation
-        text = re.sub(r'https?://\S+', _strip_url, text)
-        text = re.sub(r'www\.[^\s]+', _strip_url, text)
+        # remove Markdown links (label + URL)
+        text = re.sub(r'!?\[[^\]]+\]\([^)]+\)', '', text)
         # remove empty parentheses "()" or "(   )"
         text = re.sub(r'\(\s*\)', '', text)
         # quick tidy
@@ -261,7 +258,9 @@ class OpenAIProvider(BaseProvider):
                 web search tool in addition to any registered tools or filters
                 applied via ``use_tools``. Provide a dictionary (for example
                 ``{"citations": False}``) to disable provider supplied
-                citations while keeping search enabled.
+                citations while keeping search enabled, supply search filters
+                (such as ``{"allowed_domains": [...]}``), or set an
+                approximate ``user_location`` to bias regional results.
             file_search (bool | Dict[str, Any] | List[str] | Tuple[str, ...]):
                 When truthy exposes the OpenAI file search tool and supplies
                 the vector stores that should be queried. Provide a list or
@@ -485,7 +484,9 @@ class OpenAIProvider(BaseProvider):
             web_search: When truthy exposes OpenAI's web search tool so the
                 planner can opt into performing searches. Provide a dictionary
                 (for example ``{"citations": False}``) to disable provider
-                supplied citations while keeping search enabled.
+                supplied citations while keeping search enabled, supply
+                ``filters`` (for example ``{"allowed_domains": [...]}``), or
+                configure ``user_location`` for geographic context.
             file_search (bool | Dict[str, Any] | List[str] | Tuple[str, ...]):
                 When truthy exposes OpenAI's file search tool during planning.
                 Provide a list or tuple of vector store identifiers or a
@@ -662,7 +663,14 @@ class OpenAIProvider(BaseProvider):
         effective_tool_choice = existing_kwargs.get("tool_choice")
 
         if web_search.enabled:
-            final_tool_definitions.append({"type": "web_search"})
+            tool_definition: Dict[str, Any] = {"type": "web_search"}
+            if web_search.filters:
+                tool_definition["filters"] = copy.deepcopy(web_search.filters)
+            if web_search.user_location:
+                tool_definition["user_location"] = copy.deepcopy(
+                    web_search.user_location
+                )
+            final_tool_definitions.append(tool_definition)
 
         if file_search.enabled:
             tool_definition: Dict[str, Any] = {

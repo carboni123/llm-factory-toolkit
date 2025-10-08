@@ -252,7 +252,6 @@ async def test_generate_tool_usage_counts(
         print(f"Tool usage counts after generate: {counts_after_generate}")
 
         # For this specific prompt, we expect each of the 3 relevant tools to be called once.
-        # GPT-4o-mini is usually good at this with parallel tool calls.
         assert (
             counts_after_generate.get(MOCK_TOOL_NAME_1) == 1
         ), f"Tool '{MOCK_TOOL_NAME_1}' count mismatch"

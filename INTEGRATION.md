@@ -288,15 +288,25 @@ history.append({"role": "assistant", "content": result.content or ""})
 # Next turn now contains the tool outputs
 follow_up = await client.generate(input=history)
 
-# Allow the model to use OpenAI's built-in web search without registering a tool
-# and suppress citation hyperlinks in the model's reply
+# Allow the model to use OpenAI's built-in web search without registering a tool,
+# suppress citation hyperlinks, restrict allowed domains, and pass an approximate
+# location to tailor regional results
 news_run = await client.generate(
     input=history,
-    web_search={"citations": False},
+    web_search={
+        "citations": False,
+        "filters": {"allowed_domains": ["www.who.int", "www.cdc.gov"]},
+        "user_location": {
+            "type": "approximate",
+            "country": "GB",
+            "city": "London",
+        },
+    },
 )
 
 # Passing a dictionary to ``web_search`` enables provider-specific options,
-# such as disabling citation links while keeping search enabled.
+# including disabling citation links, constraining ``filters``, and providing
+# ``user_location`` hints while keeping search enabled.
 
 # Provide vector stores for OpenAI's hosted file search tool during generation
 briefing = await client.generate(

@@ -146,15 +146,25 @@ for payload in result.payloads:
 # Persist tool interactions for the next turn
 messages.extend(result.tool_messages)
 
-# Opt-in to OpenAI's built-in web search alongside your registered tools
-# and disable provider-supplied citations in the final response
+# Opt-in to OpenAI's built-in web search alongside your registered tools,
+# disable provider-supplied citations, constrain allowed domains, and supply
+# an approximate user location for regional context
 news_result = await client.generate(
     input=[{"role": "user", "content": "Share a positive news story from today."}],
-    web_search={"citations": False},
+    web_search={
+        "citations": False,
+        "filters": {"allowed_domains": ["www.who.int", "www.cdc.gov"]},
+        "user_location": {
+            "type": "approximate",
+            "country": "GB",
+            "city": "London",
+        },
+    },
 )
 
-# web_search accepts structured options. Here we keep search enabled but
-# strip citation hyperlinks from the model's response.
+# web_search accepts structured options. Here we keep search enabled while
+# stripping citation hyperlinks, restricting search sources, and providing a
+# coarse location hint for the search provider.
 
 # Expose OpenAI's hosted file search tool backed by your vector stores
 research_result = await client.generate(

@@ -146,7 +146,10 @@ class LLMClient:
                 alongside any registered tools, regardless of ``use_tools``
                 filters. Provide a dictionary such as
                 ``{"citations": False}`` to opt out of provider supplied
-                citations while keeping search enabled.
+                citations while keeping search enabled, supply search
+                ``filters`` (for example ``{"allowed_domains": [...]}``), or
+                set an approximate ``user_location`` for geographically-aware
+                queries.
             file_search (bool | Dict[str, Any] | List[str] | Tuple[str, ...]):
                 When truthy exposes the provider's file search tool. Provide a
                 list/tuple of vector store identifiers or a configuration
@@ -323,7 +326,9 @@ class LLMClient:
             web_search: When truthy exposes the provider's built-in web search
                 capability (if supported) for the intent planning call. Provide
                 a dictionary (for example ``{"citations": False}``) to
-                customise provider behaviour such as disabling citations.
+                customise provider behaviour such as disabling citations,
+                constraining search ``filters``, or configuring
+                ``user_location`` details for regional context.
             file_search: When truthy exposes the provider's file search tool
                 during intent planning. Provide a list/tuple of vector store
                 identifiers or a configuration dictionary containing
