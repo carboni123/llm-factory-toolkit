@@ -112,7 +112,7 @@ class LLMClient:
         mock_tools: bool = False,
         parallel_tools: bool = False,
         merge_history: bool = False,
-        web_search: bool = False,
+        web_search: bool | Dict[str, Any] = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -140,9 +140,12 @@ class LLMClient:
                 This may help accommodate providers that expect consolidated
                 turns, but can cause unexpected model behaviour in some
                 scenarios. Tool call messages are never merged.
-            web_search (bool): When ``True`` exposes the provider's built-in web
-                search capability (if supported) alongside any registered
-                tools, regardless of ``use_tools`` filters.
+            web_search (bool | Dict[str, Any]): When truthy exposes the
+                provider's built-in web search capability (if supported)
+                alongside any registered tools, regardless of ``use_tools``
+                filters. Provide a dictionary such as
+                ``{"citations": False}`` to opt out of provider supplied
+                citations while keeping search enabled.
             **kwargs: Additional arguments passed directly to the provider's generate method
                       (e.g., tool_choice, max_tool_iterations).
 
@@ -286,7 +289,7 @@ class LLMClient:
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
-        web_search: bool = False,
+        web_search: bool | Dict[str, Any] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """
@@ -303,8 +306,10 @@ class LLMClient:
                        which exposes all registered tools. Pass ``None`` to
                        disable tool usage or provide a non-empty list of names
                        to restrict the available tools.
-            web_search: When ``True`` exposes the provider's built-in web search
-                capability (if supported) for the intent planning call.
+            web_search: When truthy exposes the provider's built-in web search
+                capability (if supported) for the intent planning call. Provide
+                a dictionary (for example ``{"citations": False}``) to
+                customise provider behaviour such as disabling citations.
             **kwargs: Additional arguments passed to the provider's generate_tool_intent method.
 
         Returns:

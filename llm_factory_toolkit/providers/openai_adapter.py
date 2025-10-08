@@ -3,6 +3,8 @@ import asyncio
 import copy
 import json
 import logging
+import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from openai.types.responses import ParsedResponse
@@ -33,6 +35,14 @@ module_logger = logging.getLogger(__name__)
 
 DEFAULT_REASONING_BUFFER = 1024
 REASONING_MODEL_PREFIXES = ("gpt-5", "o4", "o3")
+
+
+@dataclass(frozen=True)
+class WebSearchConfig:
+    """Normalized web search configuration."""
+
+    enabled: bool
+    citations: bool = True
 
 
 @register_provider("openai")
@@ -139,6 +149,41 @@ class OpenAIProvider(BaseProvider):
 
         return value
 
+    @staticmethod
+    def _normalize_web_search_config(
+        value: bool | Dict[str, Any] | WebSearchConfig | None,
+    ) -> WebSearchConfig:
+        """Return a normalised web search configuration."""
+
+        if isinstance(value, WebSearchConfig):
+            return value
+
+        if isinstance(value, dict):
+            enabled = value.get("enabled", True)
+            citations = value.get("citations", True)
+            return WebSearchConfig(enabled=bool(enabled), citations=bool(citations))
+
+        if value:
+            return WebSearchConfig(enabled=True, citations=True)
+
+        return WebSearchConfig(enabled=False, citations=True)
+
+    @staticmethod
+    def strip_urls(text: str) -> str:
+        """Strip markdown hyperlinks and bare URLs from ``text``."""
+
+        if not text:
+            return text
+
+        # remove Markdown links (label + URL) and images
+        text = re.sub(r'!?\[[^\]]+\]\([^)]+\)', '', text)
+        # remove empty parentheses "()" or "(   )"
+        text = re.sub(r'\(\s*\)', '', text)
+        # quick tidy
+        text = re.sub(r'[ \t]{2,}', ' ', text)
+        text = re.sub(r'[ \t]+\n', '\n', text)
+        return text.strip()
+
     async def generate(
         self,
         input: List[Dict[str, Any]],
@@ -152,7 +197,7 @@ class OpenAIProvider(BaseProvider):
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        web_search: bool = False,
+        web_search: bool | Dict[str, Any] = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -176,9 +221,11 @@ class OpenAIProvider(BaseProvider):
                 stubbed responses.
             parallel_tools (bool): If True, dispatch multiple tool calls concurrently
                 using ``asyncio.gather``. Defaults to ``False``.
-            web_search (bool): When ``True`` exposes the OpenAI web search tool in
-                addition to any registered tools or filters applied via
-                ``use_tools``.
+            web_search (bool | Dict[str, Any]): When truthy exposes the OpenAI
+                web search tool in addition to any registered tools or filters
+                applied via ``use_tools``. Provide a dictionary (for example
+                ``{"citations": False}``) to disable provider supplied
+                citations while keeping search enabled.
             **kwargs: Additional arguments for the OpenAI API client (e.g., 'top_p').
 
         Returns:
@@ -189,6 +236,8 @@ class OpenAIProvider(BaseProvider):
             ProviderError, ToolError, UnsupportedFeatureError, ConfigurationError.
         """
         self._ensure_client()
+
+        web_search_config = self._normalize_web_search_config(web_search)
 
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
@@ -212,8 +261,15 @@ class OpenAIProvider(BaseProvider):
                 if payloads_override is not None
                 else list(collected_payloads)
             )
+            processed_content: Optional[BaseModel | str] = final_content
+            if (
+                web_search_config.enabled
+                and not web_search_config.citations
+                and isinstance(final_content, str)
+            ):
+                processed_content = self.strip_urls(final_content)
             return GenerationResult(
-                content=final_content,
+                content=processed_content,
                 payloads=payload_source,
                 tool_messages=[copy.deepcopy(msg) for msg in tool_result_messages],
                 messages=snapshot_messages(),
@@ -254,7 +310,7 @@ class OpenAIProvider(BaseProvider):
             }
 
             tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
-                use_tools, web_search, request_payload
+                use_tools, web_search_config, request_payload
             )
             if tools_for_payload is not None:
                 request_payload["tools"] = tools_for_payload
@@ -358,7 +414,7 @@ class OpenAIProvider(BaseProvider):
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool = False,
+        web_search: bool | Dict[str, Any] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """Generate tool intents without executing tool calls.
@@ -374,8 +430,10 @@ class OpenAIProvider(BaseProvider):
             temperature: Sampling temperature for the planning call.
             max_output_tokens: Maximum tokens for the assistant reply.
             response_format: Desired response format for direct replies.
-            web_search: When ``True`` exposes OpenAI's web search tool so the
-                planner can opt into performing searches.
+            web_search: When truthy exposes OpenAI's web search tool so the
+                planner can opt into performing searches. Provide a dictionary
+                (for example ``{"citations": False}``) to disable provider
+                supplied citations while keeping search enabled.
             **kwargs: Additional provider-specific overrides forwarded to the API.
 
         Returns:
@@ -384,6 +442,7 @@ class OpenAIProvider(BaseProvider):
         self._ensure_client()
 
         active_model = model or self.model
+        web_search_config = self._normalize_web_search_config(web_search)
         api_call_args = {"model": active_model, **kwargs}
         use_parse = False
 
@@ -416,7 +475,7 @@ class OpenAIProvider(BaseProvider):
         }
 
         tools_for_payload, tool_choice_for_payload = self._prepare_tool_payload(
-            use_tools, web_search, request_payload
+            use_tools, web_search_config, request_payload
         )
         if tools_for_payload is not None:
             request_payload["tools"] = tools_for_payload
@@ -514,6 +573,13 @@ class OpenAIProvider(BaseProvider):
         else:
             content_val = assistant_text
 
+        if (
+            web_search_config.enabled
+            and not web_search_config.citations
+            and isinstance(content_val, str)
+        ):
+            content_val = self.strip_urls(content_val)
+
         return ToolIntentOutput(
             content=content_val,
             tool_calls=parsed_tool_calls_list if parsed_tool_calls_list else None,
@@ -523,17 +589,19 @@ class OpenAIProvider(BaseProvider):
     def _prepare_tool_payload(
         self,
         use_tools: Optional[List[str]],
-        web_search: bool,
+        web_search: bool | Dict[str, Any] | WebSearchConfig,
         existing_kwargs: Dict[str, Any],
     ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Any]]:
         """
         Prepares the 'tools' and 'tool_choice' parts of the API request payload.
         Returns a tuple: (tool_definitions_for_payload, effective_tool_choice_for_payload)
         """
+        config = self._normalize_web_search_config(web_search)
+
         final_tool_definitions: List[Dict[str, Any]] = []
         effective_tool_choice = existing_kwargs.get("tool_choice")
 
-        if web_search:
+        if config.enabled:
             final_tool_definitions.append({"type": "web_search"})
 
         if use_tools is None:

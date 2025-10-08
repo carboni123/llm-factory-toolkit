@@ -28,7 +28,7 @@ class _RecordingProvider(BaseProvider):
         *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
-        web_search: bool = False,
+        web_search: Any = False,
         **kwargs: Any,
     ) -> GenerationResult:
         self.last_messages = copy.deepcopy(input)

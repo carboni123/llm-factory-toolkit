@@ -63,7 +63,7 @@ async def test_client_forwards_web_search_flag(monkeypatch: pytest.MonkeyPatch) 
     class _RecorderProvider(BaseProvider):
         def __init__(self) -> None:
             super().__init__()
-            self.flags: List[bool] = []
+            self.flags: List[Any] = []
 
         async def generate(
             self,
@@ -71,7 +71,7 @@ async def test_client_forwards_web_search_flag(monkeypatch: pytest.MonkeyPatch) 
             *,
             tool_execution_context: Dict[str, Any] | None = None,
             mock_tools: bool = False,
-            web_search: bool = False,
+            web_search: Any = False,
             **kwargs: Any,
         ) -> GenerationResult:
             self.flags.append(web_search)
@@ -93,3 +93,86 @@ async def test_client_forwards_web_search_flag(monkeypatch: pytest.MonkeyPatch) 
     await client.generate(input=[{"role": "user", "content": "hi"}], web_search=True)
 
     assert provider.flags == [True]
+
+
+@pytest.mark.asyncio
+async def test_client_forwards_web_search_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLMClient.generate should forward structured web_search configuration."""
+
+    class _RecorderProvider(BaseProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.flags: List[Any] = []
+
+        async def generate(
+            self,
+            input: List[Dict[str, Any]],
+            *,
+            tool_execution_context: Dict[str, Any] | None = None,
+            mock_tools: bool = False,
+            web_search: Any = False,
+            **kwargs: Any,
+        ) -> GenerationResult:
+            self.flags.append(web_search)
+            return GenerationResult(content=None)
+
+        async def generate_tool_intent(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+    provider = _RecorderProvider()
+
+    def _provider_factory(*_: Any, **__: Any) -> BaseProvider:
+        return provider
+
+    monkeypatch.setattr(
+        "llm_factory_toolkit.client.create_provider_instance", _provider_factory
+    )
+
+    client = LLMClient(provider_type="openai")
+    await client.generate(
+        input=[{"role": "user", "content": "hi"}],
+        web_search={"citations": False},
+    )
+
+    assert provider.flags == [{"citations": False}]
+
+
+def test_prepare_tool_payload_omits_citation_flag() -> None:
+    """Disabling citations should not add unsupported fields to the payload."""
+
+    provider = _create_provider_with_tool_factory()
+    tools_payload, _ = provider._prepare_tool_payload(  # type: ignore[attr-defined]
+        use_tools=[], web_search={"citations": False}, existing_kwargs={}
+    )
+
+    assert tools_payload is not None
+    web_search_tools = [
+        tool for tool in tools_payload if tool.get("type") == "web_search"
+    ]
+    assert web_search_tools and "citations" not in web_search_tools[0]
+
+
+def test_strip_urls_removes_citations() -> None:
+    """strip_urls removes markdown citations and bare URLs."""
+
+    text = (
+        "Result [1](https://example.com) references [Docs](https://docs.test "
+        '"Docs site") and see https://foo.bar/info for more.'
+    )
+    cleaned = OpenAIProvider.strip_urls(text)
+
+    assert (
+        cleaned
+        == "Result references Docs and see for more."
+    )
+
+
+def test_strip_urls_preserves_text_structure() -> None:
+    """strip_urls keeps punctuation and spacing tidy after removals."""
+
+    text = "According to reports [2](https://example.com).\nVisit www.test.com."  # noqa: E501
+    cleaned = OpenAIProvider.strip_urls(text)
+
+    assert cleaned == "According to reports.\nVisit."

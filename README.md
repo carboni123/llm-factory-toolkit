@@ -147,10 +147,14 @@ for payload in result.payloads:
 messages.extend(result.tool_messages)
 
 # Opt-in to OpenAI's built-in web search alongside your registered tools
+# and disable provider-supplied citations in the final response
 news_result = await client.generate(
     input=[{"role": "user", "content": "Share a positive news story from today."}],
-    web_search=True,
+    web_search={"citations": False},
 )
+
+# web_search accepts structured options. Here we keep search enabled but
+# strip citation hyperlinks from the model's response.
 ```
 
 ## Reasoning Models

@@ -136,7 +136,7 @@ class BaseProvider(ABC):
         *,
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
-        web_search: bool = False,
+        web_search: bool | Dict[str, Any] = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -162,7 +162,9 @@ class BaseProvider(ABC):
             tool_execution_context: Context injected into tool executions.
             mock_tools: When ``True`` tools should not perform side effects.
             web_search: Whether to expose the provider's built-in web search tool
-                for this request when available.
+                for this request when available. Provide a dictionary (for
+                example ``{"citations": False}``) to customise provider
+                behaviour such as disabling citations.
         """
         pass
 
@@ -176,7 +178,7 @@ class BaseProvider(ABC):
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool = False,
+        web_search: bool | Dict[str, Any] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """
@@ -194,7 +196,9 @@ class BaseProvider(ABC):
             max_output_tokens: Max tokens to generate.
             response_format: Desired response format if LLM replies directly.
             web_search: Whether to expose the provider's built-in web search tool
-                for the intent planning request when available.
+                for the intent planning request when available. Provide a
+                dictionary (for example ``{"citations": False}``) to customise
+                provider behaviour such as disabling citations.
             **kwargs: Additional provider-specific arguments.
 
         Returns:

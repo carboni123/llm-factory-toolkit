@@ -289,7 +289,14 @@ history.append({"role": "assistant", "content": result.content or ""})
 follow_up = await client.generate(input=history)
 
 # Allow the model to use OpenAI's built-in web search without registering a tool
-news_run = await client.generate(input=history, web_search=True)
+# and suppress citation hyperlinks in the model's reply
+news_run = await client.generate(
+    input=history,
+    web_search={"citations": False},
+)
+
+# Passing a dictionary to ``web_search`` enables provider-specific options,
+# such as disabling citation links while keeping search enabled.
 ```
 
 If you need to inspect the complete provider transcript (including hidden tool

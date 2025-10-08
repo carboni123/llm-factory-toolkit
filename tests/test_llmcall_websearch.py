@@ -62,7 +62,7 @@ async def test_openai_web_search_call(openai_test_model: str) -> None:
             input=messages,
             model=openai_test_model,
             temperature=0.1,  # Lower temperature for more factual, deterministic answer
-            web_search=True,  # This is the key parameter being tested
+            web_search={"citations":False},  # This is the key parameter being tested
         )
         response_content = generation_result.content
         print(
