@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 import pytest
 
 from llm_factory_toolkit import LLMClient
+from llm_factory_toolkit.exceptions import ConfigurationError
 from llm_factory_toolkit.providers.base import BaseProvider, GenerationResult
 from llm_factory_toolkit.providers.openai_adapter import OpenAIProvider
 from llm_factory_toolkit.tools import ToolFactory
@@ -34,7 +35,10 @@ def test_prepare_tool_payload_includes_web_search() -> None:
 
     provider = _create_provider_with_tool_factory()
     tools_payload, tool_choice = provider._prepare_tool_payload(  # type: ignore[attr-defined]
-        use_tools=[], web_search=True, existing_kwargs={}
+        use_tools=[],
+        web_search=OpenAIProvider._normalize_web_search_config(True),
+        file_search=OpenAIProvider._normalize_file_search_config(False),
+        existing_kwargs={},
     )
 
     assert tool_choice is None
@@ -49,7 +53,10 @@ def test_prepare_tool_payload_web_search_only_when_disabled() -> None:
 
     provider = _create_provider_with_tool_factory()
     tools_payload, tool_choice = provider._prepare_tool_payload(  # type: ignore[attr-defined]
-        use_tools=None, web_search=True, existing_kwargs={}
+        use_tools=None,
+        web_search=OpenAIProvider._normalize_web_search_config(True),
+        file_search=OpenAIProvider._normalize_file_search_config(False),
+        existing_kwargs={},
     )
 
     assert tool_choice is None
@@ -72,6 +79,7 @@ async def test_client_forwards_web_search_flag(monkeypatch: pytest.MonkeyPatch) 
             tool_execution_context: Dict[str, Any] | None = None,
             mock_tools: bool = False,
             web_search: Any = False,
+            file_search: Any = False,
             **kwargs: Any,
         ) -> GenerationResult:
             self.flags.append(web_search)
@@ -113,6 +121,7 @@ async def test_client_forwards_web_search_options(
             tool_execution_context: Dict[str, Any] | None = None,
             mock_tools: bool = False,
             web_search: Any = False,
+            file_search: Any = False,
             **kwargs: Any,
         ) -> GenerationResult:
             self.flags.append(web_search)
@@ -139,12 +148,60 @@ async def test_client_forwards_web_search_options(
     assert provider.flags == [{"citations": False}]
 
 
+@pytest.mark.asyncio
+async def test_client_forwards_file_search_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLMClient.generate should forward file_search configuration to the provider."""
+
+    class _RecorderProvider(BaseProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.file_flags: List[Any] = []
+
+        async def generate(
+            self,
+            input: List[Dict[str, Any]],
+            *,
+            tool_execution_context: Dict[str, Any] | None = None,
+            mock_tools: bool = False,
+            web_search: Any = False,
+            file_search: Any = False,
+            **kwargs: Any,
+        ) -> GenerationResult:
+            self.file_flags.append(file_search)
+            return GenerationResult(content=None)
+
+        async def generate_tool_intent(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+    provider = _RecorderProvider()
+
+    def _provider_factory(*_: Any, **__: Any) -> BaseProvider:
+        return provider
+
+    monkeypatch.setattr(
+        "llm_factory_toolkit.client.create_provider_instance", _provider_factory
+    )
+
+    client = LLMClient(provider_type="openai")
+    await client.generate(
+        input=[{"role": "user", "content": "hi"}],
+        file_search={"vector_store_ids": ["vs_test"]},
+    )
+
+    assert provider.file_flags == [{"vector_store_ids": ["vs_test"]}]
+
+
 def test_prepare_tool_payload_omits_citation_flag() -> None:
     """Disabling citations should not add unsupported fields to the payload."""
 
     provider = _create_provider_with_tool_factory()
     tools_payload, _ = provider._prepare_tool_payload(  # type: ignore[attr-defined]
-        use_tools=[], web_search={"citations": False}, existing_kwargs={}
+        use_tools=[],
+        web_search=OpenAIProvider._normalize_web_search_config({"citations": False}),
+        file_search=OpenAIProvider._normalize_file_search_config(False),
+        existing_kwargs={},
     )
 
     assert tools_payload is not None
@@ -152,6 +209,49 @@ def test_prepare_tool_payload_omits_citation_flag() -> None:
         tool for tool in tools_payload if tool.get("type") == "web_search"
     ]
     assert web_search_tools and "citations" not in web_search_tools[0]
+
+
+def test_prepare_tool_payload_includes_file_search_tool() -> None:
+    """file_search configuration should append the tool definition."""
+
+    provider = _create_provider_with_tool_factory()
+    tools_payload, _ = provider._prepare_tool_payload(  # type: ignore[attr-defined]
+        use_tools=[],
+        web_search=OpenAIProvider._normalize_web_search_config(False),
+        file_search=OpenAIProvider._normalize_file_search_config(
+            {"vector_store_ids": ["vs_123"]}
+        ),
+        existing_kwargs={},
+    )
+
+    assert tools_payload is not None
+    file_tools = [tool for tool in tools_payload if tool.get("type") == "file_search"]
+    assert file_tools and file_tools[0]["vector_store_ids"] == ["vs_123"]
+
+
+def test_prepare_tool_payload_file_search_preserves_options() -> None:
+    """Additional file search options should be forwarded to the payload."""
+
+    provider = _create_provider_with_tool_factory()
+    tools_payload, _ = provider._prepare_tool_payload(  # type: ignore[attr-defined]
+        use_tools=[],
+        web_search=OpenAIProvider._normalize_web_search_config(False),
+        file_search=OpenAIProvider._normalize_file_search_config(
+            {"vector_store_ids": ["vs_abc"], "max_num_results": 2}
+        ),
+        existing_kwargs={},
+    )
+
+    assert tools_payload is not None
+    file_tools = [tool for tool in tools_payload if tool.get("type") == "file_search"]
+    assert file_tools and file_tools[0]["max_num_results"] == 2
+
+
+def test_normalize_file_search_requires_vector_store_ids() -> None:
+    """Missing vector store identifiers should raise a configuration error."""
+
+    with pytest.raises(ConfigurationError):
+        OpenAIProvider._normalize_file_search_config({"max_num_results": 1})
 
 
 def test_strip_urls_removes_citations() -> None:

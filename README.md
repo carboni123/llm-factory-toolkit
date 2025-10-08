@@ -155,6 +155,12 @@ news_result = await client.generate(
 
 # web_search accepts structured options. Here we keep search enabled but
 # strip citation hyperlinks from the model's response.
+
+# Expose OpenAI's hosted file search tool backed by your vector stores
+research_result = await client.generate(
+    input=[{"role": "user", "content": "Summarise the launch checklist."}],
+    file_search={"vector_store_ids": ["vs_launch_docs"], "max_num_results": 3},
+)
 ```
 
 ## Reasoning Models
