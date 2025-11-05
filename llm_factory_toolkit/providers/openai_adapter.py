@@ -136,7 +136,9 @@ class OpenAIProvider(BaseProvider):
     @staticmethod
     def _is_reasoning_model(model_name: str) -> bool:
         """Return True if the model is a reasoning-capable model."""
-        return model_name.startswith(REASONING_MODEL_PREFIXES)
+        return "chat" not in model_name and model_name.startswith(
+            REASONING_MODEL_PREFIXES
+        )
 
     @staticmethod
     def _strip_response_metadata(value: Any, *, _strip_status: bool = True) -> Any:
@@ -202,13 +204,13 @@ class OpenAIProvider(BaseProvider):
             return text
 
         # remove Markdown links (label + URL)
-        text = re.sub(r'!?\[[^\]]+\]\([^)]+\)', '', text)
+        text = re.sub(r"!?\[[^\]]+\]\([^)]+\)", "", text)
         # remove empty parentheses "()" or "(   )"
-        text = re.sub(r'\(\s*\)', '', text)
+        text = re.sub(r"\(\s*\)", "", text)
         # quick tidy
-        text = re.sub(r'[ \t]{2,}', ' ', text)
-        text = re.sub(r'[ \t]+\n', '\n', text)
-        text = re.sub(r'\s+([.,!?])', r'\1', text)
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\s+([.,!?])", r"\1", text)
         return text.strip()
 
     async def generate(
@@ -219,6 +221,7 @@ class OpenAIProvider(BaseProvider):
         max_tool_iterations: int = 5,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
+        reasoning: Optional[dict] = None,
         max_output_tokens: Optional[int] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
@@ -328,6 +331,9 @@ class OpenAIProvider(BaseProvider):
 
         if temperature is not None and not self._is_reasoning_model(active_model):
             api_call_args["temperature"] = temperature
+
+        if reasoning is not None and self._is_reasoning_model(active_model):
+            api_call_args["reasoning"] = reasoning
 
         if max_output_tokens is not None and self._is_reasoning_model(active_model):
             api_call_args["max_output_tokens"] = (
@@ -459,6 +465,7 @@ class OpenAIProvider(BaseProvider):
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        reasoning: Optional[dict] = None,
         web_search: bool | Dict[str, Any] = False,
         file_search: bool
         | Dict[str, Any]
@@ -516,6 +523,9 @@ class OpenAIProvider(BaseProvider):
 
         if temperature is not None and not self._is_reasoning_model(active_model):
             api_call_args["temperature"] = temperature
+
+        if reasoning is not None and self._is_reasoning_model(active_model):
+            api_call_args["reasoning"] = reasoning
 
         if max_output_tokens is not None and self._is_reasoning_model(active_model):
             api_call_args["max_output_tokens"] = (
@@ -763,9 +773,7 @@ class OpenAIProvider(BaseProvider):
                 vector_store_ids = [vector_store_ids]
             if isinstance(vector_store_ids, (list, tuple, set)):
                 normalized_ids = tuple(
-                    str(item).strip()
-                    for item in vector_store_ids
-                    if str(item).strip()
+                    str(item).strip() for item in vector_store_ids if str(item).strip()
                 )
             else:
                 raise ConfigurationError(
@@ -776,7 +784,9 @@ class OpenAIProvider(BaseProvider):
                     "file_search configuration requires at least one vector store id."
                 )
             options = {k: v for k, v in value.items() if k != "vector_store_ids"}
-            return FileSearchConfig(enabled=True, vector_store_ids=normalized_ids, options=options)
+            return FileSearchConfig(
+                enabled=True, vector_store_ids=normalized_ids, options=options
+            )
 
         if isinstance(value, (list, tuple, set)):
             normalized_ids = tuple(
