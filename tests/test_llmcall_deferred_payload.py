@@ -202,46 +202,46 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
         )
 
         # 5. Assertions on LLM's Final Response
-        assert (
-            final_response_content is not None
-        ), "generate() returned None for content"
+        assert final_response_content is not None, (
+            "generate() returned None for content"
+        )
         assert isinstance(final_response_content, str), "Final content is not a string"
         # Check that the LLM confirmed retrieval but didn't reveal the secret
-        assert (
-            "retrieved all" in final_response_content.lower()
-        ), "LLM response should confirm retrieval"
-        assert (
-            "parts" in final_response_content.lower()
-        ), "LLM response should mention parts"
-        assert (
-            COMBINED_SECRET_PAYLOAD not in final_response_content
-        ), "LLM should NOT have combined the secret in its response"
-        assert (
-            SECRET_PART_1 not in final_response_content
-        ), "LLM response should not contain secret part 1"
-        assert (
-            SECRET_PART_2 not in final_response_content
-        ), "LLM response should not contain secret part 2"
-        assert (
-            SECRET_PART_3 not in final_response_content
-        ), "LLM response should not contain secret part 3"
+        assert "retrieved all" in final_response_content.lower(), (
+            "LLM response should confirm retrieval"
+        )
+        assert "parts" in final_response_content.lower(), (
+            "LLM response should mention parts"
+        )
+        assert COMBINED_SECRET_PAYLOAD not in final_response_content, (
+            "LLM should NOT have combined the secret in its response"
+        )
+        assert SECRET_PART_1 not in final_response_content, (
+            "LLM response should not contain secret part 1"
+        )
+        assert SECRET_PART_2 not in final_response_content, (
+            "LLM response should not contain secret part 2"
+        )
+        assert SECRET_PART_3 not in final_response_content, (
+            "LLM response should not contain secret part 3"
+        )
 
         # 6. Assertions on Collected Payloads
         assert isinstance(collected_payloads, list), "Payloads should be a list"
-        assert (
-            len(collected_payloads) == 3
-        ), f"Expected 3 payloads, got {len(collected_payloads)}"
+        assert len(collected_payloads) == 3, (
+            f"Expected 3 payloads, got {len(collected_payloads)}"
+        )
         assert len(generation_result.tool_messages) == 3
 
         # 7. Process Payloads (Deferred Action)
         print("\n--- Processing Collected Payloads (Deferred Action) ---")
-        retrieved_parts: Dict[int, str] = (
-            {}
-        )  # Use dict to store parts by number for ordering
+        retrieved_parts: Dict[
+            int, str
+        ] = {}  # Use dict to store parts by number for ordering
         for item in collected_payloads:
-            assert isinstance(
-                item, dict
-            ), f"Payload item should be a dictionary, got {type(item)}"
+            assert isinstance(item, dict), (
+                f"Payload item should be a dictionary, got {type(item)}"
+            )
             tool_name = item.get("tool_name")
             original_payload = item.get("payload")
 
@@ -249,34 +249,34 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
             print(f"Processing payload from tool: '{tool_name}'")
 
             # Ensure the original payload is the expected dictionary format for this specific test
-            assert isinstance(
-                original_payload, dict
-            ), f"Original payload for tool '{tool_name}' should be a dict, got {type(original_payload)}"
+            assert isinstance(original_payload, dict), (
+                f"Original payload for tool '{tool_name}' should be a dict, got {type(original_payload)}"
+            )
 
             part_num = original_payload.get("part_number")
             part_val = original_payload.get("secret_part")
 
             # Validate the extracted parts from the original payload
-            assert (
-                isinstance(part_num, int) and 1 <= part_num <= 3
-            ), f"Invalid or missing 'part_number' in payload from tool '{tool_name}': {part_num}"
-            assert isinstance(
-                part_val, str
-            ), f"Invalid or missing 'secret_part' in payload from tool '{tool_name}': {part_val}"
+            assert isinstance(part_num, int) and 1 <= part_num <= 3, (
+                f"Invalid or missing 'part_number' in payload from tool '{tool_name}': {part_num}"
+            )
+            assert isinstance(part_val, str), (
+                f"Invalid or missing 'secret_part' in payload from tool '{tool_name}': {part_val}"
+            )
 
             # Check for duplicates
-            assert (
-                part_num not in retrieved_parts
-            ), f"Duplicate part number received: {part_num}"
+            assert part_num not in retrieved_parts, (
+                f"Duplicate part number received: {part_num}"
+            )
 
             # Store the part value using its number as the key
             retrieved_parts[part_num] = part_val
             print(f"-> Stored Part {part_num}: '{part_val}'")
 
         # Ensure all parts were collected
-        assert (
-            len(retrieved_parts) == 3
-        ), f"Expected to retrieve 3 parts, but got {len(retrieved_parts)}"
+        assert len(retrieved_parts) == 3, (
+            f"Expected to retrieve 3 parts, but got {len(retrieved_parts)}"
+        )
 
         # Combine parts in the correct order using the part numbers
         try:
@@ -291,9 +291,9 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
         print(f"Programmatically combined secret: {programmatic_secret}")
 
         # 8. Final Assertion on Programmatic Result
-        assert (
-            programmatic_secret == COMBINED_SECRET_PAYLOAD
-        ), f"Programmatically combined secret '{programmatic_secret}' does not match expected '{COMBINED_SECRET_PAYLOAD}'"
+        assert programmatic_secret == COMBINED_SECRET_PAYLOAD, (
+            f"Programmatically combined secret '{programmatic_secret}' does not match expected '{COMBINED_SECRET_PAYLOAD}'"
+        )
 
         print("\nDeferred payload processing test successful.")
 

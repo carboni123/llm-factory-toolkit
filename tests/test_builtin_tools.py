@@ -7,6 +7,7 @@ from llm_factory_toolkit.tools import ToolFactory
 
 pytestmark = pytest.mark.asyncio
 
+
 async def test_safe_math_evaluator():
     factory = ToolFactory()
     factory.register_builtins(["safe_math_evaluator"])
@@ -14,10 +15,13 @@ async def test_safe_math_evaluator():
     tool_defs = factory.get_tool_definitions()
     assert any(t["function"]["name"] == "safe_math_evaluator" for t in tool_defs)
 
-    result = await factory.dispatch_tool("safe_math_evaluator", json.dumps({"expression": "2 + 3"}))
+    result = await factory.dispatch_tool(
+        "safe_math_evaluator", json.dumps({"expression": "2 + 3"})
+    )
     assert result.error is None
     assert result.content == "5"
     assert result.payload == 5.0
+
 
 async def test_read_local_file_text():
     factory = ToolFactory()
@@ -27,11 +31,14 @@ async def test_read_local_file_text():
         tmp.write("hello")
         tmp_path = tmp.name
     try:
-        result = await factory.dispatch_tool("read_local_file", json.dumps({"file_path": tmp_path}))
+        result = await factory.dispatch_tool(
+            "read_local_file", json.dumps({"file_path": tmp_path})
+        )
         assert result.error is None
         assert result.payload == "hello"
     finally:
         os.unlink(tmp_path)
+
 
 async def test_read_local_file_json():
     factory = ToolFactory()
@@ -42,7 +49,9 @@ async def test_read_local_file_json():
         json.dump(data, tmp)
         tmp_path = tmp.name
     try:
-        result = await factory.dispatch_tool("read_local_file", json.dumps({"file_path": tmp_path, "format": "json"}))
+        result = await factory.dispatch_tool(
+            "read_local_file", json.dumps({"file_path": tmp_path, "format": "json"})
+        )
         assert result.error is None
         assert result.payload == data
     finally:

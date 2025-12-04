@@ -95,26 +95,26 @@ async def test_openai_pydantic_response_format(openai_test_model: str) -> None:
 
         # 4. Primary Assertions
         assert response_obj is not None, "API call returned None"
-        assert isinstance(
-            response_obj, ExtractedInfo
-        ), f"Expected ExtractedInfo instance, got {type(response_obj)}"
+        assert isinstance(response_obj, ExtractedInfo), (
+            f"Expected ExtractedInfo instance, got {type(response_obj)}"
+        )
 
         # 5. Assertions on the content of the validated data
         validated_data = response_obj
-        assert (
-            validated_data.name == EXPECTED_NAME
-        ), f"Expected name '{EXPECTED_NAME}', got '{validated_data.name}'"
-        assert (
-            validated_data.age == EXPECTED_AGE
-        ), f"Expected age {EXPECTED_AGE}, got {validated_data.age}"
-        assert (
-            validated_data.location == EXPECTED_LOCATION
-        ), f"Expected location '{EXPECTED_LOCATION}', got '{validated_data.location}'"
+        assert validated_data.name == EXPECTED_NAME, (
+            f"Expected name '{EXPECTED_NAME}', got '{validated_data.name}'"
+        )
+        assert validated_data.age == EXPECTED_AGE, (
+            f"Expected age {EXPECTED_AGE}, got {validated_data.age}"
+        )
+        assert validated_data.location == EXPECTED_LOCATION, (
+            f"Expected location '{EXPECTED_LOCATION}', got '{validated_data.location}'"
+        )
         # Sentiment requires inference, so we check it's present and roughly correct (case-insensitive)
         assert validated_data.sentiment is not None, "Sentiment field is missing"
-        assert (
-            EXPECTED_SENTIMENT.lower() in validated_data.sentiment.lower()
-        ), f"Expected sentiment related to '{EXPECTED_SENTIMENT}', got '{validated_data.sentiment}'"
+        assert EXPECTED_SENTIMENT.lower() in validated_data.sentiment.lower(), (
+            f"Expected sentiment related to '{EXPECTED_SENTIMENT}', got '{validated_data.sentiment}'"
+        )
 
         print("Pydantic response format test successful.")
 

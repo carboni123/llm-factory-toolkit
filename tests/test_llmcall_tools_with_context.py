@@ -200,14 +200,14 @@ async def test_openai_tool_call_with_context_injection(
 
         # 6. Assertions
         assert response_content is not None, "API call returned None for content"
-        assert isinstance(
-            response_content, str
-        ), f"Expected string response content, got {type(response_content)}"
+        assert isinstance(response_content, str), (
+            f"Expected string response content, got {type(response_content)}"
+        )
 
         # The password should NOT be in the LLM response
-        assert (
-            EXPECTED_PASSWORD.lower() not in response_content.lower()
-        ), f"LLM's final response SHOULD NOT contain the raw password '{EXPECTED_PASSWORD}', but was: '{response_content}'"
+        assert EXPECTED_PASSWORD.lower() not in response_content.lower(), (
+            f"LLM's final response SHOULD NOT contain the raw password '{EXPECTED_PASSWORD}', but was: '{response_content}'"
+        )
 
         # Assertions for the programmatically retrieved tool_payloads
         assert tool_payloads is not None, "Tool payloads should not be None"
@@ -220,24 +220,24 @@ async def test_openai_tool_call_with_context_injection(
             assert "payload" in p_item, "Payload item missing 'payload' data"
             if p_item["tool_name"] == MOCK_TOOL_NAME_CONTEXT:
                 actual_payload_data = p_item["payload"]
-                assert isinstance(
-                    actual_payload_data, dict
-                ), "Tool's actual payload data should be a dict"
-                assert (
-                    actual_payload_data.get("user_id") == TARGET_USER_ID
-                ), f"Payload user_id mismatch. Expected {TARGET_USER_ID}, got {actual_payload_data.get('user_id')}"
-                assert (
-                    actual_payload_data.get("password") == EXPECTED_PASSWORD
-                ), f"Payload password mismatch. Expected {EXPECTED_PASSWORD}, got {actual_payload_data.get('password')}"
+                assert isinstance(actual_payload_data, dict), (
+                    "Tool's actual payload data should be a dict"
+                )
+                assert actual_payload_data.get("user_id") == TARGET_USER_ID, (
+                    f"Payload user_id mismatch. Expected {TARGET_USER_ID}, got {actual_payload_data.get('user_id')}"
+                )
+                assert actual_payload_data.get("password") == EXPECTED_PASSWORD, (
+                    f"Payload password mismatch. Expected {EXPECTED_PASSWORD}, got {actual_payload_data.get('password')}"
+                )
                 found_correct_payload = True
                 print(
                     f"Successfully validated payload for tool '{MOCK_TOOL_NAME_CONTEXT}'"
                 )
                 break
 
-        assert (
-            found_correct_payload
-        ), f"Did not find the expected payload from tool '{MOCK_TOOL_NAME_CONTEXT}' with the correct password."
+        assert found_correct_payload, (
+            f"Did not find the expected payload from tool '{MOCK_TOOL_NAME_CONTEXT}' with the correct password."
+        )
 
         print("Secure tool call with context injection test successful.")
 

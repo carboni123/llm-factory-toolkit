@@ -50,4 +50,3 @@ def test_strip_response_metadata_idempotent():
 
     assert "status" not in once
     assert once == twice
-

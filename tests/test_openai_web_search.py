@@ -318,4 +318,3 @@ def test_normalize_file_search_requires_vector_store_ids() -> None:
 
     with pytest.raises(ConfigurationError):
         OpenAIProvider._normalize_file_search_config({"max_num_results": 1})
-

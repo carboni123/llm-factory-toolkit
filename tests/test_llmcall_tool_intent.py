@@ -186,9 +186,9 @@ async def test_openai_three_tool_calls_combined_secret(
         print(
             f"Registered tools: '{MOCK_TOOL_NAME_1}', '{MOCK_TOOL_NAME_2}', '{MOCK_TOOL_NAME_3}'."
         )
-        assert (
-            len(tool_factory.get_tool_definitions()) == 3
-        ), "Expected three tools to be registered"
+        assert len(tool_factory.get_tool_definitions()) == 3, (
+            "Expected three tools to be registered"
+        )
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
@@ -269,14 +269,14 @@ async def test_openai_three_tool_calls_combined_secret(
 
         # Primary Assertion: Focus on the final output
         assert final_response_content is not None, "Explainer API call returned None"
-        assert isinstance(
-            final_response_content, str
-        ), f"Expected string response from explainer, got {type(final_response_content)}"
+        assert isinstance(final_response_content, str), (
+            f"Expected string response from explainer, got {type(final_response_content)}"
+        )
 
         # **Crucial Assertion**: Check if the COMBINED secret is present in the final response
-        assert (
-            COMBINED_SECRET in final_response_content
-        ), f"Expected the combined secret '{COMBINED_SECRET}' in response, but got: {final_response_content}"
+        assert COMBINED_SECRET in final_response_content, (
+            f"Expected the combined secret '{COMBINED_SECRET}' in response, but got: {final_response_content}"
+        )
 
         print("Three tool call combined secret test successful.")
 

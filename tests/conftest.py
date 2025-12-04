@@ -1,4 +1,5 @@
 """Pytest configuration for llm_factory_toolkit tests."""
+
 from __future__ import annotations
 
 import os
@@ -14,6 +15,7 @@ load_dotenv()
 
 _DEFAULT_SUPPORTED_MODEL = "gpt-4.1-mini"
 _DEFAULT_UNSUPPORTED_MODEL = "gpt-5-mini"
+_DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -41,6 +43,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Can also be provided through the OPENAI_TEST_UNSUPPORTED_MODEL environment variable."
         ),
     )
+    parser.addoption(
+        "--google-test-model",
+        action="store",
+        default=os.environ.get("GOOGLE_TEST_MODEL", _DEFAULT_GOOGLE_MODEL),
+        dest="google_test_model",
+        help=(
+            "Model identifier to use for Google GenAI integration tests. "
+            "Can also be provided through the GOOGLE_TEST_MODEL environment variable."
+        ),
+    )
 
 
 @pytest.fixture(scope="session")
@@ -53,3 +65,9 @@ def openai_test_model(pytestconfig: pytest.Config) -> str:
 def openai_unsupported_model(pytestconfig: pytest.Config) -> str:
     """Return the model identifier used to emulate unsupported temperature handling."""
     return pytestconfig.getoption("openai_unsupported_model")
+
+
+@pytest.fixture(scope="session")
+def google_test_model(pytestconfig: pytest.Config) -> str:
+    """Return the model identifier used for Google GenAI integration tests."""
+    return pytestconfig.getoption("google_test_model")

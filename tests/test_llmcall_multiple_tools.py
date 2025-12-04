@@ -2,13 +2,11 @@
 """
 Tests interactions involving multiple (3) distinct tool calls within a single turn
 using LLMClient and ToolFactory.
-Requires OPENAI_API_KEY environment variable.
+Requires API keys in environment variables.
 """
 
 import os
 import pytest
-import asyncio
-import json
 
 # Imports from your library
 from llm_factory_toolkit import LLMClient
@@ -33,10 +31,14 @@ Present the final combined code clearly.
 """
 USER_PROMPT_MULTI_TOOL = "Please retrieve the master access code. Use 'source_A' for part 1, 'key_B' for part 2, and 'vault_C' for part 3, then combine them."
 
-# --- Skip Condition ---
+# --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-should_skip = not OPENAI_API_KEY
-skip_reason = "OPENAI_API_KEY environment variable not set"
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
+skip_openai = not OPENAI_API_KEY
+skip_google = not GOOGLE_API_KEY
+skip_reason_openai = "OPENAI_API_KEY environment variable not set"
+skip_reason_google = "GOOGLE_API_KEY environment variable not set"
 
 # --- Mock Tool Definitions (3 Tools) ---
 
@@ -51,8 +53,6 @@ def mock_get_secret_part_1(retrieval_source: str) -> dict:
     print(
         f"[Mock Tool 1] '{MOCK_TOOL_NAME_1}' called with retrieval_source: {retrieval_source}"
     )
-    # Verify the argument if needed (optional)
-    # assert retrieval_source == EXPECTED_ARG_1, f"Tool 1 expected '{EXPECTED_ARG_1}', got '{retrieval_source}'"
     result = {"secret_part": SECRET_PART_1}
     print(f"[Mock Tool 1] Returning: {result}")
     return result
@@ -81,7 +81,6 @@ def mock_get_secret_part_2(key_identifier: str) -> dict:
     print(
         f"[Mock Tool 2] '{MOCK_TOOL_NAME_2}' called with key_identifier: {key_identifier}"
     )
-    # assert key_identifier == EXPECTED_ARG_2, f"Tool 2 expected '{EXPECTED_ARG_2}', got '{key_identifier}'"
     result = {"secret_part": SECRET_PART_2}
     print(f"[Mock Tool 2] Returning: {result}")
     return result
@@ -110,7 +109,6 @@ EXPECTED_ARG_3 = "vault_C"
 def mock_get_secret_part_3(vault_name: str) -> dict:
     """Retrieves the THIRD part of the master access code."""
     print(f"[Mock Tool 3] '{MOCK_TOOL_NAME_3}' called with vault_name: {vault_name}")
-    # assert vault_name == EXPECTED_ARG_3, f"Tool 3 expected '{EXPECTED_ARG_3}', got '{vault_name}'"
     result = {"secret_part": SECRET_PART_3}
     print(f"[Mock Tool 3] Returning: {result}")
     return result
@@ -134,8 +132,34 @@ MOCK_TOOL_DESC_3 = (
 COMBINED_SECRET = SECRET_PART_1 + SECRET_PART_2 + SECRET_PART_3
 
 
-# --- Test Case: Three Tool Calls, Combined Result ---
-@pytest.mark.skipif(should_skip, reason=skip_reason)
+def create_tool_factory() -> ToolFactory:
+    """Create and configure a ToolFactory with all three mock tools."""
+    tool_factory = ToolFactory()
+    tool_factory.register_tool(
+        function=mock_get_secret_part_1,
+        name=MOCK_TOOL_NAME_1,
+        description=MOCK_TOOL_DESC_1,
+        parameters=MOCK_TOOL_PARAMS_1,
+    )
+    tool_factory.register_tool(
+        function=mock_get_secret_part_2,
+        name=MOCK_TOOL_NAME_2,
+        description=MOCK_TOOL_DESC_2,
+        parameters=MOCK_TOOL_PARAMS_2,
+    )
+    tool_factory.register_tool(
+        function=mock_get_secret_part_3,
+        name=MOCK_TOOL_NAME_3,
+        description=MOCK_TOOL_DESC_3,
+        parameters=MOCK_TOOL_PARAMS_3,
+    )
+    return tool_factory
+
+
+# --- OpenAI Test Case ---
+
+
+@pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -> None:
     """
     Tests an interaction where the LLM must call three distinct tools
@@ -145,36 +169,18 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
         f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "Not Set"
     )
     print(
-        f"\n--- Starting Test: Three Tool Call Combined Secret (Key: {api_key_display}) ---"
+        f"\n--- Starting Test: OpenAI Three Tool Call Combined Secret (Key: {api_key_display}) ---"
     )
 
     try:
         # 1. Setup Tool Factory and register ALL THREE mock tools
-        tool_factory = ToolFactory()
-        tool_factory.register_tool(
-            function=mock_get_secret_part_1,
-            name=MOCK_TOOL_NAME_1,
-            description=MOCK_TOOL_DESC_1,
-            parameters=MOCK_TOOL_PARAMS_1,
-        )
-        tool_factory.register_tool(
-            function=mock_get_secret_part_2,
-            name=MOCK_TOOL_NAME_2,
-            description=MOCK_TOOL_DESC_2,
-            parameters=MOCK_TOOL_PARAMS_2,
-        )
-        tool_factory.register_tool(
-            function=mock_get_secret_part_3,
-            name=MOCK_TOOL_NAME_3,
-            description=MOCK_TOOL_DESC_3,
-            parameters=MOCK_TOOL_PARAMS_3,
-        )
+        tool_factory = create_tool_factory()
         print(
             f"Registered tools: '{MOCK_TOOL_NAME_1}', '{MOCK_TOOL_NAME_2}', '{MOCK_TOOL_NAME_3}'."
         )
-        assert (
-            len(tool_factory.get_tool_definitions()) == 3
-        ), "Expected three tools to be registered"
+        assert len(tool_factory.get_tool_definitions()) == 3, (
+            "Expected three tools to be registered"
+        )
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
@@ -197,7 +203,7 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
         generation_result = await client.generate(
             input=messages,
             model=openai_test_model,
-            temperature=0.1,  # Lower temperature for more predictable combination behavior
+            temperature=0.1,
             parallel_tools=True,
         )
         response_content = generation_result.content
@@ -205,9 +211,9 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
 
         # 5. Assertions
         assert response_content is not None, "API call returned None"
-        assert isinstance(
-            response_content, str
-        ), f"Expected string response, got {type(response_content)}"
+        assert isinstance(response_content, str), (
+            f"Expected string response, got {type(response_content)}"
+        )
         assert len(response_content) > 0, "API response content is empty"
         assert len(generation_result.tool_messages) == 3
         assert all(
@@ -216,17 +222,101 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
         )
 
         # **Crucial Assertion**: Check if the COMBINED secret is present in the final response
-        # Use lower() for case-insensitive comparison, although the mock results are fixed case.
-        assert (
-            COMBINED_SECRET.lower() in response_content.lower()
-        ), f"Expected the combined secret '{COMBINED_SECRET}' in response, but got: {response_content}"
+        assert COMBINED_SECRET.lower() in response_content.lower(), (
+            f"Expected the combined secret '{COMBINED_SECRET}' in response, but got: {response_content}"
+        )
 
-        # Optional: Check if individual parts are also mentioned (less critical than the combined one)
-        # assert SECRET_PART_1.lower() in response_content.lower()
-        # assert SECRET_PART_2.lower() in response_content.lower()
-        # assert SECRET_PART_3.lower() in response_content.lower()
+        print("OpenAI Three tool call combined secret test successful.")
 
-        print("Three tool call combined secret test successful.")
+    except (
+        ConfigurationError,
+        ToolError,
+        ProviderError,
+        UnsupportedFeatureError,
+        LLMToolkitError,
+    ) as e:
+        pytest.fail(f"Error during three tool call test: {type(e).__name__}: {e}")
+    except Exception as e:
+        pytest.fail(
+            f"Unexpected error during three tool call test: {type(e).__name__}: {e}"
+        )
+
+
+# --- Google GenAI Test Case ---
+
+
+@pytest.mark.skipif(skip_google, reason=skip_reason_google)
+async def test_google_genai_three_tool_calls_combined_secret(
+    google_test_model: str,
+) -> None:
+    """
+    Tests an interaction where the LLM must call three distinct tools
+    and combine their results as instructed. Requires GOOGLE_API_KEY.
+    """
+    api_key_display = (
+        f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "Not Set"
+    )
+    print(
+        f"\n--- Starting Test: Google GenAI Three Tool Call Combined Secret (Key: {api_key_display}) ---"
+    )
+
+    try:
+        # 1. Setup Tool Factory and register ALL THREE mock tools
+        tool_factory = create_tool_factory()
+        print(
+            f"Registered tools: '{MOCK_TOOL_NAME_1}', '{MOCK_TOOL_NAME_2}', '{MOCK_TOOL_NAME_3}'."
+        )
+        assert len(tool_factory.get_tool_definitions()) == 3, (
+            "Expected three tools to be registered"
+        )
+
+        # 2. Instantiate the LLMClient with the factory containing all tools
+        client = LLMClient(
+            provider_type="google_genai",
+            model=google_test_model,
+            tool_factory=tool_factory,
+        )
+        assert client is not None
+        assert client.tool_factory is tool_factory
+        print(
+            f"LLMClient initialized with model: {client.provider.model} and Tool Factory (3 tools)"
+        )
+
+        # 3. Prepare messages designed to trigger ALL three tools
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_MULTI_TOOL},
+            {"role": "user", "content": USER_PROMPT_MULTI_TOOL},
+        ]
+
+        # 4. Make the API call
+        print("Calling client.generate (three tool calls expected)...")
+        generation_result = await client.generate(
+            input=messages,
+            model=google_test_model,
+            temperature=0.1,
+            parallel_tools=True,
+        )
+        response_content = generation_result.content
+        print(f"Received final response:\n---\n{response_content}\n---")
+
+        # 5. Assertions
+        assert response_content is not None, "API call returned None"
+        assert isinstance(response_content, str), (
+            f"Expected string response, got {type(response_content)}"
+        )
+        assert len(response_content) > 0, "API response content is empty"
+
+        # Check that tool messages were generated (may vary by provider behavior)
+        assert len(generation_result.tool_messages) >= 3, (
+            f"Expected at least 3 tool messages, got {len(generation_result.tool_messages)}"
+        )
+
+        # **Crucial Assertion**: Check if the COMBINED secret is present in the final response
+        assert COMBINED_SECRET.lower() in response_content.lower(), (
+            f"Expected the combined secret '{COMBINED_SECRET}' in response, but got: {response_content}"
+        )
+
+        print("Google GenAI Three tool call combined secret test successful.")
 
     except (
         ConfigurationError,

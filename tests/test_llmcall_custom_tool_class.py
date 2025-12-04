@@ -143,15 +143,15 @@ async def test_openai_custom_tool_class_call(openai_test_model: str) -> None:
 
         # 6. Assertions
         assert response_content is not None, "API call returned None"
-        assert isinstance(
-            response_content, str
-        ), f"Expected string response, got {type(response_content)}"
+        assert isinstance(response_content, str), (
+            f"Expected string response, got {type(response_content)}"
+        )
         assert len(response_content) > 0, "API response content is empty"
 
         # **Crucial Assertion**: Check if the password from the custom tool class is in the final response
-        assert (
-            EXPECTED_ANSWER_FRAGMENT_TOOL.lower() in response_content.lower()
-        ), f"Expected the secret '{EXPECTED_ANSWER_FRAGMENT_TOOL}' (from tool class) in response, but got: {response_content}"
+        assert EXPECTED_ANSWER_FRAGMENT_TOOL.lower() in response_content.lower(), (
+            f"Expected the secret '{EXPECTED_ANSWER_FRAGMENT_TOOL}' (from tool class) in response, but got: {response_content}"
+        )
 
         print("Custom Tool Class call test successful.")
 

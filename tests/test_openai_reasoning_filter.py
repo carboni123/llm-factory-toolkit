@@ -25,8 +25,7 @@ async def test_reasoning_removed_for_unsupported_models(
         provider = OpenAIProvider(api_key="test", model=openai_test_model)
 
         await provider.generate(
-            input=[{"role": "user", "content": "hi"}],
-            reasoning={"effort": "medium"}
+            input=[{"role": "user", "content": "hi"}], reasoning={"effort": "medium"}
         )
 
         _, kwargs = mock_client.responses.parse.call_args
@@ -50,8 +49,7 @@ async def test_reasoning_retained_for_supported_models() -> None:
         provider = OpenAIProvider(api_key="test", model="gpt-5")
 
         await provider.generate(
-            input=[{"role": "user", "content": "hi"}],
-            reasoning={"effort": "medium"}
+            input=[{"role": "user", "content": "hi"}], reasoning={"effort": "medium"}
         )
 
         _, kwargs = mock_client.responses.parse.call_args
@@ -72,8 +70,7 @@ async def test_reasoning_not_sent_to_non_reasoning_models() -> None:
         provider = OpenAIProvider(api_key="test", model="gpt-5-chat-latest")
 
         await provider.generate(
-            input=[{"role": "user", "content": "hi"}],
-            reasoning={"effort": "medium"}
+            input=[{"role": "user", "content": "hi"}], reasoning={"effort": "medium"}
         )
 
         _, kwargs = mock_client.responses.parse.call_args

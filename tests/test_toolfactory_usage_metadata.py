@@ -211,9 +211,9 @@ async def test_generate_tool_usage_counts(
 
     try:
         tool_factory = tool_factory_with_tools
-        assert (
-            len(tool_factory.get_tool_definitions()) == 4
-        ), "Expected four tools to be registered"
+        assert len(tool_factory.get_tool_definitions()) == 4, (
+            "Expected four tools to be registered"
+        )
 
         # Initial counts should be zero for all registered tools
         initial_counts = tool_factory.get_tool_usage_counts()
@@ -242,9 +242,9 @@ async def test_generate_tool_usage_counts(
         response_content = generation_result.content
         print(f"Received final response:\n---\n{response_content}\n---")
         assert response_content is not None
-        assert (
-            COMBINED_SECRET.lower() in response_content.lower()
-        ), f"Expected combined secret '{COMBINED_SECRET}' in response, got: {response_content}"
+        assert COMBINED_SECRET.lower() in response_content.lower(), (
+            f"Expected combined secret '{COMBINED_SECRET}' in response, got: {response_content}"
+        )
         assert len(generation_result.tool_messages) == 3
 
         # Check tool usage counts AFTER generate call
@@ -252,18 +252,18 @@ async def test_generate_tool_usage_counts(
         print(f"Tool usage counts after generate: {counts_after_generate}")
 
         # For this specific prompt, we expect each of the 3 relevant tools to be called once.
-        assert (
-            counts_after_generate.get(MOCK_TOOL_NAME_1) == 1
-        ), f"Tool '{MOCK_TOOL_NAME_1}' count mismatch"
-        assert (
-            counts_after_generate.get(MOCK_TOOL_NAME_2) == 1
-        ), f"Tool '{MOCK_TOOL_NAME_2}' count mismatch"
-        assert (
-            counts_after_generate.get(MOCK_TOOL_NAME_3) == 1
-        ), f"Tool '{MOCK_TOOL_NAME_3}' count mismatch"
-        assert (
-            counts_after_generate.get(MOCK_TOOL_NAME_4_UNUSED) == 0
-        ), f"Tool '{MOCK_TOOL_NAME_4_UNUSED}' should not have been called"
+        assert counts_after_generate.get(MOCK_TOOL_NAME_1) == 1, (
+            f"Tool '{MOCK_TOOL_NAME_1}' count mismatch"
+        )
+        assert counts_after_generate.get(MOCK_TOOL_NAME_2) == 1, (
+            f"Tool '{MOCK_TOOL_NAME_2}' count mismatch"
+        )
+        assert counts_after_generate.get(MOCK_TOOL_NAME_3) == 1, (
+            f"Tool '{MOCK_TOOL_NAME_3}' count mismatch"
+        )
+        assert counts_after_generate.get(MOCK_TOOL_NAME_4_UNUSED) == 0, (
+            f"Tool '{MOCK_TOOL_NAME_4_UNUSED}' should not have been called"
+        )
 
         # Test resetting counts
         print("Resetting tool usage counts...")
