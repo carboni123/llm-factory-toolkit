@@ -52,15 +52,19 @@ EXPECTED_LOCATION = "Paris"
 EXPECTED_SENTIMENT = "positive"  # The LLM needs to infer this
 
 # Use a model capable of following JSON instructions reliably
-# --- Skip Condition ---
+# --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-should_skip = not OPENAI_API_KEY
-skip_reason = "OPENAI_API_KEY environment variable not set"
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
+skip_openai = not OPENAI_API_KEY
+skip_google = not GOOGLE_API_KEY
+skip_reason_openai = "OPENAI_API_KEY environment variable not set"
+skip_reason_google = "GOOGLE_API_KEY environment variable not set"
 
 # --- Test Case ---
 
 
-@pytest.mark.skipif(should_skip, reason=skip_reason)
+@pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_openai_pydantic_response_format(openai_test_model: str) -> None:
     """
     Tests client.generate with a Pydantic model in response_format.
@@ -122,6 +126,84 @@ async def test_openai_pydantic_response_format(openai_test_model: str) -> None:
         pytest.fail(f"ConfigurationError during LLMClient initialization: {e}")
     except ProviderError as e:
         pytest.fail(f"ProviderError during API call: {type(e).__name__}: {e}")
+    except LLMToolkitError as e:
+        pytest.fail(f"LLMToolkitError during API call: {type(e).__name__}: {e}")
+    except Exception as e:
+        pytest.fail(
+            f"Unexpected error during Pydantic response format test: {type(e).__name__}: {e}"
+        )
+
+
+# --- Google GenAI Test Case ---
+
+
+@pytest.mark.skipif(skip_google, reason=skip_reason_google)
+async def test_google_genai_pydantic_response_format(google_test_model: str) -> None:
+    """
+    Tests client.generate with a Pydantic model in response_format.
+    Verifies the output is valid JSON conforming to the model schema.
+    Requires GOOGLE_API_KEY.
+    """
+    api_key_display = (
+        f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "Not Set"
+    )
+    print(f"\n--- Starting Test: Google GenAI Pydantic Response Format (Key: {api_key_display}) ---")
+
+    try:
+        # 1. Initialize LLMClient
+        client = LLMClient(provider_type="google_genai", model=google_test_model)
+        assert client is not None
+        print(f"LLMClient initialized with model: {client.provider.model}")
+
+        # 2. Prepare messages
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_PYDANTIC},
+            {"role": "user", "content": USER_PROMPT_PYDANTIC},
+        ]
+
+        # 3. Make the API call requesting Pydantic-based structured output
+        print(f"Calling client.generate with Pydantic model: {ExtractedInfo.__name__}")
+        generation_result = await client.generate(
+            input=messages,
+            response_format=ExtractedInfo,  # Pass the Pydantic class
+        )
+        response_obj = generation_result.content
+        print(f"Received parsed response:\n{response_obj}")
+
+        # 4. Primary Assertions
+        assert response_obj is not None, "API call returned None"
+        assert isinstance(response_obj, ExtractedInfo), (
+            f"Expected ExtractedInfo instance, got {type(response_obj)}"
+        )
+
+        # 5. Assertions on the content of the validated data
+        validated_data = response_obj
+        assert validated_data.name == EXPECTED_NAME, (
+            f"Expected name '{EXPECTED_NAME}', got '{validated_data.name}'"
+        )
+        assert validated_data.age == EXPECTED_AGE, (
+            f"Expected age {EXPECTED_AGE}, got {validated_data.age}"
+        )
+        assert validated_data.location == EXPECTED_LOCATION, (
+            f"Expected location '{EXPECTED_LOCATION}', got '{validated_data.location}'"
+        )
+        # Sentiment requires inference, so we check it's present and roughly correct (case-insensitive)
+        assert validated_data.sentiment is not None, "Sentiment field is missing"
+        assert EXPECTED_SENTIMENT.lower() in validated_data.sentiment.lower(), (
+            f"Expected sentiment related to '{EXPECTED_SENTIMENT}', got '{validated_data.sentiment}'"
+        )
+
+        print("Google GenAI Pydantic response format test successful.")
+
+    except ConfigurationError as e:
+        pytest.fail(f"ConfigurationError during LLMClient initialization: {e}")
+    except ProviderError as e:
+        if "authentication" in str(e).lower() or "api key" in str(e).lower():
+            pytest.fail(f"Google GenAI Provider Authentication Error: {e}. Check API key.")
+        elif "rate limit" in str(e).lower() or "quota" in str(e).lower():
+            pytest.fail(f"Google GenAI Provider Rate Limit/Quota Error: {e}.")
+        else:
+            pytest.fail(f"ProviderError during API call: {type(e).__name__}: {e}")
     except LLMToolkitError as e:
         pytest.fail(f"LLMToolkitError during API call: {type(e).__name__}: {e}")
     except Exception as e:

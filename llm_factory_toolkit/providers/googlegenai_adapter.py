@@ -337,8 +337,10 @@ class GoogleGenAIProvider(BaseProvider):
                             response_format, BaseModel
                         ):
                             parsed = json.loads(assistant_content)
+                            # Validate and return as Pydantic model instance
+                            validated_model = response_format.model_validate(parsed)
                             return GenerationResult(
-                                content=parsed,
+                                content=validated_model,
                                 payloads=collected_payloads,
                                 tool_messages=tool_result_messages,
                                 messages=current_messages,
