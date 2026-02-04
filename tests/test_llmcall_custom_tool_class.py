@@ -113,14 +113,13 @@ async def test_openai_custom_tool_class_call(openai_test_model: str) -> None:
 
         # 3. Instantiate the LLMClient WITH the tool factory
         client = LLMClient(
-            provider_type="openai",
             model=openai_test_model,
-            tool_factory=tool_factory,  # Pass the factory with the registered tool method
+            tool_factory=tool_factory,
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory containing class tool."
+            f"LLMClient initialized with model: {client.model} and Tool Factory containing class tool."
         )
 
         # 4. Prepare messages designed to trigger the specific tool and ID

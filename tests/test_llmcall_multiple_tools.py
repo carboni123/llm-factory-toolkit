@@ -184,12 +184,12 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
-            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
+            model=openai_test_model, tool_factory=tool_factory
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory (3 tools)"
+            f"LLMClient initialized with model: {client.model} and Tool Factory (3 tools)"
         )
 
         # 3. Prepare messages designed to trigger ALL three tools
@@ -217,7 +217,7 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
         assert len(response_content) > 0, "API response content is empty"
         assert len(generation_result.tool_messages) == 3
         assert all(
-            message.get("type") == "function_call_output"
+            message.get("role") == "tool"
             for message in generation_result.tool_messages
         )
 
@@ -272,14 +272,13 @@ async def test_google_genai_three_tool_calls_combined_secret(
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
-            provider_type="google_genai",
             model=google_test_model,
             tool_factory=tool_factory,
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory (3 tools)"
+            f"LLMClient initialized with model: {client.model} and Tool Factory (3 tools)"
         )
 
         # 3. Prepare messages designed to trigger ALL three tools

@@ -1,4 +1,4 @@
-# tests/test_llmcall_multiple_tools.py
+# tests/test_llmcall_tool_intent.py
 """
 Tests interactions involving multiple (3) distinct tool calls within a single turn
 using LLMClient and ToolFactory.
@@ -192,12 +192,12 @@ async def test_openai_three_tool_calls_combined_secret(
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
-            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
+            model=openai_test_model, tool_factory=tool_factory
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory (3 tools)"
+            f"LLMClient initialized with model: {client.model} and Tool Factory (3 tools)"
         )
 
         # 3. Prepare messages designed to trigger ALL three tools
@@ -230,21 +230,6 @@ async def test_openai_three_tool_calls_combined_secret(
         print("\n--- Execute Tools Phase ---")
 
         tool_result_messages = []
-
-        # for tool_call in intent_output.tool_calls:
-        #     print(f"Executing tool: {tool_call}")
-        #     tool_name = tool_call.name
-        #     tool_args_str = json.dumps(tool_call.arguments or {})
-        #     try:
-        #         result_str = client.tool_factory.dispatch_tool(tool_name, tool_args_str)
-        #         tool_result_messages.append({
-        #             "role": "tool", "tool_call_id": tool_call.id,
-        #             "name": tool_name, "content": result_str,
-        #         })
-        #         print(f"Tool {tool_name} result: {result_str}")
-        #     except Exception as e:
-        #         # Critical failure if a tool can't be dispatched in the test, fail fast
-        #         pytest.fail(f"Test setup error: Failed to dispatch tool {tool_name}: {e}")
 
         results = await client.execute_tool_intents(intent_output)
         for result in results:

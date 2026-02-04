@@ -172,10 +172,10 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
 
         # 2. Instantiate the LLMClient
         client = LLMClient(
-            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
+            model=openai_test_model, tool_factory=tool_factory
         )
         print(
-            f"LLMClient initialized for payload test with model: {client.provider.model}"
+            f"LLMClient initialized for payload test with model: {client.model}"
         )
 
         # 3. Prepare initial messages
@@ -189,9 +189,8 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
         # The generate function now returns the final text AND the collected payloads
         generation_result = await client.generate(
             input=messages,
-            model=openai_test_model,  # Ensure model capable of parallel/multi-tool calls if needed
+            model=openai_test_model,
             temperature=0.0,
-            # use_tools=None # Allow all registered tools by default
         )
         final_response_content = generation_result.content
         collected_payloads = generation_result.payloads

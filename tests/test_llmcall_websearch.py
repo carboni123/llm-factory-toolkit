@@ -21,8 +21,8 @@ pytestmark = pytest.mark.asyncio
 # --- Test Configuration ---
 SYSTEM_PROMPT = "You are a helpful and accurate research assistant."
 # This prompt requires recent information not likely in the model's base knowledge.
-USER_PROMPT = "Who won the all‑time 301st GRENAL? What was the score?"
-EXPECTED_ANSWER_FRAGMENT = "2–0"
+USER_PROMPT = "Who won the all-time 301st GRENAL? What was the score?"
+EXPECTED_ANSWER_FRAGMENT = "2-0"
 
 # --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -52,9 +52,9 @@ async def test_openai_web_search_call(openai_test_model: str) -> None:
 
     try:
         # 1. Instantiate the LLMClient
-        client = LLMClient(provider_type="openai", model=openai_test_model)
+        client = LLMClient(model=openai_test_model)
         assert client is not None
-        print(f"Using model: {client.provider.model}")
+        print(f"Using model: {client.model}")
 
         # 2. Prepare messages
         messages = [
@@ -109,7 +109,7 @@ async def test_openai_web_search_call(openai_test_model: str) -> None:
 # --- Google GenAI Test Case ---
 
 # Use a different prompt for Google that's more likely to return a consistent answer
-GOOGLE_USER_PROMPT = "Who won the all‑time 301st GRENAL? What was the score?"
+GOOGLE_USER_PROMPT = "Who won the all-time 301st GRENAL? What was the score?"
 GOOGLE_EXPECTED_ANSWER_FRAGMENT = "2-0"
 
 
@@ -128,9 +128,9 @@ async def test_google_genai_web_search_call(google_test_model: str) -> None:
 
     try:
         # 1. Instantiate the LLMClient
-        client = LLMClient(provider_type="google_genai", model=google_test_model)
+        client = LLMClient(model=google_test_model)
         assert client is not None
-        print(f"Using model: {client.provider.model}")
+        print(f"Using model: {client.model}")
 
         # 2. Prepare messages
         messages = [

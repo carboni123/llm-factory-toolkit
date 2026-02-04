@@ -1,10 +1,66 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/models.py
-from typing import Any, Dict, List, Optional, Union
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
 
-# --- Existing models ---
+# ---------------------------------------------------------------------------
+# Generation result (moved from providers/base.py)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class GenerationResult:
+    """Container for responses emitted by provider ``generate`` calls.
+
+    The class behaves like the historical ``(content, payloads)`` tuple for
+    backwards compatibility while exposing additional metadata required by
+    multi-turn conversations that rely on persisted tool transcripts.
+    """
+
+    content: Optional[BaseModel | str]
+    payloads: List[Any] = field(default_factory=list)
+    tool_messages: List[Dict[str, Any]] = field(default_factory=list)
+    messages: Optional[List[Dict[str, Any]]] = None
+
+    def __iter__(self) -> Iterator[Any]:
+        """Yield items so callers can unpack the result like a tuple."""
+        yield self.content
+        yield self.payloads
+
+    def __len__(self) -> int:  # pragma: no cover - trivial
+        return 2
+
+    def __getitem__(self, index: int) -> Any:  # pragma: no cover - tuple compat
+        if index == 0:
+            return self.content
+        if index == 1:
+            return self.payloads
+        raise IndexError(index)
+
+
+# ---------------------------------------------------------------------------
+# Streaming chunk
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class StreamChunk:
+    """A single chunk yielded during streaming generation."""
+
+    content: str = ""
+    done: bool = False
+    usage: Optional[Dict[str, Any]] = None
+
+
+# ---------------------------------------------------------------------------
+# Tool models
+# ---------------------------------------------------------------------------
+
+
 class ParsedToolCall(BaseModel):
     id: str  # Tool call ID from the provider
     name: str  # Name of the function to be called
@@ -36,7 +92,3 @@ class ToolExecutionResult(BaseModel):
     )
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None  # Optional error message
-
-    # Optional: Add model_config for extra settings if needed later
-    # class Config:
-    #     arbitrary_types_allowed = True # If payload can be complex non-pydantic types

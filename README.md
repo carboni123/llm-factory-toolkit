@@ -2,172 +2,248 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-<!-- [![PyPI version](https://badge.fury.io/py/llm-factory-toolkit.svg)](https://badge.fury.io/py/llm-factory-toolkit) -->
-<!-- Add PyPI badge once published -->
 
-A flexible Python toolkit designed to simplify interactions with various Large Language Models (LLMs), supporting features like tool usage and structured output formatting.
+A flexible Python toolkit for interacting with 100+ LLM providers through a unified interface. Built on [LiteLLM](https://github.com/BerriAI/litellm) for provider routing, with a powerful tool framework featuring context injection, nested tool execution, mock mode, and intent planning.
 
 ## Key Features
 
-*   **Provider Agnostic (Pluggable):** Easily switch between different LLM providers (currently supports OpenAI and xAI/Grok). Designed for adding more providers.
-*   **Tool Integration:** Define and register custom Python functions or class methods as tools that the LLM can call to interact with external systems or data.
-*   **Structured Output:** Request responses in specific JSON formats, optionally validated using Pydantic models.
-*   **Async First:** Built with `asyncio` for non-blocking I/O operations.
-*   **Simplified Client:** High-level `LLMClient` manages provider instantiation, tool handling, and API calls.
-*   **Configuration:** Loads API keys securely from environment variables (`.env` file supported) or direct arguments. If a key isn't found, initialization succeeds but API calls will raise `ConfigurationError`.
+*   **100+ Providers:** Switch between OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Bedrock, and many more by changing a single model string. Powered by LiteLLM.
+*   **Tool Context Injection:** Inject server-side data (user IDs, API keys, DB connections) into tool functions without exposing it to the LLM.
+*   **Nested Tool Execution:** Tools can call other tools via `ToolRuntime` with configurable depth limits.
+*   **Mock Tool Mode:** Test tool workflows without side effects using `mock_tools=True`.
+*   **Tool Intent Planning:** Separate tool call planning from execution for human-in-the-loop workflows.
+*   **Streaming:** Stream responses with `stream=True` for real-time output.
+*   **Structured Output:** Request JSON or Pydantic model responses.
+*   **Async First:** Built with `asyncio` for non-blocking I/O.
 
 ## Installation
 
-1.  **Clone the repository (if developing) or install via pip (once published):**
-    ```bash
-    # For development:
-    git clone https://github.com/carboni123/llm_factory_toolkit.git # Replace with your actual repo URL
-    cd llm_factory_toolkit
+```bash
+pip install llm-factory-toolkit
 
-    # Or, once published to PyPI:
-    # pip install llm-factory-toolkit
-    ```
+# For OpenAI file_search support (optional):
+pip install llm-factory-toolkit[openai]
+```
 
-2.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    # Or if using pyproject.toml directly:
-    # pip install .
-    ```
+Or from source:
 
-3.  **(Optional but Recommended) Create a `.env` file:**
-    In the root directory of your project *using* this toolkit, create a `.env` file to store API keys:
-    ```dotenv
-    # .env
-    OPENAI_API_KEY="your_openai_api_key_here"
-    XAI_API_KEY="your_xai_api_key_here"
-    # Add other keys as needed for future providers
-    ```
-    The library uses `python-dotenv` to load these automatically.
+```bash
+git clone https://github.com/carboni123/llm_factory_toolkit.git
+cd llm_factory_toolkit
+pip install -e ".[dev]"
+```
 
 ## Quick Start
 
-Here's a basic example using the OpenAI provider:
+Set your API key via environment variable or `.env` file:
 
-```python
-import asyncio
-import os
-from llm_factory_toolkit import LLMClient
-from llm_factory_toolkit.exceptions import LLMToolkitError
-
-# Ensure your OPENAI_API_KEY is set in your environment or .env file. If it is
-# missing, the client can still be created but any API call will raise
-# `ConfigurationError`.
-
-async def main():
-    try:
-        # Initialize the client for OpenAI
-        # API key is loaded automatically from env/dotenv by default
-        client = LLMClient(provider_type='openai', model='gpt-4o-mini')
-
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "What is the weather like in London today?"},
-        ]
-
-        print("Generating response...")
-        result = await client.generate(input=messages)
-
-        if result.content:
-            print("\nAssistant Response:")
-            print(result.content)
-        else:
-            print("\nFailed to get a response.")
-
-    except LLMToolkitError as e:
-        print(f"An error occurred: {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-
-if __name__ == "__main__":
-    # Load environment variables from .env if present
-    # from dotenv import load_dotenv
-    # load_dotenv()
-    # Note: llm_factory_toolkit.__init__ already attempts to load .env from CWD
-
-    # Check if API key is available (optional check)
-    if not os.getenv("OPENAI_API_KEY"):
-         print("Warning: OPENAI_API_KEY environment variable not found.")
-         # Decide how to handle this - exit, prompt, etc.
-         # exit(1) # Example: exit if key is missing
-
-    asyncio.run(main())
+```bash
+export OPENAI_API_KEY="sk-..."
+# or ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.
 ```
 
-To target xAI's Grok models instead, pass `provider_type='xai'` and, if
-needed, override the default base URL:
-
 ```python
 import asyncio
 from llm_factory_toolkit import LLMClient
 
-async def demo_xai() -> None:
-    client = LLMClient(
-        provider_type="xai",
-        model="grok-beta",
-        base_url="https://api.x.ai/v1",  # optional override
-    )
+async def main():
+    # Just change the model string to switch providers
+    client = LLMClient(model="openai/gpt-4o-mini")
+
     result = await client.generate(
-        input=[{"role": "user", "content": "Summarise the latest launch."}],
+        input=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What is the capital of France?"},
+        ]
     )
     print(result.content)
 
-asyncio.run(demo_xai())
+asyncio.run(main())
 ```
 
-### Understanding `GenerationResult`
-
-`LLMClient.generate` now returns a [`GenerationResult`](llm_factory_toolkit/providers/base.py)
-instance rather than a bare tuple. The object still supports tuple-unpacking
-(`content, payloads = await client.generate(...)`) for backward compatibility,
-but it also exposes extra attributes that make multi-turn workflows easier:
-
-- `content`: Final assistant response (text or a parsed Pydantic model).
-- `payloads`: Deferred tool payloads you may need to action out-of-band.
-- `tool_messages`: The exact ``function_call_output`` items generated during the
-  run. Append these to your stored history before the next turn to maintain the
-  tool transcript required for RAG-style conversations.
-- `messages`: Snapshot of the full transcript (input, tool calls, outputs, and
-  final assistant message) after the provider finished processing.
+### Switching Providers
 
 ```python
-result = await client.generate(input=messages, use_tools=["lookup_weather"])
+# OpenAI
+client = LLMClient(model="openai/gpt-4o-mini")
 
-# Work with the structured fields directly
-print(result.content)
-for payload in result.payloads:
-    dispatch_follow_up(payload)
+# Anthropic
+client = LLMClient(model="anthropic/claude-sonnet-4")
 
-# Persist tool interactions for the next turn
-messages.extend(result.tool_messages)
+# Google Gemini
+client = LLMClient(model="gemini/gemini-2.5-flash")
 
-# Opt-in to OpenAI's built-in web search alongside your registered tools,
-# disable provider-supplied citations, constrain allowed domains, and supply
-# an approximate user location for regional context
-news_result = await client.generate(
-    input=[{"role": "user", "content": "Share a positive news story from today."}],
-    web_search={
-        "citations": False,
-        "filters": {"allowed_domains": ["www.who.int", "www.cdc.gov"]},
-        "user_location": {
-            "type": "approximate",
-            "country": "GB",
-            "city": "London",
+# xAI Grok
+client = LLMClient(model="xai/grok-3")
+
+# Mistral
+client = LLMClient(model="mistral/mistral-large-latest")
+
+# Local via Ollama
+client = LLMClient(model="ollama/llama3")
+```
+
+See [LiteLLM's provider list](https://docs.litellm.ai/docs/providers) for all supported models.
+
+## Streaming
+
+```python
+async def stream_example():
+    client = LLMClient(model="openai/gpt-4o-mini")
+
+    stream = await client.generate(
+        input=[{"role": "user", "content": "Write a short poem."}],
+        stream=True,
+    )
+
+    async for chunk in stream:
+        if chunk.content:
+            print(chunk.content, end="", flush=True)
+        if chunk.done:
+            print("\n--- Done ---")
+            if chunk.usage:
+                print(f"Tokens used: {chunk.usage}")
+```
+
+## Tool Usage
+
+### Basic Tool Registration
+
+```python
+from llm_factory_toolkit import LLMClient
+from llm_factory_toolkit.tools import ToolFactory
+
+def get_weather(location: str) -> dict:
+    """Get weather for a location."""
+    return {"temp": 20, "condition": "sunny", "location": location}
+
+tool_factory = ToolFactory()
+tool_factory.register_tool(
+    function=get_weather,
+    name="get_weather",
+    description="Gets current weather for a location",
+    parameters={
+        "type": "object",
+        "properties": {
+            "location": {"type": "string", "description": "City name"}
         },
+        "required": ["location"],
     },
 )
 
-# web_search accepts structured options. Here we keep search enabled while
-# stripping citation hyperlinks, restricting search sources, and providing a
-# coarse location hint for the search provider.
+client = LLMClient(model="openai/gpt-4o-mini", tool_factory=tool_factory)
 
-# Expose OpenAI's hosted file search tool backed by your vector stores
-research_result = await client.generate(
+result = await client.generate(
+    input=[{"role": "user", "content": "What's the weather in London?"}],
+    use_tools=["get_weather"],
+)
+print(result.content)  # LLM response incorporating the weather data
+```
+
+### Tool Context Injection
+
+Inject server-side data into tools without the LLM seeing it:
+
+```python
+def process_order(order_id: str, user_id: str, db_connection: Any) -> dict:
+    """Process an order. user_id and db_connection are injected from context."""
+    # user_id and db_connection come from tool_execution_context,
+    # NOT from the LLM -- the LLM only provides order_id
+    record = db_connection.query(user_id, order_id)
+    return {"status": "processed", "record": record}
+
+tool_factory.register_tool(
+    function=process_order,
+    name="process_order",
+    description="Process a customer order",
+    parameters={
+        "type": "object",
+        "properties": {
+            "order_id": {"type": "string", "description": "The order ID"}
+        },
+        "required": ["order_id"],
+    },
+)
+
+result = await client.generate(
+    input=[{"role": "user", "content": "Process order #12345"}],
+    use_tools=["process_order"],
+    tool_execution_context={
+        "user_id": "usr_abc",           # Injected, never sent to LLM
+        "db_connection": my_db_conn,    # Injected, never sent to LLM
+    },
+)
+```
+
+### Tool Intent Planning
+
+Separate planning from execution for approval workflows:
+
+```python
+# Step 1: Plan tool calls (no execution)
+intent = await client.generate_tool_intent(
+    input=messages,
+    use_tools=["send_email", "update_crm"],
+)
+
+# Step 2: Review planned calls
+for call in intent.tool_calls:
+    print(f"Tool: {call.name}, Args: {call.arguments}")
+
+# Step 3: Execute after approval
+results = await client.execute_tool_intents(intent)
+```
+
+## GenerationResult
+
+`LLMClient.generate` returns a `GenerationResult` with:
+
+- `content`: Final assistant response (text or parsed Pydantic model).
+- `payloads`: Deferred tool payloads for out-of-band processing.
+- `tool_messages`: Tool result messages to persist for multi-turn conversations.
+- `messages`: Full transcript snapshot.
+
+Supports tuple unpacking: `content, payloads = await client.generate(...)`.
+
+## Structured Output
+
+```python
+from pydantic import BaseModel
+
+class WeatherInfo(BaseModel):
+    city: str
+    temperature: float
+    condition: str
+
+result = await client.generate(
+    input=[{"role": "user", "content": "Weather in Paris?"}],
+    response_format=WeatherInfo,
+)
+# result.content is a WeatherInfo instance
+print(result.content.temperature)
+```
+
+## Web Search
+
+```python
+result = await client.generate(
+    input=[{"role": "user", "content": "Latest news about AI"}],
+    web_search=True,
+)
+# Or with options:
+result = await client.generate(
+    input=[{"role": "user", "content": "Latest news about AI"}],
+    web_search={"search_context_size": "high"},
+)
+```
+
+## File Search (OpenAI only)
+
+```python
+# Requires: pip install llm-factory-toolkit[openai]
+client = LLMClient(model="openai/gpt-4o-mini")
+
+result = await client.generate(
     input=[{"role": "user", "content": "Summarise the launch checklist."}],
     file_search={"vector_store_ids": ["vs_launch_docs"], "max_num_results": 3},
 )
@@ -175,84 +251,55 @@ research_result = await client.generate(
 
 ## Reasoning Models
 
-Reasoning-oriented models such as GPT‑5 generate hidden reasoning tokens that
-can consume the entire `max_output_tokens` budget. The toolkit automatically
-adds a buffer and may retry the call if those reasoning tokens exhaust the
-limit, so you can reuse the same values you set for non-reasoning models.
+LiteLLM handles reasoning model parameters automatically:
 
 ```python
-from llm_factory_toolkit import LLMClient
-
-client = LLMClient(provider_type="openai", model="gpt-5-mini")
 result = await client.generate(
-    input=[{"role": "user", "content": "The capital of France?"}],
-    max_output_tokens=500,
-)
-print(result.content)
-```
-
-If needed, adjust the reasoning token buffer when creating the provider:
-
-```python
-client = LLMClient(
-    provider_type="openai",
-    model="gpt-5-mini",
-    reasoning_token_buffer=512,
+    input=[{"role": "user", "content": "Solve this step by step..."}],
+    model="openai/o3-mini",
+    reasoning_effort="medium",  # "low", "medium", "high"
 )
 ```
 
-## Advanced Usage
+## Mock Mode
 
-This toolkit also supports:
-
-*   **Registering custom tools:** Allow the LLM to call your Python functions (see `INTEGRATION.md`).
-*   **Structured JSON/Pydantic output:** Get responses formatted according to a specific schema (see `INTEGRATION.md`).
-*   **Mock tool execution:** Enable `mock_tools=True` to surface stubbed tool results without triggering side effects.
-
-For detailed instructions on integrating this toolkit into your projects, including tool usage and structured output examples, please see **[INTEGRATION.md](INTEGRATION.md)**.
-
-### Mocking tool execution
-
-When showcasing the toolkit (for example, in the demo UI) you can prevent real
-network calls or database writes by enabling mock mode:
+Prevent real side effects during demos or testing:
 
 ```python
-response, tool_payloads = await client.generate(
+result = await client.generate(
     input=messages,
-    mock_tools=True,
+    use_tools=["send_email"],
+    mock_tools=True,  # Tools return stubs, no real execution
 )
 ```
 
-Any tool registered through `ToolFactory` will return a stubbed
-`ToolExecutionResult`. Class-based tools can customize this behaviour by
-overriding `BaseTool.mock_execute`.
+## Migration from v0.x
+
+```python
+# BEFORE (v0.x):
+client = LLMClient(provider_type="openai", model="gpt-4o-mini")
+client = LLMClient(provider_type="google_genai", model="gemini-2.5-flash")
+client = LLMClient(provider_type="xai", model="grok-beta")
+
+# AFTER (v1.0):
+client = LLMClient(model="openai/gpt-4o-mini")
+client = LLMClient(model="gemini/gemini-2.5-flash")
+client = LLMClient(model="xai/grok-beta")
+client = LLMClient(model="anthropic/claude-sonnet-4")  # NEW!
+```
 
 ## Development & Testing
 
-1.  **Set up a virtual environment:**
-    ```bash
-    python -m venv venv
-    source venv/bin/activate # On Windows use `venv\Scripts\activate`
-    ```
-2.  **Install development dependencies:**
-    ```bash
-    pip install -e ".[dev]" # Installs package in editable mode + dev deps (pytest)
-    # Or: pip install -r requirements.txt pytest pytest-asyncio
-    ```
-3.  **Set Environment Variables for Tests:**
-    Ensure the `OPENAI_API_KEY` environment variable is set (e.g., via export or your `.env` file) to run the integration tests against OpenAI.
-    ```bash
-    export OPENAI_API_KEY="your_actual_key"
-    ```
-4.  **Run tests:**
-    ```bash
-    pytest tests/
-    ```
+```bash
+pip install -e ".[dev]"
+export OPENAI_API_KEY="your_key"
+pytest tests/
+```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request or open an Issue.
+Contributions welcome! Open a Pull Request or Issue.

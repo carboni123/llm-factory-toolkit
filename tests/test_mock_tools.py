@@ -103,7 +103,7 @@ async def test_register_tool_picks_up_instance_mock_execute() -> None:
 
 @pytest.mark.asyncio
 async def test_client_execute_tool_intents_respects_mock_flag() -> None:
-    client = LLMClient(provider_type="openai")
+    client = LLMClient(model="openai/gpt-4o-mini")
 
     executed: Dict[str, bool] = {"called": False}
 
@@ -125,4 +125,4 @@ async def test_client_execute_tool_intents_respects_mock_flag() -> None:
 
     assert executed["called"] is False
     assert len(results) == 1
-    assert results[0]["output"] == "Mocked execution for tool 'demo_tool'."
+    assert results[0]["content"] == "Mocked execution for tool 'demo_tool'."

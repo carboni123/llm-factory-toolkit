@@ -45,15 +45,9 @@ async def test_google_simple_call(google_test_model: str) -> None:
 
     try:
         # 1. Instantiate the LLMClient
-        # API key loading is handled internally by the client/provider
-        client = LLMClient(provider_type="google_genai", model=google_test_model)
+        client = LLMClient(model=google_test_model)
         assert client is not None
-        # Accessing the internal provider details for logging/debug if needed
-        # Note: This relies on the internal structure, use with caution in tests
-        if hasattr(client.provider, "model"):
-            print(f"Using model: {client.provider.model}")
-        else:
-            print(f"Client provider type: {type(client.provider).__name__}")
+        print(f"Using model: {client.model}")
 
         # 2. Prepare messages
         messages = [
@@ -65,8 +59,8 @@ async def test_google_simple_call(google_test_model: str) -> None:
         print("Calling client.generate...")
         generation_result = await client.generate(
             input=messages,
-            model=google_test_model,  # Can override the client's default model here
-            temperature=0.7,  # Adjusted temperature slightly
+            model=google_test_model,
+            temperature=0.7,
         )
         response_content = generation_result.content
         print(

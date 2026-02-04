@@ -78,9 +78,9 @@ async def test_openai_pydantic_response_format(openai_test_model: str) -> None:
 
     try:
         # 1. Initialize LLMClient
-        client = LLMClient(provider_type="openai", model=openai_test_model)
+        client = LLMClient(model=openai_test_model)
         assert client is not None
-        print(f"LLMClient initialized with model: {client.provider.model}")
+        print(f"LLMClient initialized with model: {client.model}")
 
         # 2. Prepare messages
         messages = [
@@ -151,9 +151,9 @@ async def test_google_genai_pydantic_response_format(google_test_model: str) -> 
 
     try:
         # 1. Initialize LLMClient
-        client = LLMClient(provider_type="google_genai", model=google_test_model)
+        client = LLMClient(model=google_test_model)
         assert client is not None
-        print(f"LLMClient initialized with model: {client.provider.model}")
+        print(f"LLMClient initialized with model: {client.model}")
 
         # 2. Prepare messages
         messages = [

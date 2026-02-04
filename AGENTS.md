@@ -9,10 +9,10 @@
 ```
 llm_factory_toolkit/
 ├── llm_factory_toolkit/
-│   ├── providers/    # Provider implementations (e.g., base.py, openai_adapter.py)
-│   ├── tools/        # Tool-related modules (e.g., tool_factory.py, models.py)
+│   ├── tools/        # Tool framework (tool_factory.py, models.py, base_tool.py, runtime.py, builtins.py)
 │   ├── __init__.py   # Package init with exports and utilities
 │   ├── client.py     # Main LLMClient class
+│   ├── provider.py   # Single LiteLLM-backed provider (routes to 100+ LLM providers)
 │   └── exceptions.py # Custom exceptions
 ├── examples/         # Usage examples (e.g., custom_tool_example.py)
 ├── tests/            # Pytest suites (e.g., test_llmcall*.py)
@@ -79,9 +79,9 @@ raise ProviderError("API request failed: details")
 
 ### 3.6. Provider and Tool Patterns
 
-*   Providers subclass `BaseProvider` in `providers/base.py`; keep them pluggable and async.
+*   Provider routing is handled by `LiteLLMProvider` in `provider.py`, backed by LiteLLM. Do not add custom provider adapters.
 *   Tools use `ToolFactory` for registration; encourage class-based tools with embedded metadata.
-*   Core logic (e.g., generation loops) must be in providers; client is a thin wrapper.
+*   Core logic (e.g., generation loops, tool dispatch) lives in `provider.py`; `client.py` is a thin wrapper.
 *   Keep components framework-agnostic where possible (e.g., no direct deps in tools).
 
 ### 3.7. Configuration

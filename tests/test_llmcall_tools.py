@@ -95,14 +95,13 @@ async def test_openai_tool_call(openai_test_model: str) -> None:
 
         # 2. Instantiate the LLMClient WITH the tool factory
         client = LLMClient(
-            provider_type="openai",
             model=openai_test_model,
             tool_factory=tool_factory,
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory"
+            f"LLMClient initialized with model: {client.model} and Tool Factory"
         )
 
         # 3. Prepare messages designed to trigger the tool
@@ -189,14 +188,13 @@ async def test_google_genai_tool_call(google_test_model: str) -> None:
 
         # 2. Instantiate the LLMClient WITH the tool factory
         client = LLMClient(
-            provider_type="google_genai",
             model=google_test_model,
             tool_factory=tool_factory,
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory"
+            f"LLMClient initialized with model: {client.model} and Tool Factory"
         )
 
         # 3. Prepare messages designed to trigger the tool

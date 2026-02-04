@@ -224,9 +224,9 @@ async def test_generate_tool_usage_counts(
         assert initial_counts.get(MOCK_TOOL_NAME_4_UNUSED, 0) == 0
 
         client = LLMClient(
-            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
+            model=openai_test_model, tool_factory=tool_factory
         )
-        print(f"LLMClient initialized with model: {client.provider.model}")
+        print(f"LLMClient initialized with model: {client.model}")
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT_MULTI_TOOL},
