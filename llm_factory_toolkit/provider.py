@@ -53,6 +53,15 @@ def _is_openai_model(model: str) -> bool:
     return bare.startswith(_OPENAI_MODEL_PREFIXES)
 
 
+_GPT5_PREFIXES = ("gpt-5",)
+
+
+def _is_gpt5_model(model: str) -> bool:
+    """Return True if *model* is a GPT-5 variant that does not accept temperature."""
+    bare = model.lower().split("/", 1)[-1] if "/" in model.lower() else model.lower()
+    return bare.startswith(_GPT5_PREFIXES)
+
+
 def _strip_urls(text: str) -> str:
     """Strip markdown hyperlinks and bare URLs from *text*."""
     if not text:
@@ -113,6 +122,26 @@ class LiteLLMProvider:
             )
 
     # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    def _get_openai_client(self) -> Any:
+        """Lazily import and create an ``openai.AsyncOpenAI`` client."""
+        try:
+            from openai import AsyncOpenAI
+        except ImportError:
+            raise ConfigurationError(
+                "OpenAI models require the 'openai' package. "
+                "Install it with: pip install llm_factory_toolkit[openai]"
+            )
+        return AsyncOpenAI(api_key=self.api_key or None, timeout=self.timeout)
+
+    @staticmethod
+    def _bare_model_name(model: str) -> str:
+        """Strip the ``openai/`` prefix to get the bare model name."""
+        return model.split("/", 1)[-1] if "/" in model else model
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -143,9 +172,9 @@ class LiteLLMProvider:
         """
         active_model = model or self.model
 
-        # file_search requires the OpenAI Responses API directly
-        if file_search:
-            return await self._generate_with_file_search(
+        # Route all OpenAI models through the Responses API
+        if _is_openai_model(active_model):
+            return await self._generate_openai(
                 input=input,
                 model=active_model,
                 max_tool_iterations=max_tool_iterations,
@@ -159,6 +188,13 @@ class LiteLLMProvider:
                 web_search=web_search,
                 file_search=file_search,
                 **kwargs,
+            )
+
+        # file_search is OpenAI-only
+        if file_search:
+            raise UnsupportedFeatureError(
+                f"file_search is only supported with OpenAI models, "
+                f"got: {active_model}"
             )
 
         collected_payloads: List[Any] = []
@@ -261,6 +297,10 @@ class LiteLLMProvider:
         mock_tools: bool = False,
         parallel_tools: bool = False,
         web_search: bool | Dict[str, Any] = False,
+        file_search: bool
+        | Dict[str, Any]
+        | List[str]
+        | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, yielding :class:`StreamChunk` objects.
@@ -270,6 +310,27 @@ class LiteLLMProvider:
         follow-up response.
         """
         active_model = model or self.model
+
+        # Route OpenAI models through the Responses API
+        if _is_openai_model(active_model):
+            async for chunk in self._generate_openai_stream(
+                input=input,
+                model=active_model,
+                max_tool_iterations=max_tool_iterations,
+                response_format=response_format,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                use_tools=use_tools,
+                tool_execution_context=tool_execution_context,
+                mock_tools=mock_tools,
+                parallel_tools=parallel_tools,
+                web_search=web_search,
+                file_search=file_search,
+                **kwargs,
+            ):
+                yield chunk
+            return
+
         current_messages = copy.deepcopy(input)
         iteration_count = 0
 
@@ -350,6 +411,19 @@ class LiteLLMProvider:
     ) -> ToolIntentOutput:
         """Plan tool calls without executing them."""
         active_model = model or self.model
+
+        # Route OpenAI models through the Responses API
+        if _is_openai_model(active_model):
+            return await self._generate_openai_intent(
+                input=copy.deepcopy(input),
+                model=active_model,
+                use_tools=use_tools,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                response_format=response_format,
+                web_search=web_search,
+                **kwargs,
+            )
 
         call_kwargs = self._build_call_kwargs(
             model=active_model,
@@ -686,10 +760,340 @@ class LiteLLMProvider:
         return None
 
     # ------------------------------------------------------------------
-    # file_search fallback (OpenAI Responses API)
+    # OpenAI Responses API path
     # ------------------------------------------------------------------
 
-    async def _generate_with_file_search(
+    def _build_openai_tools(
+        self,
+        *,
+        use_tools: Optional[List[str]] = [],
+        web_search: bool | Dict[str, Any] = False,
+        file_search: bool
+        | Dict[str, Any]
+        | List[str]
+        | Tuple[str, ...] = False,
+    ) -> List[Dict[str, Any]]:
+        """Build the ``tools`` list for the OpenAI Responses API."""
+        tools_list: List[Dict[str, Any]] = []
+
+        # file_search
+        if file_search:
+            fs_config = self._normalize_file_search(file_search)
+            if fs_config:
+                tools_list.append(fs_config)
+
+        # web_search
+        if web_search:
+            ws_tool: Dict[str, Any] = {"type": "web_search_preview"}
+            if isinstance(web_search, dict):
+                if web_search.get("search_context_size"):
+                    ws_tool["search_context_size"] = web_search[
+                        "search_context_size"
+                    ]
+                if web_search.get("user_location"):
+                    ws_tool["user_location"] = web_search["user_location"]
+            tools_list.append(ws_tool)
+
+        # Registered function tools
+        if use_tools is not None and self.tool_factory:
+            if use_tools == []:
+                defs = self.tool_factory.get_tool_definitions()
+            else:
+                defs = self.tool_factory.get_tool_definitions(
+                    filter_tool_names=use_tools
+                )
+            if defs:
+                for tool in defs:
+                    if tool.get("type") == "function":
+                        func = tool.get("function", {})
+                        params = func.get("parameters", {}) or {}
+                        if params and "additionalProperties" not in params:
+                            params = {**params, "additionalProperties": False}
+                        properties = params.get("properties", {}) or {}
+                        # Strict mode requires all properties in required
+                        params["required"] = list(properties.keys())
+                        tools_list.append(
+                            {
+                                "type": "function",
+                                "name": func.get("name"),
+                                "description": func.get("description"),
+                                "parameters": params,
+                                "strict": True,
+                            }
+                        )
+                    else:
+                        tools_list.append(tool)
+
+        return tools_list
+
+    async def _handle_openai_tool_calls(
+        self,
+        tool_calls: List[Any],
+        *,
+        tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
+        parallel_tools: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Any]]:
+        """Dispatch Responses API ``function_call`` items.
+
+        Returns ``(api_messages, chat_messages, payloads)`` where:
+
+        * *api_messages* use Responses API format
+          (``function_call_output``) for the internal conversation loop.
+        * *chat_messages* use Chat Completions format
+          (``role: "tool"``) for ``GenerationResult.tool_messages``.
+        * *payloads* are collected execution payloads.
+        """
+        assert self.tool_factory is not None
+        factory = self.tool_factory
+        api_messages: List[Dict[str, Any]] = []
+        chat_messages: List[Dict[str, Any]] = []
+        collected_payloads: List[Any] = []
+
+        async def _dispatch_one(
+            tc: Any,
+        ) -> Tuple[
+            Dict[str, Any],
+            Dict[str, Any],
+            Optional[Dict[str, Any]],
+        ]:
+            func_name = getattr(tc, "name", None) or "unknown"
+            func_args = getattr(
+                tc, "arguments", getattr(tc, "input", None)
+            )
+            call_id = getattr(tc, "call_id", None) or getattr(
+                tc, "id", None
+            )
+
+            if func_name:
+                factory.increment_tool_usage(func_name)
+
+            try:
+                result: ToolExecutionResult = await factory.dispatch_tool(
+                    func_name,
+                    func_args or "{}",
+                    tool_execution_context=tool_execution_context,
+                    use_mock=mock_tools,
+                )
+                payload: Optional[Dict[str, Any]] = None
+                if result.payload is not None:
+                    payload = {
+                        "tool_name": func_name,
+                        "metadata": result.metadata or {},
+                        "payload": result.payload,
+                    }
+                return (
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": result.content,
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": func_name,
+                        "content": result.content,
+                    },
+                    payload,
+                )
+            except Exception as e:
+                logger.error(
+                    "Tool dispatch error for %s: %s", func_name, e
+                )
+                error_content = json.dumps({"error": str(e)})
+                return (
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": error_content,
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": func_name,
+                        "content": error_content,
+                    },
+                    None,
+                )
+
+        if parallel_tools:
+            results = await asyncio.gather(
+                *[_dispatch_one(tc) for tc in tool_calls]
+            )
+        else:
+            results = [await _dispatch_one(tc) for tc in tool_calls]
+
+        for api_msg, chat_msg, payload in results:
+            api_messages.append(api_msg)
+            chat_messages.append(chat_msg)
+            if payload:
+                collected_payloads.append(payload)
+
+        return api_messages, chat_messages, collected_payloads
+
+    @staticmethod
+    def _responses_to_chat_messages(
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Convert Responses API format items to Chat Completions format.
+
+        Groups consecutive ``text`` + ``function_call`` items into single
+        assistant messages and converts ``function_call_output`` items to
+        ``{"role": "tool", ...}`` format.  Messages that already use Chat
+        Completions format (have a ``role`` key) pass through unchanged.
+        """
+        result: List[Dict[str, Any]] = []
+        pending_content: Optional[str] = None
+        pending_tool_calls: List[Dict[str, Any]] = []
+
+        def _flush() -> None:
+            nonlocal pending_content, pending_tool_calls
+            if pending_content is not None or pending_tool_calls:
+                msg: Dict[str, Any] = {"role": "assistant"}
+                if pending_content:
+                    msg["content"] = pending_content
+                if pending_tool_calls:
+                    msg["tool_calls"] = list(pending_tool_calls)
+                result.append(msg)
+                pending_content = None
+                pending_tool_calls = []
+
+        # Responses API item types that are ephemeral / model-internal
+        # and must not appear in normalised conversation history.
+        _SKIP_TYPES = {"reasoning"}
+
+        for item in messages:
+            item_type = item.get("type")
+
+            if item_type in _SKIP_TYPES:
+                continue
+
+            if item_type == "text":
+                text = item.get("text", "")
+                if pending_content is None:
+                    pending_content = text
+                else:
+                    pending_content += text
+
+            elif item_type == "function_call":
+                if pending_content is None:
+                    pending_content = ""
+                pending_tool_calls.append(
+                    {
+                        "id": item.get("call_id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": item.get("name", ""),
+                            "arguments": item.get("arguments", "{}"),
+                        },
+                    }
+                )
+
+            elif item_type == "function_call_output":
+                _flush()
+                result.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item.get("call_id", ""),
+                        "content": item.get("output", ""),
+                    }
+                )
+
+            elif item.get("role"):
+                _flush()
+                result.append(item)
+
+            else:
+                # Provider-specific items (e.g. web_search_call) pass through
+                _flush()
+                result.append(item)
+
+        _flush()
+        return result
+
+    @staticmethod
+    def _convert_messages_for_responses_api(
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Convert Chat Completions format messages to Responses API format.
+
+        Converts ``{"role": "tool", "tool_call_id": ..., "content": ...}``
+        to ``{"type": "function_call_output", "call_id": ..., "output": ...}``
+        and assistant messages with ``tool_calls`` to separate function_call items.
+        Other messages pass through unchanged.
+        """
+        converted: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "tool":
+                converted.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": msg.get("tool_call_id", ""),
+                        "output": msg.get("content", ""),
+                    }
+                )
+            elif role == "assistant" and msg.get("tool_calls"):
+                # Convert Chat Completions assistant tool_calls to
+                # individual function_call items
+                if msg.get("content"):
+                    converted.append(
+                        {"role": "assistant", "content": msg["content"]}
+                    )
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
+                    converted.append(
+                        {
+                            "type": "function_call",
+                            "call_id": tc.get("id", ""),
+                            "name": func.get("name", ""),
+                            "arguments": func.get("arguments", "{}"),
+                        }
+                    )
+            else:
+                converted.append(msg)
+        return converted
+
+    def _build_openai_request(
+        self,
+        *,
+        model: str,
+        input: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        tools_list: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Build the request payload for ``client.responses``."""
+        bare_model = self._bare_model_name(model)
+        payload: Dict[str, Any] = {
+            "model": bare_model,
+            "input": input,
+        }
+        if tools_list:
+            payload["tools"] = tools_list
+
+        # Temperature: omit for GPT-5 models
+        if temperature is not None and not _is_gpt5_model(model):
+            payload["temperature"] = temperature
+
+        if max_output_tokens is not None:
+            payload["max_output_tokens"] = max_output_tokens
+
+        # reasoning_effort → Responses API format
+        if "reasoning_effort" in kwargs:
+            payload["reasoning"] = {"effort": kwargs.pop("reasoning_effort")}
+
+        # Structured output via text_format
+        if isinstance(response_format, type) and issubclass(
+            response_format, BaseModel
+        ):
+            payload["text_format"] = response_format
+
+        return payload
+
+    async def _generate_openai(
         self,
         input: List[Dict[str, Any]],
         *,
@@ -709,99 +1113,28 @@ class LiteLLMProvider:
         | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Handle generation with file_search using the OpenAI SDK directly.
+        """Generate via OpenAI Responses API (non-streaming)."""
+        client = self._get_openai_client()
 
-        file_search is only supported by OpenAI's Responses API and cannot
-        be routed through LiteLLM's ``acompletion``.
-        """
-        if not _is_openai_model(model):
-            raise UnsupportedFeatureError(
-                f"file_search is only supported with OpenAI models, got: {model}"
-            )
+        tools_list = self._build_openai_tools(
+            use_tools=use_tools,
+            web_search=web_search,
+            file_search=file_search,
+        )
 
-        try:
-            from openai import AsyncOpenAI
-        except ImportError:
-            raise ConfigurationError(
-                "file_search requires the 'openai' package. "
-                "Install it with: pip install llm_factory_toolkit[openai]"
-            )
-
-        # Resolve the bare model name (strip openai/ prefix)
-        bare_model = model.split("/", 1)[-1] if "/" in model else model
-
-        # Build file_search tool definition
-        fs_config = self._normalize_file_search(file_search)
-        if not fs_config:
-            raise ConfigurationError(
-                "file_search requires vector_store_ids when enabled."
-            )
-
-        tools_list: List[Dict[str, Any]] = []
-        tools_list.append(fs_config)
-
-        # Add web_search if requested
-        if web_search:
-            ws_tool: Dict[str, Any] = {"type": "web_search"}
-            if isinstance(web_search, dict):
-                if web_search.get("filters"):
-                    ws_tool["filters"] = web_search["filters"]
-                if web_search.get("user_location"):
-                    ws_tool["user_location"] = web_search["user_location"]
-            tools_list.append(ws_tool)
-
-        # Add registered tools
-        if use_tools is not None and self.tool_factory:
-            if use_tools == []:
-                defs = self.tool_factory.get_tool_definitions()
-            else:
-                defs = self.tool_factory.get_tool_definitions(
-                    filter_tool_names=use_tools
-                )
-            if defs:
-                for tool in defs:
-                    if tool.get("type") == "function":
-                        func = tool.get("function", {})
-                        params = func.get("parameters", {}) or {}
-                        if params and "additionalProperties" not in params:
-                            params = {**params, "additionalProperties": False}
-                        properties = params.get("properties", {}) or {}
-                        required = params.get("required")
-                        if required is None:
-                            required = list(properties.keys())
-                            params["required"] = required
-                        tools_list.append(
-                            {
-                                "type": "function",
-                                "name": func.get("name"),
-                                "description": func.get("description"),
-                                "parameters": params,
-                                "strict": True,
-                            }
-                        )
-                    else:
-                        tools_list.append(tool)
-
-        api_key = self.api_key or None
-        client = AsyncOpenAI(api_key=api_key, timeout=self.timeout)
-
-        request_payload: Dict[str, Any] = {
-            "model": bare_model,
-            "input": input,
-            "tools": tools_list,
-        }
-        if temperature is not None:
-            request_payload["temperature"] = temperature
-        if max_output_tokens is not None:
-            request_payload["max_output_tokens"] = max_output_tokens
-        if isinstance(response_format, type) and issubclass(
-            response_format, BaseModel
-        ):
-            request_payload["text_format"] = response_format
+        request_payload = self._build_openai_request(
+            model=model,
+            input=input,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            response_format=response_format,
+            tools_list=tools_list or None,
+            **kwargs,
+        )
 
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
-        current_messages = list(input)
+        current_messages = self._convert_messages_for_responses_api(input)
         iteration_count = 0
 
         while iteration_count < max_tool_iterations:
@@ -810,7 +1143,9 @@ class LiteLLMProvider:
             try:
                 completion = await client.responses.parse(**request_payload)
             except Exception as e:
-                raise ProviderError(f"OpenAI Responses API error: {e}") from e
+                raise ProviderError(
+                    f"OpenAI Responses API error: {e}"
+                ) from e
 
             assistant_text = getattr(completion, "output_text", "") or ""
             tool_calls = [
@@ -820,7 +1155,7 @@ class LiteLLMProvider:
                 in {"function_call", "custom_tool_call"}
             ]
 
-            # Append output to messages
+            # Append output items to conversation
             for item in getattr(completion, "output", []):
                 dump = item.model_dump()
                 dump.pop("parsed_arguments", None)
@@ -828,69 +1163,294 @@ class LiteLLMProvider:
                 current_messages.append(dump)
 
             if not tool_calls:
+                # Normalise to Chat Completions format before returning
+                normalised = self._responses_to_chat_messages(
+                    current_messages
+                )
+
+                # Handle structured output parsing
+                if isinstance(response_format, type) and issubclass(
+                    response_format, BaseModel
+                ):
+                    if assistant_text:
+                        try:
+                            parsed = response_format.model_validate_json(
+                                assistant_text
+                            )
+                            return GenerationResult(
+                                content=parsed,
+                                payloads=list(collected_payloads),
+                                tool_messages=copy.deepcopy(
+                                    tool_result_messages
+                                ),
+                                messages=normalised,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to parse response as %s, "
+                                "returning raw content.",
+                                response_format.__name__,
+                            )
+
                 final = self._maybe_strip_urls(assistant_text, web_search)
                 return GenerationResult(
                     content=final or None,
                     payloads=list(collected_payloads),
                     tool_messages=copy.deepcopy(tool_result_messages),
-                    messages=copy.deepcopy(current_messages),
+                    messages=normalised,
                 )
 
+            # --- Tool dispatch ---
             if not self.tool_factory:
                 raise UnsupportedFeatureError(
                     "Received tool calls but no ToolFactory is configured."
                 )
 
-            # Dispatch registered tool calls (skip file_search results
-            # which are handled by the API)
-            for tc in tool_calls:
-                func_name = getattr(tc, "name", None)
-                func_args = getattr(tc, "arguments", getattr(tc, "input", None))
-                call_id = getattr(tc, "call_id", None) or getattr(tc, "id", None)
-
-                if func_name:
-                    self.tool_factory.increment_tool_usage(func_name)
-
-                try:
-                    result = await self.tool_factory.dispatch_tool(
-                        func_name,
-                        func_args or "{}",
-                        tool_execution_context=tool_execution_context,
-                        use_mock=mock_tools,
-                    )
-                    tool_msg = {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": result.content,
-                    }
-                    current_messages.append(tool_msg)
-                    tool_result_messages.append(copy.deepcopy(tool_msg))
-
-                    if result.payload is not None:
-                        collected_payloads.append(
-                            {
-                                "tool_name": func_name,
-                                "metadata": result.metadata or {},
-                                "payload": result.payload,
-                            }
-                        )
-                except Exception as e:
-                    logger.error("Tool dispatch error for %s: %s", func_name, e)
-                    err_msg = {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": json.dumps({"error": str(e)}),
-                    }
-                    current_messages.append(err_msg)
-                    tool_result_messages.append(copy.deepcopy(err_msg))
-
+            api_results, chat_results, payloads = (
+                await self._handle_openai_tool_calls(
+                    tool_calls,
+                    tool_execution_context=tool_execution_context,
+                    mock_tools=mock_tools,
+                    parallel_tools=parallel_tools,
+                )
+            )
+            current_messages.extend(api_results)
+            tool_result_messages.extend(copy.deepcopy(chat_results))
+            collected_payloads.extend(payloads)
             iteration_count += 1
 
+        # Max iterations reached – normalise messages to Chat Completions
+        normalised = self._responses_to_chat_messages(current_messages)
         return GenerationResult(
-            content=assistant_text or None,
+            content=self._aggregate_final_content(
+                normalised, max_tool_iterations
+            ),
             payloads=list(collected_payloads),
             tool_messages=copy.deepcopy(tool_result_messages),
-            messages=copy.deepcopy(current_messages),
+            messages=normalised,
+        )
+
+    async def _generate_openai_stream(
+        self,
+        input: List[Dict[str, Any]],
+        *,
+        model: str,
+        max_tool_iterations: int = 5,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        use_tools: Optional[List[str]] = [],
+        tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
+        parallel_tools: bool = False,
+        web_search: bool | Dict[str, Any] = False,
+        file_search: bool
+        | Dict[str, Any]
+        | List[str]
+        | Tuple[str, ...] = False,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Stream via OpenAI Responses API, yielding :class:`StreamChunk`."""
+        client = self._get_openai_client()
+
+        tools_list = self._build_openai_tools(
+            use_tools=use_tools,
+            web_search=web_search,
+            file_search=file_search,
+        )
+
+        request_payload = self._build_openai_request(
+            model=model,
+            input=input,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            response_format=response_format,
+            tools_list=tools_list or None,
+            **kwargs,
+        )
+        request_payload["stream"] = True
+
+        current_messages = self._convert_messages_for_responses_api(input)
+        iteration_count = 0
+
+        while iteration_count < max_tool_iterations:
+            request_payload["input"] = current_messages
+
+            try:
+                stream = await client.responses.create(**request_payload)
+            except Exception as e:
+                raise ProviderError(
+                    f"OpenAI Responses API stream error: {e}"
+                ) from e
+
+            response_obj = None
+            async for event in stream:
+                event_type = getattr(event, "type", "")
+
+                if event_type == "response.output_text.delta":
+                    delta = getattr(event, "delta", "")
+                    if delta:
+                        yield StreamChunk(content=delta)
+
+                elif event_type == "response.completed":
+                    response_obj = getattr(event, "response", None)
+
+            # After stream ends, check for tool calls
+            function_call_items: List[Any] = []
+            if response_obj:
+                for item in getattr(response_obj, "output", []):
+                    item_type = getattr(item, "type", None)
+                    if item_type in {
+                        "function_call",
+                        "custom_tool_call",
+                    }:
+                        function_call_items.append(item)
+                    dump = item.model_dump()
+                    dump.pop("parsed_arguments", None)
+                    dump.pop("status", None)
+                    current_messages.append(dump)
+
+            if not function_call_items:
+                usage_data = None
+                if response_obj:
+                    usage = getattr(response_obj, "usage", None)
+                    if usage:
+                        input_tokens = getattr(usage, "input_tokens", 0)
+                        output_tokens = getattr(usage, "output_tokens", 0)
+                        usage_data = {
+                            "prompt_tokens": input_tokens,
+                            "completion_tokens": output_tokens,
+                            "total_tokens": input_tokens + output_tokens,
+                        }
+                yield StreamChunk(done=True, usage=usage_data)
+                return
+
+            # Tool dispatch
+            if not self.tool_factory:
+                raise UnsupportedFeatureError(
+                    "Received tool calls but no ToolFactory is configured."
+                )
+
+            api_results, _, _ = await self._handle_openai_tool_calls(
+                function_call_items,
+                tool_execution_context=tool_execution_context,
+                mock_tools=mock_tools,
+                parallel_tools=parallel_tools,
+            )
+            current_messages.extend(api_results)
+            iteration_count += 1
+
+        yield StreamChunk(
+            content="\n\n[Warning: Max tool iterations reached.]",
+            done=True,
+        )
+
+    async def _generate_openai_intent(
+        self,
+        input: List[Dict[str, Any]],
+        *,
+        model: str,
+        use_tools: Optional[List[str]] = [],
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        web_search: bool | Dict[str, Any] = False,
+        **kwargs: Any,
+    ) -> ToolIntentOutput:
+        """Plan tool calls via OpenAI Responses API without executing."""
+        client = self._get_openai_client()
+
+        tools_list = self._build_openai_tools(
+            use_tools=use_tools,
+            web_search=web_search,
+        )
+
+        converted_input = self._convert_messages_for_responses_api(input)
+        request_payload = self._build_openai_request(
+            model=model,
+            input=converted_input,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            response_format=response_format,
+            tools_list=tools_list or None,
+            **kwargs,
+        )
+
+        try:
+            completion = await client.responses.parse(**request_payload)
+        except Exception as e:
+            raise ProviderError(
+                f"OpenAI Responses API error: {e}"
+            ) from e
+
+        assistant_text = getattr(completion, "output_text", "") or ""
+        output_items = getattr(completion, "output", [])
+
+        tool_calls = [
+            item
+            for item in output_items
+            if getattr(item, "type", None)
+            in {"function_call", "custom_tool_call"}
+        ]
+
+        parsed_tool_calls: List[ParsedToolCall] = []
+        for tc in tool_calls:
+            func_name = getattr(tc, "name", "") or ""
+            func_args = getattr(
+                tc, "arguments", getattr(tc, "input", None)
+            ) or "{}"
+            call_id = (
+                getattr(tc, "call_id", None)
+                or getattr(tc, "id", None)
+                or ""
+            )
+
+            if func_name and self.tool_factory:
+                self.tool_factory.increment_tool_usage(func_name)
+
+            args_dict_or_str: Union[Dict[str, Any], str]
+            parsing_error: Optional[str] = None
+            try:
+                parsed_args = (
+                    json.loads(func_args)
+                    if isinstance(func_args, str)
+                    else func_args
+                )
+                if not isinstance(parsed_args, dict):
+                    parsing_error = (
+                        f"Not a JSON object. Type: {type(parsed_args)}"
+                    )
+                    args_dict_or_str = str(func_args)
+                else:
+                    args_dict_or_str = parsed_args
+            except (json.JSONDecodeError, TypeError) as e:
+                parsing_error = f"{type(e).__name__}: {e}"
+                args_dict_or_str = str(func_args)
+
+            parsed_tool_calls.append(
+                ParsedToolCall(
+                    id=str(call_id),
+                    name=func_name,
+                    arguments=args_dict_or_str,
+                    arguments_parsing_error=parsing_error,
+                )
+            )
+
+        # Build raw assistant message items, normalised to Chat Completions
+        raw_items: List[Dict[str, Any]] = []
+        for item in output_items:
+            dump = item.model_dump()
+            dump.pop("parsed_arguments", None)
+            dump.pop("status", None)
+            raw_items.append(dump)
+        normalised_raw = self._responses_to_chat_messages(raw_items)
+
+        final_content = self._maybe_strip_urls(assistant_text, web_search)
+
+        return ToolIntentOutput(
+            content=final_content or None,
+            tool_calls=parsed_tool_calls if parsed_tool_calls else None,
+            raw_assistant_message=normalised_raw,
         )
 
     @staticmethod

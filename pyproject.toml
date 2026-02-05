@@ -31,7 +31,7 @@ dependencies = [
 "Bug Tracker" = "https://github.com/carboni123/llm_factory_toolkit/issues"
 
 [project.optional-dependencies]
-# file_search requires the OpenAI SDK directly
+# OpenAI models use the Responses API via the openai SDK
 openai = [
     "openai>=2.7.1",
 ]

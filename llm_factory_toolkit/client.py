@@ -204,7 +204,9 @@ class LLMClient:
 
         try:
             if stream:
-                return self.provider.generate_stream(**common_kwargs)
+                return self.provider.generate_stream(
+                    **common_kwargs, file_search=file_search
+                )
 
             return await self.provider.generate(
                 **common_kwargs,
