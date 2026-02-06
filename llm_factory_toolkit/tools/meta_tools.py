@@ -55,20 +55,21 @@ def browse_toolkit(
     results: List[Dict[str, Any]] = []
     for entry in entries:
         is_active = entry.name in active
-        results.append(
-            {
-                "name": entry.name,
-                "description": entry.description,
-                "category": entry.category,
-                "tags": entry.tags,
-                "active": is_active,
-                "status": "loaded" if is_active else "available - call load_tools to activate",
-            }
-        )
+        result_item: Dict[str, Any] = {
+            "name": entry.name,
+            "description": entry.description,
+            "category": entry.category,
+            "tags": entry.tags,
+            "active": is_active,
+            "status": "loaded" if is_active else "available - call load_tools to activate",
+        }
+        if entry.token_count > 0:
+            result_item["estimated_tokens"] = entry.token_count
+        results.append(result_item)
 
     categories = tool_catalog.list_categories()
 
-    body = {
+    body: Dict[str, Any] = {
         "results": results,
         "total_found": len(results),
         "available_categories": categories,
@@ -77,6 +78,10 @@ def browse_toolkit(
         body["query"] = query
     if category:
         body["category_filter"] = category
+
+    # Include budget snapshot when available
+    if tool_session is not None and tool_session.token_budget is not None:
+        body["budget"] = tool_session.get_budget_usage()
 
     return ToolExecutionResult(
         content=json.dumps(body, indent=2),
@@ -113,6 +118,8 @@ def load_tools(
     already_active: List[str] = []
     invalid: List[str] = []
 
+    # Build token_counts map from catalog for budget enforcement
+    token_counts: Dict[str, int] = {}
     for name in tool_names:
         # Validate against catalog if available
         if tool_catalog and tool_catalog.get_entry(name) is None:
@@ -122,9 +129,11 @@ def load_tools(
             already_active.append(name)
             continue
         loaded.append(name)
+        if tool_catalog:
+            token_counts[name] = tool_catalog.get_token_count(name)
 
-    # Attempt to load validated names
-    failed_limit = tool_session.load(loaded)
+    # Attempt to load validated names (with token budget enforcement)
+    failed_limit = tool_session.load(loaded, token_counts=token_counts)
     # Remove any that hit the limit from the loaded list
     actually_loaded = [n for n in loaded if n not in failed_limit]
 
@@ -135,6 +144,10 @@ def load_tools(
         "failed_limit": failed_limit,
         "active_count": len(tool_session.active_tools),
     }
+
+    # Include budget snapshot when available
+    if tool_session.token_budget is not None:
+        response["budget"] = tool_session.get_budget_usage()
 
     return ToolExecutionResult(
         content=json.dumps(response, indent=2),

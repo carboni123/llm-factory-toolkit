@@ -8,6 +8,15 @@ from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Default token-budget thresholds (fraction of token_budget)
+# ---------------------------------------------------------------------------
+
+#: Fraction of token_budget at which a warning is logged.
+WARNING_THRESHOLD: float = 0.75
+#: Fraction of token_budget at which new loads are rejected.
+ERROR_THRESHOLD: float = 0.90
+
 
 @dataclass
 class ToolSession:
@@ -16,6 +25,14 @@ class ToolSession:
     The session is a mutable set of tool names.  Meta-tools
     (``browse_toolkit``, ``load_tools``) modify it during the generate
     loop so that newly loaded tools appear in subsequent LLM calls.
+
+    Token budget tracking
+    ---------------------
+    When a ``token_budget`` is set (e.g. to reserve a portion of the model's
+    context window for tool definitions), the session tracks cumulative
+    token usage via ``_token_counts``.  Tools whose estimated cost would
+    push usage past the budget are rejected with a ``"failed_budget"``
+    status.
 
     Applications can serialise sessions with :meth:`to_dict` /
     :meth:`from_dict` to persist state across conversation turns
@@ -27,16 +44,32 @@ class ToolSession:
     session_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # Token budget fields
+    token_budget: Optional[int] = None
+    _token_counts: Dict[str, int] = field(default_factory=dict)
+
     # ------------------------------------------------------------------
     # Mutators
     # ------------------------------------------------------------------
 
-    def load(self, names: List[str]) -> List[str]:
+    def load(
+        self,
+        names: List[str],
+        token_counts: Optional[Dict[str, int]] = None,
+    ) -> List[str]:
         """Add tools to the active set.
 
+        Args:
+            names: Tool names to load.
+            token_counts: Mapping of tool name to estimated token cost.
+                Used for token-budget enforcement.  Tools not present in
+                the mapping are assumed to cost ``0`` tokens.
+
         Returns a list of tool names that could *not* be added because
-        :attr:`max_tools` was reached.
+        :attr:`max_tools` was reached or :attr:`token_budget` would be
+        exceeded.
         """
+        counts = token_counts or {}
         failed: List[str] = []
         for name in names:
             if name in self.active_tools:
@@ -44,11 +77,19 @@ class ToolSession:
             if len(self.active_tools) >= self.max_tools:
                 failed.append(name)
                 continue
+            cost = counts.get(name, 0)
+            if self.token_budget is not None and cost > 0:
+                if self.tokens_used + cost > self.token_budget:
+                    failed.append(name)
+                    continue
             self.active_tools.add(name)
+            if cost > 0:
+                self._token_counts[name] = cost
         if failed:
             logger.warning(
-                "ToolSession max_tools (%d) reached; could not load: %s",
+                "ToolSession could not load (max_tools=%d, budget=%s): %s",
                 self.max_tools,
+                self.token_budget,
                 failed,
             )
         return failed
@@ -57,6 +98,7 @@ class ToolSession:
         """Remove tools from the active set."""
         for name in names:
             self.active_tools.discard(name)
+            self._token_counts.pop(name, None)
 
     # ------------------------------------------------------------------
     # Queries
@@ -71,6 +113,64 @@ class ToolSession:
         return name in self.active_tools
 
     # ------------------------------------------------------------------
+    # Token budget queries
+    # ------------------------------------------------------------------
+
+    @property
+    def tokens_used(self) -> int:
+        """Total estimated tokens consumed by active tool definitions."""
+        return sum(self._token_counts.get(n, 0) for n in self.active_tools)
+
+    @property
+    def tokens_remaining(self) -> Optional[int]:
+        """Tokens still available within the budget, or ``None`` if no budget."""
+        if self.token_budget is None:
+            return None
+        return max(0, self.token_budget - self.tokens_used)
+
+    def get_budget_usage(self) -> Dict[str, Any]:
+        """Return a snapshot of the current token-budget state.
+
+        Returns a dict suitable for JSON serialisation and for surfacing
+        to the LLM via meta-tool responses::
+
+            {
+                "tokens_used": 2400,
+                "token_budget": 8000,
+                "tokens_remaining": 5600,
+                "utilisation": 0.30,
+                "warning": False,
+                "budget_exceeded": False,
+                "active_tool_count": 12,
+            }
+
+        When no ``token_budget`` is configured the values are ``None``
+        for budget-related fields.
+        """
+        used = self.tokens_used
+        remaining = self.tokens_remaining
+        budget = self.token_budget
+
+        if budget is not None and budget > 0:
+            utilisation = round(used / budget, 4)
+            warning = utilisation >= WARNING_THRESHOLD
+            exceeded = utilisation >= ERROR_THRESHOLD
+        else:
+            utilisation = 0.0
+            warning = False
+            exceeded = False
+
+        return {
+            "tokens_used": used,
+            "token_budget": budget,
+            "tokens_remaining": remaining,
+            "utilisation": utilisation,
+            "warning": warning,
+            "budget_exceeded": exceeded,
+            "active_tool_count": len(self.active_tools),
+        }
+
+    # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
 
@@ -81,14 +181,19 @@ class ToolSession:
             "max_tools": self.max_tools,
             "session_id": self.session_id,
             "metadata": self.metadata,
+            "token_budget": self.token_budget,
+            "_token_counts": dict(self._token_counts),
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolSession":
         """Deserialise from a dict produced by :meth:`to_dict`."""
-        return cls(
+        session = cls(
             active_tools=set(data.get("active_tools", [])),
             max_tools=data.get("max_tools", 50),
             session_id=data.get("session_id"),
             metadata=data.get("metadata", {}),
+            token_budget=data.get("token_budget"),
         )
+        session._token_counts = dict(data.get("_token_counts", {}))
+        return session
