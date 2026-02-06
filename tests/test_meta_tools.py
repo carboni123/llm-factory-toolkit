@@ -1,11 +1,11 @@
-"""Tests for browse_toolkit and load_tools meta-tools."""
+"""Tests for browse_toolkit, load_tools, and unload_tools meta-tools."""
 
 import json
 
 import pytest
 
-from llm_factory_toolkit.tools.catalog import InMemoryToolCatalog, ToolCatalogEntry
-from llm_factory_toolkit.tools.meta_tools import browse_toolkit, load_tools
+from llm_factory_toolkit.tools.catalog import InMemoryToolCatalog
+from llm_factory_toolkit.tools.meta_tools import browse_toolkit, load_tools, unload_tools
 from llm_factory_toolkit.tools.session import ToolSession
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
@@ -75,7 +75,7 @@ def catalog(factory: ToolFactory) -> InMemoryToolCatalog:
 @pytest.fixture
 def session() -> ToolSession:
     s = ToolSession()
-    s.load(["browse_toolkit", "load_tools"])
+    s.load(["browse_toolkit", "load_tools", "unload_tools"])
     return s
 
 
@@ -237,8 +237,8 @@ class TestLoadTools:
             tool_session=session,
         )
         body = json.loads(result.content)
-        # browse_toolkit + load_tools + send_email + get_weather = 4
-        assert body["active_count"] == 4
+        # browse_toolkit + load_tools + unload_tools + send_email + get_weather = 5
+        assert body["active_count"] == 5
 
 
 # ------------------------------------------------------------------
@@ -252,16 +252,17 @@ class TestRegisterMetaTools:
         names = factory.available_tool_names
         assert "browse_toolkit" in names
         assert "load_tools" in names
+        assert "unload_tools" in names
 
     def test_meta_tools_have_definitions(self) -> None:
         factory = ToolFactory()
         factory.register_meta_tools()
         defs = factory.get_tool_definitions(
-            filter_tool_names=["browse_toolkit", "load_tools"]
+            filter_tool_names=["browse_toolkit", "load_tools", "unload_tools"]
         )
-        assert len(defs) == 2
+        assert len(defs) == 3
         names = {d["function"]["name"] for d in defs}
-        assert names == {"browse_toolkit", "load_tools"}
+        assert names == {"browse_toolkit", "load_tools", "unload_tools"}
 
     def test_meta_tools_have_system_category(self) -> None:
         factory = ToolFactory()
@@ -269,5 +270,130 @@ class TestRegisterMetaTools:
         regs = factory.registrations
         assert regs["browse_toolkit"].category == "system"
         assert regs["load_tools"].category == "system"
+        assert regs["unload_tools"].category == "system"
         assert "meta" in regs["browse_toolkit"].tags
         assert "meta" in regs["load_tools"].tags
+        assert "meta" in regs["unload_tools"].tags
+
+
+# ------------------------------------------------------------------
+# unload_tools
+# ------------------------------------------------------------------
+
+class TestUnloadTools:
+    def test_unload_active_tools(
+        self, session: ToolSession
+    ) -> None:
+        """Unloading active tools removes them from the session."""
+        session.load(["send_email", "get_weather"])
+        result = unload_tools(
+            tool_names=["send_email", "get_weather"],
+            tool_session=session,
+        )
+        body = json.loads(result.content)
+        assert "send_email" in body["unloaded"]
+        assert "get_weather" in body["unloaded"]
+        assert not session.is_active("send_email")
+        assert not session.is_active("get_weather")
+
+    def test_unload_not_active_tool(
+        self, session: ToolSession
+    ) -> None:
+        """Unloading a tool that isn't active reports it as not_active."""
+        result = unload_tools(
+            tool_names=["send_email"],
+            tool_session=session,
+        )
+        body = json.loads(result.content)
+        assert "send_email" in body["not_active"]
+        assert body["unloaded"] == []
+
+    def test_cannot_unload_meta_tools(
+        self, session: ToolSession
+    ) -> None:
+        """Meta-tools (browse_toolkit, load_tools, unload_tools) are protected."""
+        result = unload_tools(
+            tool_names=["browse_toolkit", "load_tools", "unload_tools"],
+            tool_session=session,
+        )
+        body = json.loads(result.content)
+        assert body["unloaded"] == []
+        assert set(body["refused_protected"]) == {
+            "browse_toolkit", "load_tools", "unload_tools",
+        }
+        # All three meta-tools remain active
+        assert session.is_active("browse_toolkit")
+        assert session.is_active("load_tools")
+        assert session.is_active("unload_tools")
+
+    def test_cannot_unload_core_tools(
+        self, session: ToolSession
+    ) -> None:
+        """Core tools specified by the application are protected."""
+        session.load(["send_email"])
+        result = unload_tools(
+            tool_names=["send_email"],
+            tool_session=session,
+            core_tools=["send_email"],
+        )
+        body = json.loads(result.content)
+        assert body["unloaded"] == []
+        assert "send_email" in body["refused_protected"]
+        assert session.is_active("send_email")
+
+    def test_no_session_returns_error(self) -> None:
+        """Without a session, returns an error."""
+        result = unload_tools(tool_names=["send_email"])
+        assert result.error is not None
+        body = json.loads(result.content)
+        assert "error" in body
+
+    def test_active_count_in_response(
+        self, session: ToolSession
+    ) -> None:
+        """Response includes active_count after unloading."""
+        session.load(["send_email", "get_weather"])
+        result = unload_tools(
+            tool_names=["send_email"],
+            tool_session=session,
+        )
+        body = json.loads(result.content)
+        # unload_tools + browse_toolkit + load_tools + get_weather = 4
+        assert body["active_count"] == 4
+
+    def test_budget_snapshot_in_response(self) -> None:
+        """When token_budget is set, response includes budget info."""
+        session = ToolSession(token_budget=1000)
+        session.load(["browse_toolkit", "load_tools", "unload_tools"])
+        session.load(["send_email"], token_counts={"send_email": 200})
+        result = unload_tools(
+            tool_names=["send_email"],
+            tool_session=session,
+        )
+        body = json.loads(result.content)
+        assert "budget" in body
+        assert body["budget"]["token_budget"] == 1000
+        assert body["budget"]["tokens_used"] == 0  # freed after unload
+
+    def test_token_counts_freed_on_unload(self) -> None:
+        """Session token counts are freed when tools are unloaded."""
+        session = ToolSession(token_budget=1000)
+        session.load(["browse_toolkit", "load_tools", "unload_tools"])
+        session.load(["send_email"], token_counts={"send_email": 200})
+        assert session.tokens_used == 200
+        unload_tools(tool_names=["send_email"], tool_session=session)
+        assert session.tokens_used == 0
+
+    def test_mixed_unload_results(
+        self, session: ToolSession
+    ) -> None:
+        """Mix of valid, not_active, and protected tools."""
+        session.load(["send_email"])
+        result = unload_tools(
+            tool_names=["send_email", "get_weather", "browse_toolkit"],
+            tool_session=session,
+        )
+        body = json.loads(result.content)
+        assert "send_email" in body["unloaded"]
+        assert "get_weather" in body["not_active"]
+        assert "browse_toolkit" in body["refused_protected"]

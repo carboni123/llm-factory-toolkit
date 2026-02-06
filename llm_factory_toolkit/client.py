@@ -163,7 +163,8 @@ class LLMClient:
     def _build_dynamic_session(self) -> ToolSession:
         """Create a fresh :class:`ToolSession` with core + meta tools loaded."""
         session = ToolSession()
-        initial = list(dict.fromkeys(self.core_tools + ["browse_toolkit", "load_tools"]))
+        meta = ["browse_toolkit", "load_tools", "unload_tools"]
+        initial = list(dict.fromkeys(self.core_tools + meta))
         session.load(initial)
         return session
 
@@ -374,6 +375,11 @@ class LLMClient:
         """
         if self.dynamic_tool_loading and tool_session is None:
             tool_session = self._build_dynamic_session()
+
+        # Inject core_tools into context so unload_tools can protect them
+        if self.dynamic_tool_loading and self.core_tools:
+            tool_execution_context = dict(tool_execution_context or {})
+            tool_execution_context["core_tools"] = list(self.core_tools)
 
         processed_input = (
             self._merge_conversation_history(input)

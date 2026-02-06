@@ -1,5 +1,6 @@
 """Audit tests for dynamic loading with large tool catalogs (50+ tools)."""
 
+import json
 import time
 from typing import Any, Dict
 
@@ -262,20 +263,17 @@ def test_token_budget_tracking_gap():
     pytest.skip("Token budget tracking not yet implemented - identified gap")
 
 
-def test_tool_unloading_gap():
-    """Gap: No tool unloading meta-tool exists yet."""
-    # This test documents the missing feature
-    # Expected: unload_tools meta-tool to remove tools from session mid-loop
-    # Expected: session.unload() is already implemented but not exposed to LLM
+def test_tool_unloading_via_meta_tool():
+    """unload_tools meta-tool exposes session.unload() to the LLM."""
+    from llm_factory_toolkit.tools.meta_tools import unload_tools
+
     factory, catalog = _build_large_catalog(50)
     session = ToolSession()
     session.load(["tool_001", "tool_002", "tool_003"])
     assert len(session.active_tools) == 3
 
-    # This works at the session level
-    session.unload(["tool_002"])
+    result = unload_tools(tool_names=["tool_002"], tool_session=session)
+    body = json.loads(result.content)
+    assert "tool_002" in body["unloaded"]
     assert len(session.active_tools) == 2
     assert not session.is_active("tool_002")
-
-    # But there's no meta-tool to expose this to the LLM
-    pytest.skip("unload_tools meta-tool not yet implemented - identified gap")

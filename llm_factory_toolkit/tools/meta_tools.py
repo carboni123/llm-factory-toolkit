@@ -1,4 +1,4 @@
-"""Meta-tools for dynamic tool discovery and loading.
+"""Meta-tools for dynamic tool discovery, loading, and unloading.
 
 These functions are registered as regular tools via
 :meth:`ToolFactory.register_meta_tools`.  The ``tool_catalog`` and
@@ -157,6 +157,73 @@ def load_tools(
 
 
 # ------------------------------------------------------------------
+# unload_tools
+# ------------------------------------------------------------------
+
+#: Tool names that cannot be unloaded (meta-tools themselves).
+_META_TOOL_NAMES = frozenset({"browse_toolkit", "load_tools", "unload_tools"})
+
+
+def unload_tools(
+    tool_names: List[str],
+    *,
+    tool_session: Optional[ToolSession] = None,
+    core_tools: Optional[List[str]] = None,
+) -> ToolExecutionResult:
+    """Remove tools from the active session to free context tokens.
+
+    Core tools and meta-tools (``browse_toolkit``, ``load_tools``,
+    ``unload_tools``) are protected and cannot be unloaded.
+
+    Args:
+        tool_names: List of tool names to unload.
+        tool_session: Injected -- session to modify.
+        core_tools: Injected -- tool names that must stay active.
+    """
+    if tool_session is None:
+        return ToolExecutionResult(
+            content=json.dumps({"error": "Tool session not available."}),
+            error="No session configured",
+        )
+
+    protected = _META_TOOL_NAMES | set(core_tools or [])
+
+    unloaded: List[str] = []
+    not_active: List[str] = []
+    refused: List[str] = []
+
+    for name in tool_names:
+        if name in protected:
+            refused.append(name)
+            continue
+        if name not in tool_session.active_tools:
+            not_active.append(name)
+            continue
+        unloaded.append(name)
+
+    # Perform the actual unload (frees token counts in session)
+    if unloaded:
+        tool_session.unload(unloaded)
+
+    response: Dict[str, Any] = {
+        "unloaded": unloaded,
+        "not_active": not_active,
+        "refused_protected": refused,
+        "active_count": len(tool_session.active_tools),
+    }
+
+    # Include budget snapshot when available
+    if tool_session.token_budget is not None:
+        response["budget"] = tool_session.get_budget_usage()
+
+    return ToolExecutionResult(
+        content=json.dumps(response, indent=2),
+        payload=response,
+        metadata={"requested": tool_names},
+    )
+
+
+# ------------------------------------------------------------------
 # Parameter schemas (used by register_meta_tools)
 # ------------------------------------------------------------------
 
@@ -187,6 +254,18 @@ LOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
             "type": "array",
             "items": {"type": "string"},
             "description": "List of tool names to load into the active session.",
+        },
+    },
+    "required": ["tool_names"],
+}
+
+UNLOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tool_names": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of tool names to remove from the active session.",
         },
     },
     "required": ["tool_names"],

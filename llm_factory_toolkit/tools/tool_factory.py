@@ -283,12 +283,14 @@ class ToolFactory:
             )
 
     def register_meta_tools(self) -> None:
-        """Register ``browse_toolkit`` and ``load_tools`` for dynamic loading."""
+        """Register ``browse_toolkit``, ``load_tools``, and ``unload_tools``."""
         from .meta_tools import (
             BROWSE_TOOLKIT_PARAMETERS,
             LOAD_TOOLS_PARAMETERS,
+            UNLOAD_TOOLS_PARAMETERS,
             browse_toolkit,
             load_tools,
+            unload_tools,
         )
 
         self.register_tool(
@@ -314,7 +316,20 @@ class ToolFactory:
             category="system",
             tags=["meta", "loading"],
         )
-        module_logger.info("Registered meta-tools: browse_toolkit, load_tools")
+        self.register_tool(
+            function=unload_tools,
+            name="unload_tools",
+            description=(
+                "Remove tools from the active session to free context tokens. "
+                "Core tools and meta-tools cannot be unloaded."
+            ),
+            parameters=UNLOAD_TOOLS_PARAMETERS,
+            category="system",
+            tags=["meta", "unloading"],
+        )
+        module_logger.info(
+            "Registered meta-tools: browse_toolkit, load_tools, unload_tools"
+        )
 
     def get_tool_definitions(
         self, filter_tool_names: Optional[Sequence[str]] = None
