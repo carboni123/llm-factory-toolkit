@@ -122,7 +122,11 @@ SEND_EMAIL_PARAMS = {
 
 
 def _build_factory_and_catalog() -> tuple[ToolFactory, InMemoryToolCatalog]:
-    """Build a ToolFactory with tools + catalog + meta-tools."""
+    """Build a ToolFactory with tools + catalog + meta-tools.
+
+    Category and tags are passed at registration time so the catalog
+    auto-populates them without needing add_metadata().
+    """
     factory = ToolFactory()
 
     factory.register_tool(
@@ -130,25 +134,27 @@ def _build_factory_and_catalog() -> tuple[ToolFactory, InMemoryToolCatalog]:
         name="get_secret_data",
         description="Retrieves secret data based on a provided data ID. Use this to get passwords, access codes, etc.",
         parameters=GET_SECRET_DATA_PARAMS,
+        category="security",
+        tags=["secret", "password", "access"],
     )
     factory.register_tool(
         function=get_weather,
         name="get_weather",
         description="Gets the current weather for a city. Returns temperature and conditions.",
         parameters=GET_WEATHER_PARAMS,
+        category="data",
+        tags=["weather", "temperature", "city"],
     )
     factory.register_tool(
         function=send_email,
         name="send_email",
         description="Sends an email to a recipient with a subject and body.",
         parameters=SEND_EMAIL_PARAMS,
+        category="communication",
+        tags=["email", "send", "notify"],
     )
 
     catalog = InMemoryToolCatalog(factory)
-    catalog.add_metadata("get_secret_data", category="security", tags=["secret", "password", "access"])
-    catalog.add_metadata("get_weather", category="data", tags=["weather", "temperature", "city"])
-    catalog.add_metadata("send_email", category="communication", tags=["email", "send", "notify"])
-
     factory.set_catalog(catalog)
     factory.register_meta_tools()
 

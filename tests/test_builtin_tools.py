@@ -78,3 +78,13 @@ async def test_safe_math_evaluator_without_sympy(monkeypatch: pytest.MonkeyPatch
 
     assert result.error is not None
     assert "sympy not installed" in result.content
+
+
+async def test_builtins_have_category():
+    factory = ToolFactory()
+    factory.register_builtins()
+    regs = factory.registrations
+    assert regs["safe_math_evaluator"].category == "utility"
+    assert regs["read_local_file"].category == "utility"
+    assert "math" in regs["safe_math_evaluator"].tags
+    assert "file" in regs["read_local_file"].tags

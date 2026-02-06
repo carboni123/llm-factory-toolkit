@@ -100,15 +100,14 @@ class InMemoryToolCatalog(ToolCatalog):
 
     def _build_from_factory(self) -> None:
         """Create catalog entries from every tool in the factory."""
-        for defn in self._factory.get_tool_definitions():
-            func = defn.get("function", {})
-            name = func.get("name", "")
-            if not name:
-                continue
+        for name, reg in self._factory.registrations.items():
+            func = reg.definition.get("function", {})
             self._entries[name] = ToolCatalogEntry(
                 name=name,
                 description=func.get("description", ""),
                 parameters=func.get("parameters"),
+                category=reg.category,
+                tags=list(reg.tags),
             )
         logger.info("InMemoryToolCatalog built with %d entries.", len(self._entries))
 

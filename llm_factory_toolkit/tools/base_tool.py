@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .models import ToolExecutionResult
 
@@ -12,6 +12,8 @@ class BaseTool(ABC):
     NAME: str  # Unique name for the tool
     DESCRIPTION: str  # Description shown to the LLM
     PARAMETERS: Optional[Dict[str, Any]] = None  # JSON schema for arguments
+    CATEGORY: Optional[str] = None  # Category for catalog discovery
+    TAGS: Optional[List[str]] = None  # Tags for catalog search
 
     @abstractmethod
     def execute(self, **kwargs: Any) -> ToolExecutionResult:

@@ -262,3 +262,12 @@ class TestRegisterMetaTools:
         assert len(defs) == 2
         names = {d["function"]["name"] for d in defs}
         assert names == {"browse_toolkit", "load_tools"}
+
+    def test_meta_tools_have_system_category(self) -> None:
+        factory = ToolFactory()
+        factory.register_meta_tools()
+        regs = factory.registrations
+        assert regs["browse_toolkit"].category == "system"
+        assert regs["load_tools"].category == "system"
+        assert "meta" in regs["browse_toolkit"].tags
+        assert "meta" in regs["load_tools"].tags

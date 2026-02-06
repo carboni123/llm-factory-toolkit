@@ -227,3 +227,71 @@ class TestEntryMatchesQuery:
         """Underscored names like 'get_secret_data' match token 'secrets'."""
         entry = ToolCatalogEntry(name="get_secret_data", description="desc")
         assert entry.matches_query("secrets")
+
+
+# ------------------------------------------------------------------
+# Auto-populated metadata from register_tool()
+# ------------------------------------------------------------------
+
+class TestAutoPopulatedMetadata:
+    def test_category_from_register_tool(self) -> None:
+        """Category/tags passed at register_tool() flow through to catalog."""
+        factory = ToolFactory()
+        factory.register_tool(
+            function=lambda: None,
+            name="my_tool",
+            description="Test tool.",
+            category="testing",
+            tags=["unit", "test"],
+        )
+        catalog = InMemoryToolCatalog(factory)
+        entry = catalog.get_entry("my_tool")
+        assert entry is not None
+        assert entry.category == "testing"
+        assert entry.tags == ["unit", "test"]
+
+    def test_add_metadata_overrides_auto_populated(self) -> None:
+        """add_metadata() overrides category/tags set at registration."""
+        factory = ToolFactory()
+        factory.register_tool(
+            function=lambda: None,
+            name="my_tool",
+            description="Test tool.",
+            category="original",
+            tags=["original"],
+        )
+        catalog = InMemoryToolCatalog(factory)
+        catalog.add_metadata("my_tool", category="overridden", tags=["new"])
+        entry = catalog.get_entry("my_tool")
+        assert entry is not None
+        assert entry.category == "overridden"
+        assert entry.tags == ["new"]
+
+    def test_no_category_defaults_to_none(self) -> None:
+        """Omitting category/tags gives None/[] for backward compat."""
+        factory = ToolFactory()
+        factory.register_tool(
+            function=lambda: None,
+            name="my_tool",
+            description="Test tool.",
+        )
+        catalog = InMemoryToolCatalog(factory)
+        entry = catalog.get_entry("my_tool")
+        assert entry is not None
+        assert entry.category is None
+        assert entry.tags == []
+
+    def test_registrations_property(self) -> None:
+        """ToolFactory.registrations exposes category and tags."""
+        factory = ToolFactory()
+        factory.register_tool(
+            function=lambda: None,
+            name="my_tool",
+            description="Test tool.",
+            category="test_cat",
+            tags=["a", "b"],
+        )
+        regs = factory.registrations
+        assert "my_tool" in regs
+        assert regs["my_tool"].category == "test_cat"
+        assert regs["my_tool"].tags == ["a", "b"]

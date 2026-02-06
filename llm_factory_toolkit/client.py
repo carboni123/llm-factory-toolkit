@@ -98,6 +98,8 @@ class LLMClient:
         name: Optional[str] = None,
         description: Optional[str] = None,
         parameters: Optional[Dict[str, Any]] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ) -> None:
         """Register a Python function as a tool for the LLM.
 
@@ -106,6 +108,8 @@ class LLMClient:
             name: Tool name.  Defaults to ``function.__name__``.
             description: Tool description.  Defaults to the docstring.
             parameters: JSON Schema for the function's parameters.
+            category: Category for catalog discovery.
+            tags: Tags for catalog search.
         """
         if name is None:
             name = function.__name__
@@ -123,6 +127,8 @@ class LLMClient:
             name=name,
             description=description,
             parameters=parameters,
+            category=category,
+            tags=tags,
         )
         logger.info("Tool '%s' registered.", name)
 

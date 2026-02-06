@@ -7,7 +7,7 @@ import importlib
 import inspect
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, cast
 
 from ..exceptions import ToolError
@@ -28,6 +28,8 @@ class ToolRegistration:
     executor: ToolHandler
     mock_executor: ToolHandler
     definition: Dict[str, Any]
+    category: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
 
 
 BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
@@ -39,6 +41,8 @@ BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
             "properties": {"expression": {"type": "string"}},
             "required": ["expression"],
         },
+        "category": "utility",
+        "tags": ["math", "calculator"],
     },
     "read_local_file": {
         "function": "builtins.read_local_file",
@@ -55,6 +59,8 @@ BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "required": ["file_path"],
         },
+        "category": "utility",
+        "tags": ["file", "io", "read"],
     },
 }
 
@@ -106,6 +112,8 @@ class ToolFactory:
         description: str,
         parameters: Optional[Dict[str, Any]] = None,
         mock_function: Optional[ToolHandler] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ) -> None:
         """Register a callable tool along with its metadata."""
 
@@ -120,6 +128,8 @@ class ToolFactory:
             executor=function,
             mock_executor=mock_executor,
             definition=definition,
+            category=category,
+            tags=tags if tags is not None else [],
         )
         self.tool_usage_counts[name] = 0
         module_logger.info("Registered tool: %s", name)
@@ -131,6 +141,8 @@ class ToolFactory:
         name_override: Optional[str] = None,
         description_override: Optional[str] = None,
         parameters_override: Optional[Dict[str, Any]] = None,
+        category_override: Optional[str] = None,
+        tags_override: Optional[List[str]] = None,
     ) -> None:
         """Register a :class:`BaseTool` subclass by wiring wrappers for execution."""
 
@@ -142,6 +154,8 @@ class ToolFactory:
         name = name_override or getattr(tool_class, "NAME", None)
         description = description_override or getattr(tool_class, "DESCRIPTION", None)
         parameters = parameters_override or getattr(tool_class, "PARAMETERS", None)
+        category = category_override or getattr(tool_class, "CATEGORY", None)
+        tags = tags_override or getattr(tool_class, "TAGS", None)
 
         if not name or not description:
             raise ToolError(
@@ -167,6 +181,8 @@ class ToolFactory:
             description=description,
             parameters=parameters,
             mock_function=mock_wrapper,
+            category=category,
+            tags=tags,
         )
         module_logger.info(
             "Registered tool class: %s as '%s'", tool_class.__name__, name
@@ -194,6 +210,8 @@ class ToolFactory:
                 name=name,
                 description=info["description"],
                 parameters=info.get("parameters"),
+                category=info.get("category"),
+                tags=info.get("tags"),
             )
 
     def register_meta_tools(self) -> None:
@@ -214,6 +232,8 @@ class ToolFactory:
                 "Use load_tools to activate the tools you need."
             ),
             parameters=BROWSE_TOOLKIT_PARAMETERS,
+            category="system",
+            tags=["meta", "discovery"],
         )
         self.register_tool(
             function=load_tools,
@@ -223,6 +243,8 @@ class ToolFactory:
                 "Pass a list of tool names discovered via browse_toolkit."
             ),
             parameters=LOAD_TOOLS_PARAMETERS,
+            category="system",
+            tags=["meta", "loading"],
         )
         module_logger.info("Registered meta-tools: browse_toolkit, load_tools")
 
@@ -369,6 +391,12 @@ class ToolFactory:
         """Names of all registered tools."""
 
         return list(self._registry.keys())
+
+    @property
+    def registrations(self) -> Dict[str, ToolRegistration]:
+        """Return a copy of all tool registrations."""
+
+        return dict(self._registry)
 
     def _build_definition(
         self, name: str, description: str, parameters: Optional[Dict[str, Any]]
