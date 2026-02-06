@@ -40,12 +40,15 @@ Detection happens in `_is_openai_model()` at the top of `generate()`, `generate_
 | `client.py` | `LLMClient` -- thin public API wrapper, tool registration convenience, history merging | ~450 |
 | `provider.py` | `LiteLLMProvider` -- dual routing, generation loops, tool dispatch, message conversion | ~1500 |
 | `exceptions.py` | Exception hierarchy: `LLMToolkitError` > `ConfigurationError`, `ProviderError`, `ToolError`, `UnsupportedFeatureError` | ~30 |
-| `tools/tool_factory.py` | `ToolFactory` -- tool registration, dispatch, context injection, mock mode, usage tracking | ~570 |
+| `tools/tool_factory.py` | `ToolFactory` -- tool registration, dispatch, context injection, mock mode, usage tracking, meta-tool registration | ~610 |
 | `tools/base_tool.py` | `BaseTool` ABC for class-based tools | ~40 |
 | `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
 | `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking | ~190 |
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` | ~60 |
-| `__init__.py` | Public exports, `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~70 |
+| `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `ToolCatalogEntry` | ~150 |
+| `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation | ~95 |
+| `tools/meta_tools.py` | `browse_toolkit`, `load_tools` -- meta-tools for dynamic discovery | ~160 |
+| `__init__.py` | Public exports, `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~75 |
 
 ### Data Flow
 
@@ -54,7 +57,7 @@ User code
   -> LLMClient.generate()
     -> LiteLLMProvider.generate() or ._generate_openai()
       -> LLM API call
-      -> If tool calls: ToolFactory.dispatch_tool() loop (up to 10 iterations)
+      -> If tool calls: ToolFactory.dispatch_tool() loop (up to 5 iterations)
         -> Context injection (match param names to tool_execution_context)
         -> Tool function execution (real or mock)
         -> ToolExecutionResult (content for LLM, payload for app)
@@ -88,6 +91,13 @@ Tools return `ToolExecutionResult(content="for LLM", payload={...})`. The `conte
 - `_responses_to_chat_messages()` converts Responses -> Chat
 - External API always returns Chat Completions format for consistency
 
+### Dynamic Tool Loading
+When `tool_session` is passed to `generate()`, the agentic loop recomputes visible tools each iteration from `session.list_active()`. Meta-tools (`browse_toolkit`, `load_tools`) modify the session mid-loop so newly loaded tools appear in the next LLM call.
+
+Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Context injection is used to pass `tool_session` and `tool_catalog` to meta-tools without LLM visibility.
+
+In `provider.py`, both the LiteLLM path (where `_build_call_kwargs` is inside the loop) and the OpenAI path (where `_build_openai_tools` is rebuilt inside the loop when session is present) recompute definitions each iteration.
+
 ### Strict Mode (OpenAI)
 `_build_openai_tools()` sets `strict: True` on function tools. This requires ALL properties listed in the `required` array -- not just the ones you want to be required. This is an OpenAI Responses API constraint.
 
@@ -101,6 +111,9 @@ Tools return `ToolExecutionResult(content="for LLM", payload={...})`. The `conte
 - `test_toolfactory_context_injection.py` -- context injection
 - `test_toolfactory_usage_metadata.py` -- usage tracking
 - `test_tool_runtime_nested_calls.py` -- nested execution
+- `test_tool_catalog.py` -- catalog search, categories, metadata
+- `test_tool_session.py` -- load/unload, limits, serialisation
+- `test_meta_tools.py` -- browse_toolkit, load_tools, register_meta_tools
 
 ### Integration Tests (require API keys)
 - Skip conditions: `@pytest.mark.skipif(not OPENAI_API_KEY, reason="...")`

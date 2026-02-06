@@ -65,7 +65,16 @@ class ToolFactory:
     def __init__(self) -> None:
         self._registry: Dict[str, ToolRegistration] = {}
         self.tool_usage_counts: Dict[str, int] = {}
+        self._catalog: Optional[Any] = None
         module_logger.info("ToolFactory initialized.")
+
+    def set_catalog(self, catalog: Any) -> None:
+        """Attach a :class:`ToolCatalog` for dynamic tool loading."""
+        self._catalog = catalog
+
+    def get_catalog(self) -> Optional[Any]:
+        """Return the attached catalog, if any."""
+        return self._catalog
 
     @property
     def tool_definitions(self) -> List[Dict[str, Any]]:
@@ -186,6 +195,36 @@ class ToolFactory:
                 description=info["description"],
                 parameters=info.get("parameters"),
             )
+
+    def register_meta_tools(self) -> None:
+        """Register ``browse_toolkit`` and ``load_tools`` for dynamic loading."""
+        from .meta_tools import (
+            BROWSE_TOOLKIT_PARAMETERS,
+            LOAD_TOOLS_PARAMETERS,
+            browse_toolkit,
+            load_tools,
+        )
+
+        self.register_tool(
+            function=browse_toolkit,
+            name="browse_toolkit",
+            description=(
+                "Search the tool catalog to discover available tools. "
+                "Returns matching tools with name, description, category, and tags. "
+                "Use load_tools to activate the tools you need."
+            ),
+            parameters=BROWSE_TOOLKIT_PARAMETERS,
+        )
+        self.register_tool(
+            function=load_tools,
+            name="load_tools",
+            description=(
+                "Load tools into the active session so you can use them. "
+                "Pass a list of tool names discovered via browse_toolkit."
+            ),
+            parameters=LOAD_TOOLS_PARAMETERS,
+        )
+        module_logger.info("Registered meta-tools: browse_toolkit, load_tools")
 
     def get_tool_definitions(
         self, filter_tool_names: Optional[Sequence[str]] = None

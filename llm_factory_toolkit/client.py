@@ -34,6 +34,7 @@ from .tools.models import (
     ToolExecutionResult,
     ToolIntentOutput,
 )
+from .tools.session import ToolSession
 from .tools.tool_factory import ToolFactory
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,7 @@ class LLMClient:
         stream: bool = False,
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
         """Generate a response from the configured LLM.
@@ -166,6 +168,9 @@ class LLMClient:
                 options (e.g. ``{"search_context_size": "high"}``).
             file_search: Enable OpenAI file search.  Pass vector store IDs
                 as a list or config dict.  **OpenAI models only**.
+            tool_session: Optional :class:`ToolSession` for dynamic tool
+                loading.  When provided, the agent sees only the tools in
+                the session's active set (recomputed each loop iteration).
             **kwargs: Forwarded to ``litellm.acompletion`` (e.g.
                 ``reasoning_effort``, ``thinking``, ``top_p``).
 
@@ -191,15 +196,17 @@ class LLMClient:
             "mock_tools": mock_tools,
             "parallel_tools": parallel_tools,
             "web_search": web_search,
+            "tool_session": tool_session,
             **kwargs,
         }
         # Filter None values but keep meaningful None/empty (use_tools,
-        # tool_execution_context, parallel_tools, file_search)
+        # tool_execution_context, parallel_tools, file_search, tool_session)
         common_kwargs = {
             k: v
             for k, v in common_kwargs.items()
             if v is not None
-            or k in {"use_tools", "tool_execution_context", "parallel_tools"}
+            or k
+            in {"use_tools", "tool_execution_context", "parallel_tools", "tool_session"}
         }
 
         try:

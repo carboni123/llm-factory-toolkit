@@ -346,7 +346,7 @@ result = await client.generate(
 6. The LLM uses the tool result to formulate its final response.
 7. `client.generate()` returns a `GenerationResult` with the final content, deferred payloads, and the tool transcript.
 
-This loop can repeat multiple times if the LLM makes sequential tool calls (up to `max_tool_iterations`, default 10).
+This loop can repeat multiple times if the LLM makes sequential tool calls (up to `max_tool_iterations`, default 5).
 
 ### Multi-turn Conversations with Tools
 

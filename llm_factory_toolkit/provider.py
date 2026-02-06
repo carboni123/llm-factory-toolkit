@@ -35,6 +35,7 @@ from .tools.models import (
     ToolExecutionResult,
     ToolIntentOutput,
 )
+from .tools.session import ToolSession
 from .tools.tool_factory import ToolFactory
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,7 @@ class LiteLLMProvider:
         | Dict[str, Any]
         | List[str]
         | Tuple[str, ...] = False,
+        tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, executing tool calls iteratively.
@@ -187,6 +189,7 @@ class LiteLLMProvider:
                 parallel_tools=parallel_tools,
                 web_search=web_search,
                 file_search=file_search,
+                tool_session=tool_session,
                 **kwargs,
             )
 
@@ -197,19 +200,35 @@ class LiteLLMProvider:
                 f"got: {active_model}"
             )
 
+        # Dynamic tool loading: inject session and catalog into context
+        if tool_session is not None:
+            tool_execution_context = dict(tool_execution_context or {})
+            tool_execution_context["tool_session"] = tool_session
+            if self.tool_factory:
+                catalog = self.tool_factory.get_catalog()
+                if catalog:
+                    tool_execution_context["tool_catalog"] = catalog
+
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
         current_messages = copy.deepcopy(input)
         iteration_count = 0
 
         while iteration_count < max_tool_iterations:
+            # Recompute visible tools from session each iteration
+            effective_use_tools = use_tools
+            if tool_session is not None:
+                active = tool_session.list_active()
+                if active:
+                    effective_use_tools = active
+
             call_kwargs = self._build_call_kwargs(
                 model=active_model,
                 messages=current_messages,
                 temperature=temperature,
                 max_output_tokens=max_output_tokens,
                 response_format=response_format,
-                use_tools=use_tools,
+                use_tools=effective_use_tools,
                 web_search=web_search,
                 **kwargs,
             )
@@ -301,6 +320,7 @@ class LiteLLMProvider:
         | Dict[str, Any]
         | List[str]
         | Tuple[str, ...] = False,
+        tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, yielding :class:`StreamChunk` objects.
@@ -326,22 +346,39 @@ class LiteLLMProvider:
                 parallel_tools=parallel_tools,
                 web_search=web_search,
                 file_search=file_search,
+                tool_session=tool_session,
                 **kwargs,
             ):
                 yield chunk
             return
 
+        # Dynamic tool loading: inject session and catalog into context
+        if tool_session is not None:
+            tool_execution_context = dict(tool_execution_context or {})
+            tool_execution_context["tool_session"] = tool_session
+            if self.tool_factory:
+                catalog = self.tool_factory.get_catalog()
+                if catalog:
+                    tool_execution_context["tool_catalog"] = catalog
+
         current_messages = copy.deepcopy(input)
         iteration_count = 0
 
         while iteration_count < max_tool_iterations:
+            # Recompute visible tools from session each iteration
+            effective_use_tools = use_tools
+            if tool_session is not None:
+                active = tool_session.list_active()
+                if active:
+                    effective_use_tools = active
+
             call_kwargs = self._build_call_kwargs(
                 model=active_model,
                 messages=current_messages,
                 temperature=temperature,
                 max_output_tokens=max_output_tokens,
                 response_format=response_format,
-                use_tools=use_tools,
+                use_tools=effective_use_tools,
                 web_search=web_search,
                 stream=True,
                 stream_options={"include_usage": True},
@@ -360,7 +397,6 @@ class LiteLLMProvider:
             # Reconstruct the full response to check for tool calls
             complete = litellm.stream_chunk_builder(chunks, messages=current_messages)
             message = complete.choices[0].message
-            assistant_content = message.content or ""
             tool_calls = message.tool_calls
 
             assistant_msg = self._message_to_dict(message)
@@ -1111,10 +1147,20 @@ class LiteLLMProvider:
         | Dict[str, Any]
         | List[str]
         | Tuple[str, ...] = False,
+        tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate via OpenAI Responses API (non-streaming)."""
         client = self._get_openai_client()
+
+        # Dynamic tool loading: inject session and catalog into context
+        if tool_session is not None:
+            tool_execution_context = dict(tool_execution_context or {})
+            tool_execution_context["tool_session"] = tool_session
+            if self.tool_factory:
+                catalog = self.tool_factory.get_catalog()
+                if catalog:
+                    tool_execution_context["tool_catalog"] = catalog
 
         tools_list = self._build_openai_tools(
             use_tools=use_tools,
@@ -1138,6 +1184,17 @@ class LiteLLMProvider:
         iteration_count = 0
 
         while iteration_count < max_tool_iterations:
+            # Recompute tools from session if dynamic loading is active
+            if tool_session is not None:
+                active = tool_session.list_active()
+                if active:
+                    tools_list = self._build_openai_tools(
+                        use_tools=active,
+                        web_search=web_search,
+                        file_search=file_search,
+                    )
+                    request_payload["tools"] = tools_list or None
+
             request_payload["input"] = current_messages
 
             try:
@@ -1248,10 +1305,20 @@ class LiteLLMProvider:
         | Dict[str, Any]
         | List[str]
         | Tuple[str, ...] = False,
+        tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream via OpenAI Responses API, yielding :class:`StreamChunk`."""
         client = self._get_openai_client()
+
+        # Dynamic tool loading: inject session and catalog into context
+        if tool_session is not None:
+            tool_execution_context = dict(tool_execution_context or {})
+            tool_execution_context["tool_session"] = tool_session
+            if self.tool_factory:
+                catalog = self.tool_factory.get_catalog()
+                if catalog:
+                    tool_execution_context["tool_catalog"] = catalog
 
         tools_list = self._build_openai_tools(
             use_tools=use_tools,
@@ -1274,6 +1341,17 @@ class LiteLLMProvider:
         iteration_count = 0
 
         while iteration_count < max_tool_iterations:
+            # Recompute tools from session if dynamic loading is active
+            if tool_session is not None:
+                active = tool_session.list_active()
+                if active:
+                    tools_list = self._build_openai_tools(
+                        use_tools=active,
+                        web_search=web_search,
+                        file_search=file_search,
+                    )
+                    request_payload["tools"] = tools_list or None
+
             request_payload["input"] = current_messages
 
             try:
