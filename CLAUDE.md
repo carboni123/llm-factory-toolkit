@@ -57,7 +57,7 @@ User code
   -> LLMClient.generate()
     -> LiteLLMProvider.generate() or ._generate_openai()
       -> LLM API call
-      -> If tool calls: ToolFactory.dispatch_tool() loop (up to 5 iterations)
+      -> If tool calls: ToolFactory.dispatch_tool() loop (up to 25 iterations)
         -> Context injection (match param names to tool_execution_context)
         -> Tool function execution (real or mock)
         -> ToolExecutionResult (content for LLM, payload for app)

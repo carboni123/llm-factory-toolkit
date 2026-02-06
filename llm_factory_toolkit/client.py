@@ -63,9 +63,50 @@ class LLMClient:
         is created internally.
     timeout:
         HTTP request timeout in seconds.
+    core_tools:
+        Tool names that should always be visible to the agent.  Only used
+        when ``dynamic_tool_loading=True``.  These tools are loaded into
+        every auto-created :class:`ToolSession` alongside the meta-tools
+        ``browse_toolkit`` and ``load_tools``.
+    dynamic_tool_loading:
+        When ``True``, the client automatically builds an
+        :class:`InMemoryToolCatalog` from the factory, registers the
+        ``browse_toolkit`` / ``load_tools`` meta-tools, and creates a
+        fresh :class:`ToolSession` on every ``generate()`` call.  This
+        lets the agent start with only ``core_tools`` and discover/load
+        additional tools on demand, reducing context bloat.  Requires an
+        explicit ``tool_factory`` with registered tools.
     **kwargs:
         Extra keyword arguments forwarded to every ``litellm.acompletion``
         call (e.g. ``api_base``, ``drop_params``, ``num_retries``).
+
+    Examples
+    --------
+    Basic usage::
+
+        client = LLMClient(model="openai/gpt-4o-mini")
+        result = await client.generate(
+            input=[{"role": "user", "content": "Hello!"}],
+        )
+
+    With tools::
+
+        factory = ToolFactory()
+        factory.register_tool(function=my_func, name="my_func", ...)
+        client = LLMClient(model="openai/gpt-4o-mini", tool_factory=factory)
+        result = await client.generate(
+            input=[{"role": "user", "content": "Use my_func"}],
+        )
+
+    Dynamic tool loading (many tools, agent discovers on demand)::
+
+        client = LLMClient(
+            model="openai/gpt-4.1-mini",
+            tool_factory=factory,          # has 20+ registered tools
+            core_tools=["call_human"],     # always visible
+            dynamic_tool_loading=True,     # auto catalog + meta-tools
+        )
+        result = await client.generate(input=messages)
     """
 
     def __init__(
@@ -180,6 +221,7 @@ class LLMClient:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
+        max_tool_iterations: int = 25,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
@@ -194,34 +236,141 @@ class LLMClient:
     ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
         """Generate a response from the configured LLM.
 
+        Sends the conversation to the model and runs an **agentic tool loop**:
+        if the model requests tool calls, this method dispatches them via the
+        :class:`ToolFactory`, feeds results back, and repeats — up to
+        ``max_tool_iterations`` (default 25) — until the model produces a
+        final text response.
+
         Args:
-            input: Conversation history as a list of message dicts.
-            model: Override the default model for this request.
-            temperature: Sampling temperature.
-            max_output_tokens: Max tokens to generate.
-            response_format: Dict or Pydantic model for structured output.
-            use_tools: Tool names to expose.  ``[]`` = all, ``None`` = none.
-            tool_execution_context: Context dict injected into tool calls.
-            mock_tools: Execute tools in mock mode (no side effects).
-            parallel_tools: Dispatch multiple tool calls concurrently.
-            merge_history: Merge sequential same-role messages.
-            stream: When ``True`` returns an async generator of
-                :class:`StreamChunk` objects instead of a
-                :class:`GenerationResult`.
-            web_search: Enable provider web search.  Pass a dict for
-                options (e.g. ``{"search_context_size": "high"}``).
-            file_search: Enable OpenAI file search.  Pass vector store IDs
-                as a list or config dict.  **OpenAI models only**.
-            tool_session: Optional :class:`ToolSession` for dynamic tool
-                loading.  When provided, the agent sees only the tools in
-                the session's active set (recomputed each loop iteration).
-            **kwargs: Forwarded to ``litellm.acompletion`` (e.g.
+            input: Conversation history as a list of message dicts.  Each dict
+                must have ``"role"`` (``"system"``, ``"user"``, or
+                ``"assistant"``) and ``"content"`` keys::
+
+                    [
+                        {"role": "system", "content": "You are helpful."},
+                        {"role": "user", "content": "Hello!"},
+                    ]
+
+            model: Override the client's default model for this request.
+            temperature: Sampling temperature (0.0 – 2.0).
+            max_output_tokens: Maximum tokens the model may generate.
+            max_tool_iterations: Maximum number of tool-call round-trips
+                before the loop stops and returns whatever content the model
+                has produced.  Default ``25``.
+            response_format: Request structured output.  Pass
+                ``{"type": "json_object"}`` for free-form JSON, or a
+                Pydantic ``BaseModel`` subclass for validated, typed output.
+                When a Pydantic model is used, ``result.content`` is a
+                parsed instance of that model.
+            use_tools: Which registered tools the model may call.
+
+                * ``[]`` (default): **all** registered tools are available.
+                * ``["tool_a", "tool_b"]``: only these tools are visible.
+                * ``None``: **no** tools; pure text generation.
+
+                When ``dynamic_tool_loading=True``, this is overridden by the
+                active tools in the auto-created :class:`ToolSession`.
+            tool_execution_context: A dict of server-side values injected
+                into tool functions by matching parameter names.  The LLM
+                never sees these values.  Example::
+
+                    tool_execution_context={
+                        "user_id": "usr_123",
+                        "db": my_connection,
+                    }
+
+            mock_tools: When ``True``, tools return stubs instead of executing
+                real logic.  Useful for testing tool flows without side effects.
+            parallel_tools: Dispatch multiple tool calls concurrently within
+                a single iteration (when the model requests several at once).
+            merge_history: Merge consecutive same-role messages before sending.
+            stream: When ``True``, returns an ``AsyncGenerator[StreamChunk]``
+                for real-time token-by-token output instead of waiting for
+                the full response.  Tool calls during streaming are handled
+                transparently.
+            web_search: Enable the provider's web search capability.
+                ``True`` for defaults, or a dict for options::
+
+                    web_search={"search_context_size": "high"}
+
+            file_search: Enable OpenAI file search over vector stores.
+                Pass vector store IDs as a list or a config dict.
+                **OpenAI models only** — raises ``UnsupportedFeatureError``
+                on other providers::
+
+                    file_search={"vector_store_ids": ["vs_abc"], "max_num_results": 5}
+
+            tool_session: An explicit :class:`ToolSession` for dynamic tool
+                loading.  When provided, the model sees **only** the tools
+                in the session's active set (recomputed each loop iteration).
+                If ``dynamic_tool_loading=True`` and no ``tool_session`` is
+                passed, a fresh session with ``core_tools`` + meta-tools is
+                created automatically.
+            **kwargs: Forwarded to the underlying provider (e.g.
                 ``reasoning_effort``, ``thinking``, ``top_p``).
 
         Returns:
-            :class:`GenerationResult` (or ``AsyncGenerator[StreamChunk]``
-            when ``stream=True``).  The result can be unpacked as
-            ``(content, payloads)``.
+            :class:`GenerationResult` — with attributes:
+
+            * ``content``: Final text (or parsed Pydantic model).
+            * ``payloads``: List of deferred tool payloads for the app.
+            * ``tool_messages``: Tool result messages to persist for
+              multi-turn conversations.
+            * ``messages``: Full transcript snapshot.
+
+            Supports tuple unpacking::
+
+                content, payloads = await client.generate(input=messages)
+
+            When ``stream=True``, returns ``AsyncGenerator[StreamChunk]``
+            instead.  Each chunk has ``content``, ``done``, and ``usage``.
+
+        Raises:
+            ConfigurationError: Missing API key, dependency, or invalid setup.
+            ProviderError: LLM API error (auth, rate limit, bad request).
+            ToolError: Tool dispatch failure.
+            UnsupportedFeatureError: Feature not available for the provider.
+
+        Examples
+        --------
+        Simple generation::
+
+            result = await client.generate(
+                input=[{"role": "user", "content": "What is 2+2?"}],
+            )
+            print(result.content)
+
+        With tools and context injection::
+
+            result = await client.generate(
+                input=[{"role": "user", "content": "Process order #123"}],
+                use_tools=["process_order"],
+                tool_execution_context={"user_id": "usr_abc", "db": conn},
+            )
+
+        Structured output::
+
+            from pydantic import BaseModel
+
+            class Answer(BaseModel):
+                city: str
+                temperature: float
+
+            result = await client.generate(
+                input=[{"role": "user", "content": "Weather in Paris?"}],
+                response_format=Answer,
+            )
+            print(result.content.city)  # "Paris"
+
+        Streaming::
+
+            stream = await client.generate(
+                input=[{"role": "user", "content": "Tell me a story"}],
+                stream=True,
+            )
+            async for chunk in stream:
+                print(chunk.content, end="")
         """
         if self.dynamic_tool_loading and tool_session is None:
             tool_session = self._build_dynamic_session()
@@ -237,6 +386,7 @@ class LLMClient:
             "model": model,
             "temperature": temperature,
             "max_output_tokens": max_output_tokens,
+            "max_tool_iterations": max_tool_iterations,
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_execution_context": tool_execution_context,

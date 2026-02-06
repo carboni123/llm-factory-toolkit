@@ -14,11 +14,25 @@ from pydantic import BaseModel, Field
 
 @dataclass(slots=True)
 class GenerationResult:
-    """Container for responses emitted by provider ``generate`` calls.
+    """The value returned by ``LLMClient.generate()``.
 
-    The class behaves like the historical ``(content, payloads)`` tuple for
-    backwards compatibility while exposing additional metadata required by
-    multi-turn conversations that rely on persisted tool transcripts.
+    Attributes:
+        content: The model's final text response, or a parsed Pydantic model
+            when ``response_format`` is a ``BaseModel`` subclass.  ``None``
+            if the model produced only tool calls with no final text.
+        payloads: Deferred data returned by tools via
+            ``ToolExecutionResult.payload``.  These are collected across all
+            tool calls in the agentic loop for application-side processing
+            (e.g. records created, emails queued).
+        tool_messages: Tool result messages (``role: "tool"``) produced
+            during the agentic loop.  Append these to your conversation
+            history for multi-turn persistence.
+        messages: Full transcript snapshot including all intermediate
+            assistant and tool messages from the agentic loop.
+
+    Supports tuple unpacking for backwards compatibility::
+
+        content, payloads = await client.generate(input=messages)
     """
 
     content: Optional[BaseModel | str]
@@ -84,11 +98,31 @@ class ToolIntentOutput(BaseModel):
 
 
 class ToolExecutionResult(BaseModel):
-    """Represents the outcome of a tool execution, separating LLM content from actionable payloads."""
+    """Return type for tool functions registered with :class:`ToolFactory`.
 
-    content: str  # The string to be added to the message history for the LLM
-    payload: Any = (
-        None  # Data/instructions for the caller (e.g., message details to send)
-    )
+    Separates data meant for the LLM (``content``) from data meant for the
+    calling application (``payload``).
+
+    Attributes:
+        content: A string fed back to the model as the tool's response.
+            This is what the LLM reads to formulate its next reply.
+        payload: Arbitrary data for the application (not sent to the LLM).
+            Collected in ``GenerationResult.payloads`` after generation.
+        metadata: Optional dict of extra metadata (e.g. timing, source).
+        error: If set, indicates the tool encountered an error.  The
+            ``content`` should contain a human-readable error message.
+
+    Example::
+
+        def get_weather(location: str) -> ToolExecutionResult:
+            data = fetch_weather(location)
+            return ToolExecutionResult(
+                content=f"Temperature in {location}: {data['temp']}C",
+                payload=data,  # full data for the app
+            )
+    """
+
+    content: str
+    payload: Any = None
     metadata: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None  # Optional error message
+    error: Optional[str] = None

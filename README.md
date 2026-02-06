@@ -64,24 +64,23 @@ asyncio.run(main())
 
 ### Switching Providers
 
+The constructor's `model` sets the default, but you can override per-call:
+
 ```python
-# OpenAI
+# Set a default model
 client = LLMClient(model="openai/gpt-4o-mini")
 
-# Anthropic
-client = LLMClient(model="anthropic/claude-sonnet-4")
+# Override on any generate() call — no need for a new client
+result = await client.generate(
+    input=messages,
+    model="anthropic/claude-sonnet-4",
+)
 
-# Google Gemini
-client = LLMClient(model="gemini/gemini-2.5-flash")
-
-# xAI Grok
-client = LLMClient(model="xai/grok-3")
-
-# Mistral
-client = LLMClient(model="mistral/mistral-large-latest")
-
-# Local via Ollama
-client = LLMClient(model="ollama/llama3")
+# Any LiteLLM model string works
+result = await client.generate(input=messages, model="gemini/gemini-2.5-flash")
+result = await client.generate(input=messages, model="xai/grok-3")
+result = await client.generate(input=messages, model="mistral/mistral-large-latest")
+result = await client.generate(input=messages, model="ollama/llama3")
 ```
 
 See [LiteLLM's provider list](https://docs.litellm.ai/docs/providers) for all supported models.

@@ -66,7 +66,35 @@ BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
 
 
 class ToolFactory:
-    """Registry and dispatcher for tools exposed to language models."""
+    """Registry and dispatcher for tools exposed to language models.
+
+    The ``ToolFactory`` is the central hub for tool management:
+
+    * **Register** tools via :meth:`register_tool` (function-based),
+      :meth:`register_tool_class` (class-based / :class:`BaseTool`),
+      or :meth:`register_builtins` (built-in helpers).
+    * **Dispatch** calls via :meth:`dispatch_tool` — handles argument
+      parsing, context injection, and mock mode.
+    * **Export** tool schemas via :meth:`get_tool_definitions` for the LLM.
+    * **Catalog** support: attach an :class:`InMemoryToolCatalog` with
+      :meth:`set_catalog`, and register ``browse_toolkit`` / ``load_tools``
+      meta-tools with :meth:`register_meta_tools`.
+
+    Typical usage::
+
+        factory = ToolFactory()
+        factory.register_tool(
+            function=my_func,
+            name="my_func",
+            description="Does something useful.",
+            parameters={...},
+            category="general",
+            tags=["example"],
+        )
+
+        # Pass to LLMClient
+        client = LLMClient(model="openai/gpt-4o-mini", tool_factory=factory)
+    """
 
     def __init__(self) -> None:
         self._registry: Dict[str, ToolRegistration] = {}
@@ -115,7 +143,47 @@ class ToolFactory:
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
     ) -> None:
-        """Register a callable tool along with its metadata."""
+        """Register a callable tool the LLM can invoke during generation.
+
+        The tool function is called automatically by the agentic loop when
+        the model decides to use it.  The ``parameters`` JSON Schema tells
+        the model what arguments to provide; any parameters **not** listed
+        in the schema but present in the function signature will be filled
+        from ``tool_execution_context`` at dispatch time (context injection).
+
+        Args:
+            function: The callable to execute.  May be sync or async.
+                Must return a :class:`ToolExecutionResult` (or a plain dict/
+                str, which is auto-wrapped).
+            name: Unique tool name the model uses to invoke it.
+            description: Human-readable description shown to the model.
+            parameters: JSON Schema for the arguments the **model** provides.
+                Context-injected params must NOT appear here.
+            mock_function: Optional alternative callable used when
+                ``mock_tools=True``.
+            category: Optional category string (e.g. ``"communication"``,
+                ``"crm"``) for catalog discovery.
+            tags: Optional list of tag strings (e.g. ``["email", "notify"]``)
+                for catalog search.
+
+        Example::
+
+            factory.register_tool(
+                function=send_email,
+                name="send_email",
+                description="Send an email to a recipient.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string"},
+                        "body": {"type": "string"},
+                    },
+                    "required": ["to", "body"],
+                },
+                category="communication",
+                tags=["email", "notify"],
+            )
+        """
 
         if name in self._registry:
             module_logger.warning("Tool '%s' is already registered. Overwriting.", name)

@@ -1,4 +1,91 @@
 # llm_factory_toolkit/llm_factory_toolkit/__init__.py
+"""LLM Factory Toolkit — unified async interface for 100+ LLM providers with
+an agentic tool framework.
+
+Quick start
+-----------
+::
+
+    from llm_factory_toolkit import LLMClient
+
+    client = LLMClient(model="openai/gpt-4o-mini")
+    result = await client.generate(
+        input=[{"role": "user", "content": "Hello!"}],
+    )
+    print(result.content)
+
+Tool usage
+----------
+Register Python functions as tools the LLM can call during generation.
+The agentic loop dispatches tool calls automatically (up to 5 iterations)
+and feeds results back to the model until it produces a final text response.
+::
+
+    from llm_factory_toolkit import LLMClient, ToolFactory
+    from llm_factory_toolkit.tools.models import ToolExecutionResult
+
+    def get_weather(location: str) -> ToolExecutionResult:
+        return ToolExecutionResult(content=f"20C in {location}")
+
+    factory = ToolFactory()
+    factory.register_tool(
+        function=get_weather,
+        name="get_weather",
+        description="Get current weather for a city.",
+        parameters={
+            "type": "object",
+            "properties": {"location": {"type": "string"}},
+            "required": ["location"],
+        },
+    )
+    client = LLMClient(model="openai/gpt-4o-mini", tool_factory=factory)
+    result = await client.generate(
+        input=[{"role": "user", "content": "Weather in London?"}],
+    )
+
+Dynamic tool loading
+--------------------
+When you have many tools (10+), let the agent discover and load them on
+demand instead of sending all definitions to the LLM at once::
+
+    client = LLMClient(
+        model="openai/gpt-4.1-mini",
+        tool_factory=factory,          # factory with many registered tools
+        core_tools=["call_human"],     # always visible to the agent
+        dynamic_tool_loading=True,     # auto-creates catalog + meta-tools
+    )
+    result = await client.generate(input=messages)
+
+The agent uses ``browse_toolkit`` to search the catalog by keyword/category
+and ``load_tools`` to activate tools mid-conversation.
+
+Key classes
+-----------
+- :class:`LLMClient` — main entry point; wraps generation, tool registration,
+  and dynamic loading setup.
+- :class:`ToolFactory` — registers tools (function or class-based), dispatches
+  calls, injects context, tracks usage.
+- :class:`GenerationResult` — returned by ``generate()``;  holds ``content``,
+  ``payloads``, ``tool_messages``, ``messages``.  Supports tuple unpacking:
+  ``content, payloads = result``.
+- :class:`ToolSession` — tracks active tools per conversation; serialisable
+  via ``to_dict()`` / ``from_dict()`` for persistence.
+- :class:`InMemoryToolCatalog` — searchable tool index built from a
+  ``ToolFactory``; used by the ``browse_toolkit`` meta-tool.
+- :class:`BaseTool` — ABC for class-based tools with ``execute()`` /
+  ``mock_execute()`` and optional ``CATEGORY`` / ``TAGS``.
+
+Switching providers
+-------------------
+The constructor's ``model`` sets the default, but you can override
+per-call — no need for a new client::
+
+    client = LLMClient(model="openai/gpt-4o-mini")  # default model
+    result = await client.generate(input=messages)                              # uses default
+    result = await client.generate(input=messages, model="anthropic/claude-sonnet-4")  # override
+    result = await client.generate(input=messages, model="gemini/gemini-2.5-flash")    # override
+"""
+
 import logging
 import os
 import re

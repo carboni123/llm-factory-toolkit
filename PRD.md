@@ -62,7 +62,7 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 
 | Requirement | Status |
 |-------------|--------|
-| Automatic dispatch loop (up to `max_tool_iterations`, default 5) | Done |
+| Automatic dispatch loop (up to `max_tool_iterations`, default 25) | Done |
 | JSON argument parsing with error handling | Done |
 | Sync and async tool function support | Done |
 | Tool result serialization back to LLM | Done |

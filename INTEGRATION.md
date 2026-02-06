@@ -117,26 +117,20 @@ async def run_generation():
 
 ### Switching Providers
 
-Change the model string to switch providers. No code changes needed.
+The constructor's `model` sets the default, but you can override it per-call via `generate(model=...)`. No need to create a new client:
 
 ```python
-# OpenAI
+# Set a default model
 client = LLMClient(model="openai/gpt-4o-mini")
 
-# Anthropic
-client = LLMClient(model="anthropic/claude-sonnet-4")
+# Use the default
+result = await client.generate(input=messages)
 
-# Google Gemini
-client = LLMClient(model="gemini/gemini-2.5-flash")
-
-# xAI Grok
-client = LLMClient(model="xai/grok-3")
-
-# Mistral
-client = LLMClient(model="mistral/mistral-large-latest")
-
-# Local via Ollama
-client = LLMClient(model="ollama/llama3")
+# Override for a single call
+result = await client.generate(input=messages, model="anthropic/claude-sonnet-4")
+result = await client.generate(input=messages, model="gemini/gemini-2.5-flash")
+result = await client.generate(input=messages, model="xai/grok-3")
+result = await client.generate(input=messages, model="ollama/llama3")
 ```
 
 See [LiteLLM's provider list](https://docs.litellm.ai/docs/providers) for all 100+ supported models.
@@ -394,7 +388,7 @@ result = await client.generate(
 6. The LLM uses the tool result to formulate its final response.
 7. `client.generate()` returns a `GenerationResult` with the final content, deferred payloads, and the tool transcript.
 
-This loop can repeat multiple times if the LLM makes sequential tool calls (up to `max_tool_iterations`, default 5).
+This loop can repeat multiple times if the LLM makes sequential tool calls (up to `max_tool_iterations`, default 25).
 
 ### Multi-turn Conversations with Tools
 
