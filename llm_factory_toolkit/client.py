@@ -28,6 +28,7 @@ from .exceptions import (
     UnsupportedFeatureError,
 )
 from .provider import LiteLLMProvider
+from .tools.catalog import InMemoryToolCatalog
 from .tools.models import (
     GenerationResult,
     StreamChunk,
@@ -73,6 +74,8 @@ class LLMClient:
         api_key: Optional[str] = None,
         tool_factory: Optional[ToolFactory] = None,
         timeout: float = 180.0,
+        core_tools: Optional[List[str]] = None,
+        dynamic_tool_loading: bool = False,
         **kwargs: Any,
     ) -> None:
         logger.info("Initialising LLMClient for model: %s", model)
@@ -87,6 +90,41 @@ class LLMClient:
             timeout=timeout,
             **kwargs,
         )
+
+        # Dynamic tool loading setup
+        self.core_tools = core_tools or []
+        self.dynamic_tool_loading = dynamic_tool_loading
+
+        if self.dynamic_tool_loading:
+            if tool_factory is None:
+                raise ConfigurationError(
+                    "dynamic_tool_loading=True requires an explicit tool_factory "
+                    "with registered tools."
+                )
+            if self.tool_factory.get_catalog() is None:
+                catalog = InMemoryToolCatalog(self.tool_factory)
+                self.tool_factory.set_catalog(catalog)
+            if "browse_toolkit" not in self.tool_factory.available_tool_names:
+                self.tool_factory.register_meta_tools()
+            invalid = [
+                t for t in self.core_tools
+                if t not in self.tool_factory.available_tool_names
+            ]
+            if invalid:
+                raise ConfigurationError(
+                    f"core_tools contain unregistered tool names: {invalid}"
+                )
+
+    # ------------------------------------------------------------------
+    # Dynamic tool loading
+    # ------------------------------------------------------------------
+
+    def _build_dynamic_session(self) -> ToolSession:
+        """Create a fresh :class:`ToolSession` with core + meta tools loaded."""
+        session = ToolSession()
+        initial = list(dict.fromkeys(self.core_tools + ["browse_toolkit", "load_tools"]))
+        session.load(initial)
+        return session
 
     # ------------------------------------------------------------------
     # Tool registration helpers
@@ -185,6 +223,9 @@ class LLMClient:
             when ``stream=True``).  The result can be unpacked as
             ``(content, payloads)``.
         """
+        if self.dynamic_tool_loading and tool_session is None:
+            tool_session = self._build_dynamic_session()
+
         processed_input = (
             self._merge_conversation_history(input)
             if merge_history

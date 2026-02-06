@@ -15,11 +15,18 @@ This guide provides detailed instructions on how to integrate the `llm_factory_t
     *   [Using `ToolFactory`](#using-toolfactory)
     *   [Registering Function-Based Tools](#registering-function-based-tools)
     *   [Registering Class-Based Tools](#registering-class-based-tools)
+    *   [Tool Categories and Tags](#tool-categories-and-tags)
     *   [Tool Context Injection](#tool-context-injection)
     *   [Tool Execution Flow](#tool-execution-flow)
     *   [Multi-turn Conversations with Tools](#multi-turn-conversations-with-tools)
     *   [Tool Intent Planning](#tool-intent-planning)
     *   [Mock Tool Mode](#mock-tool-mode)
+*   [Dynamic Tool Loading](#dynamic-tool-loading)
+    *   [Quick Setup](#quick-setup-recommended)
+    *   [Manual Setup](#manual-setup)
+    *   [How It Works](#how-it-works)
+    *   [Tool Catalog](#tool-catalog)
+    *   [Tool Session](#tool-session)
 *   [Structured Output (JSON / Pydantic)](#structured-output-json--pydantic)
     *   [JSON Object Mode](#json-object-mode)
     *   [Pydantic Model Mode](#pydantic-model-mode)
@@ -295,6 +302,47 @@ async def ask_profile():
 
 # asyncio.run(ask_profile())
 ```
+
+### Tool Categories and Tags
+
+Tools can be tagged with a `category` and `tags` for catalog-based discovery. These flow through the entire registration pipeline and are used by the dynamic tool loading system.
+
+```python
+# Function-based registration
+tool_factory.register_tool(
+    function=get_weather,
+    name="get_weather",
+    description="Get the current weather.",
+    parameters={...},
+    category="data",
+    tags=["weather", "api"],
+)
+
+# Class-based tools define them as class attributes
+from llm_factory_toolkit import BaseTool
+
+class GetWeatherTool(BaseTool):
+    NAME = "get_weather"
+    DESCRIPTION = "Get the current weather."
+    PARAMETERS = {...}
+    CATEGORY = "data"
+    TAGS = ["weather", "api"]
+
+    def execute(self, location: str) -> dict:
+        return {"temp": 20, "location": location}
+
+# Via LLMClient convenience method
+client.register_tool(
+    function=get_weather,
+    name="get_weather",
+    description="Get the current weather.",
+    parameters={...},
+    category="data",
+    tags=["weather"],
+)
+```
+
+Categories and tags are optional. When provided, they auto-populate the `InMemoryToolCatalog` without needing separate `add_metadata()` calls. You can still override them later with `catalog.add_metadata()`.
 
 ### Tool Context Injection
 
@@ -580,6 +628,144 @@ async def my_async_app():
 
 if __name__ == "__main__":
     asyncio.run(my_async_app())
+```
+
+## Dynamic Tool Loading
+
+When your agent has access to many tools (10+), sending all tool definitions to the LLM wastes context tokens and can degrade performance. Dynamic tool loading solves this by letting the agent start with a small set of core tools and discover/load additional tools on demand from a searchable catalog.
+
+### Quick Setup (Recommended)
+
+The simplest way to enable dynamic tool loading is via the `LLMClient` constructor:
+
+```python
+from llm_factory_toolkit import LLMClient, ToolFactory
+
+factory = ToolFactory()
+factory.register_tool(
+    function=call_human, name="call_human",
+    description="Escalate to a human operator.",
+    parameters={...},
+    category="communication", tags=["human", "escalation"],
+)
+factory.register_tool(
+    function=send_email, name="send_email",
+    description="Send an email to a recipient.",
+    parameters={...},
+    category="communication", tags=["email"],
+)
+factory.register_tool(
+    function=search_crm, name="search_crm",
+    description="Search the CRM database.",
+    parameters={...},
+    category="crm", tags=["search", "customer"],
+)
+# ... register many more tools ...
+
+client = LLMClient(
+    model="openai/gpt-4.1-mini",
+    tool_factory=factory,
+    core_tools=["call_human"],       # Always available to the agent
+    dynamic_tool_loading=True,       # Enables browse_toolkit + load_tools
+)
+
+result = await client.generate(
+    input=[{"role": "user", "content": "Find customer Alice and send her an email"}],
+)
+```
+
+With `dynamic_tool_loading=True`, the client automatically:
+1. Builds a searchable `InMemoryToolCatalog` from the factory (if no catalog already exists)
+2. Registers `browse_toolkit` and `load_tools` meta-tools (if not already registered)
+3. Validates that all `core_tools` are registered in the factory
+4. Creates a fresh `ToolSession` per `generate()` call with `core_tools` + meta-tools loaded
+
+If you pass an explicit `tool_session` to `generate()`, it takes precedence over the auto-created session.
+
+### Manual Setup
+
+For full control over the catalog, session, and meta-tools:
+
+```python
+from llm_factory_toolkit import ToolFactory, InMemoryToolCatalog, ToolSession
+
+factory = ToolFactory()
+# ... register tools with category/tags ...
+
+# Build catalog from factory (auto-populates from registration metadata)
+catalog = InMemoryToolCatalog(factory)
+factory.set_catalog(catalog)
+
+# Register browse_toolkit and load_tools meta-tools
+factory.register_meta_tools()
+
+# Create a session with initial tools
+session = ToolSession()
+session.load(["call_human", "browse_toolkit", "load_tools"])
+
+client = LLMClient(model="openai/gpt-4.1-mini", tool_factory=factory)
+result = await client.generate(input=messages, tool_session=session)
+```
+
+### How It Works
+
+The agent starts a conversation seeing only the tools in its session (e.g., `call_human`, `browse_toolkit`, `load_tools`). When it needs a capability it doesn't have:
+
+1. **Browse**: The agent calls `browse_toolkit(query="email")` to search the catalog by keyword, category, or tags
+2. **Discover**: The catalog returns matching tools with their names, descriptions, and active/inactive status
+3. **Load**: The agent calls `load_tools(tool_names=["send_email"])` to activate the tool in its session
+4. **Use**: On the next loop iteration, the newly loaded tool appears in the LLM's tool definitions
+
+This loop repeats as needed. The agentic execution loop recomputes visible tools from the session each iteration, so tools loaded mid-conversation are immediately available.
+
+### Tool Catalog
+
+The `InMemoryToolCatalog` provides searchable tool metadata:
+
+```python
+from llm_factory_toolkit import InMemoryToolCatalog
+
+catalog = InMemoryToolCatalog(factory)
+
+# Search by keyword (matches name, description, tags)
+results = catalog.search(query="email")
+
+# Search by category
+results = catalog.search(category="communication")
+
+# Search by tags
+results = catalog.search(tags=["search", "customer"])
+
+# Combined filters
+results = catalog.search(query="search", category="crm", limit=5)
+
+# List all categories
+categories = catalog.list_categories()
+
+# Override metadata after build
+catalog.add_metadata("my_tool", category="custom", tags=["new"])
+```
+
+### Tool Session
+
+The `ToolSession` tracks which tools are active in a conversation:
+
+```python
+from llm_factory_toolkit import ToolSession
+
+session = ToolSession(max_tools=50)  # Optional limit
+
+# Load/unload tools
+session.load(["tool_a", "tool_b"])
+session.unload(["tool_a"])
+
+# Query state
+session.is_active("tool_b")  # True
+session.list_active()         # ["tool_b"]
+
+# Serialise for persistence (Redis, DB, etc.)
+data = session.to_dict()
+restored = ToolSession.from_dict(data)
 ```
 
 ## Migration from v0.x

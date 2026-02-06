@@ -106,6 +106,36 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 | Full backward compatibility: `tool_session=None` = same as before | Done |
 | `ToolSession.to_dict()` / `from_dict()` for external persistence (Redis/DB) | Done |
 
+#### R5a: Tool Registration Metadata
+
+**Goal:** Category and tags as first-class registration params, auto-populating the catalog.
+
+| Requirement | Status |
+|-------------|--------|
+| `category` and `tags` params on `register_tool()` | Done |
+| `category` and `tags` params on `register_tool_class()` (with overrides) | Done |
+| `CATEGORY` and `TAGS` class attributes on `BaseTool` | Done |
+| `ToolRegistration` dataclass stores category/tags | Done |
+| `ToolFactory.registrations` property exposes metadata | Done |
+| `InMemoryToolCatalog._build_from_factory()` reads from registrations | Done |
+| `add_metadata()` still works as override mechanism | Done |
+| Builtins: `category="utility"`, Meta-tools: `category="system"` | Done |
+
+#### R5b: Simplified Dynamic Loading Setup
+
+**Goal:** Collapse 6-step manual setup into 2 constructor params on `LLMClient`.
+
+| Requirement | Status |
+|-------------|--------|
+| `core_tools` param on `LLMClient.__init__()` | Done |
+| `dynamic_tool_loading` param on `LLMClient.__init__()` | Done |
+| Auto-build `InMemoryToolCatalog` if none exists | Done |
+| Auto-register meta-tools if not already present | Done |
+| Validate `core_tools` against factory registration | Done |
+| Fresh `ToolSession` created per `generate()` call | Done |
+| Explicit `tool_session` overrides auto-session | Done |
+| Full backward compatibility: `dynamic_tool_loading=False` = no change | Done |
+
 ### P1 -- Unified Access
 
 #### R6: Multi-Provider Interface
@@ -250,12 +280,16 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 ## Architecture
 
 ```
-                         LLMClient (client.py)
+                    LLMClient (client.py)
+                    core_tools / dynamic_tool_loading
                               |
                     ToolFactory (tools/)
-                   /                    \
-          register_tool()         register_tool_class()
-          register_builtins()     BaseTool subclasses
+                   /          |                \
+          register_tool()  register_tool_class()  register_meta_tools()
+          (category/tags)  BaseTool (CATEGORY/TAGS)  browse_toolkit / load_tools
+                              |
+                   InMemoryToolCatalog ←→ ToolSession
+                   (searchable entries)    (active tools per conversation)
                               |
                     LiteLLMProvider (provider.py)
                    /                              \
@@ -325,15 +359,14 @@ llm_factory_toolkit/
 
 ## Testing Strategy
 
-| Category | Scope | API Keys Required |
-|----------|-------|-------------------|
-| Unit tests | Tool framework, mocking, merging, builtins, context injection | No |
-| Integration tests | End-to-end generation, streaming, tools, structured output | Yes (per provider) |
+| Category | Scope | Count | API Keys Required |
+|----------|-------|-------|-------------------|
+| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit | 113 | No |
+| Integration tests | End-to-end generation, streaming, tools, structured output, dynamic loading, CRM simulation | 32 | Yes (per provider) |
 
-- Test-to-code ratio: ~1.1:1
 - Coverage target: >= 80%
 - Framework: pytest + pytest-asyncio
-- 21 test files, covering all major features
+- 29 test files across 15 unit + 14 integration suites
 
 ---
 

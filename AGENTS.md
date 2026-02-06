@@ -9,13 +9,21 @@
 ```
 llm_factory_toolkit/
 ├── llm_factory_toolkit/
-│   ├── tools/        # Tool framework (tool_factory.py, models.py, base_tool.py, runtime.py, builtins.py)
+│   ├── tools/
+│   │   ├── tool_factory.py  # Registration (category/tags), dispatch, context injection, mock mode
+│   │   ├── models.py        # GenerationResult, StreamChunk, ParsedToolCall, ToolExecutionResult
+│   │   ├── base_tool.py     # BaseTool ABC (CATEGORY, TAGS class attrs)
+│   │   ├── runtime.py       # ToolRuntime for nested tool calls
+│   │   ├── builtins.py      # safe_math_evaluator, read_local_file
+│   │   ├── catalog.py       # ToolCatalog ABC, InMemoryToolCatalog, ToolCatalogEntry
+│   │   ├── session.py       # ToolSession for per-conversation tool visibility
+│   │   └── meta_tools.py    # browse_toolkit, load_tools (dynamic discovery)
 │   ├── __init__.py   # Package init with exports and utilities
-│   ├── client.py     # Main LLMClient class
-│   ├── provider.py   # Single LiteLLM-backed provider (routes to 100+ LLM providers)
+│   ├── client.py     # LLMClient (core_tools, dynamic_tool_loading, tool registration)
+│   ├── provider.py   # LiteLLMProvider (dual routing to 100+ LLM providers)
 │   └── exceptions.py # Custom exceptions
 ├── examples/         # Usage examples (e.g., custom_tool_example.py)
-├── tests/            # Pytest suites (e.g., test_llmcall*.py)
+├── tests/            # Pytest suites (29 files: 15 unit + 14 integration)
 ├── .github/          # Workflows and issue templates
 ├── pyproject.toml    # Build config and metadata (source of truth for deps)
 ├── requirements.txt  # Pinned dependencies (generated)
@@ -128,6 +136,6 @@ The CI/CD pipeline (via `.github/workflows/ci.yml`) will block any PR that fails
 A PR cannot be merged unless all of the following are true:
 
 1.  ✅ All public API changes are documented in docstrings and examples.
-2.  ✅ All quality gates (`pytest`, `flake8`, `mypy`) pass.
+2.  ✅ All quality gates (`pytest`, `ruff`, `mypy`) pass.
 3.  ✅ Tests are added/updated for new features or fixes.
 4.  ✅ The commit message uses a conventional prefix (`feat:`, `fix:`, `chore:`, etc.).

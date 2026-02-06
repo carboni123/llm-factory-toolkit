@@ -8,6 +8,7 @@ A flexible Python toolkit for interacting with 100+ LLM providers through a unif
 ## Key Features
 
 *   **100+ Providers:** Switch between OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Bedrock, and many more by changing a single model string. Powered by LiteLLM.
+*   **Dynamic Tool Loading:** Start with a small set of core tools and let the agent discover and load additional tools on demand from a searchable catalog, reducing context bloat.
 *   **Tool Context Injection:** Inject server-side data (user IDs, API keys, DB connections) into tool functions without exposing it to the LLM.
 *   **Nested Tool Execution:** Tools can call other tools via `ToolRuntime` with configurable depth limits.
 *   **Mock Tool Mode:** Test tool workflows without side effects using `mock_tools=True`.
@@ -129,6 +130,8 @@ tool_factory.register_tool(
         },
         "required": ["location"],
     },
+    category="data",         # Optional: for catalog discovery
+    tags=["weather", "api"], # Optional: for catalog search
 )
 
 client = LLMClient(model="openai/gpt-4o-mini", tool_factory=tool_factory)
@@ -192,6 +195,60 @@ for call in intent.tool_calls:
 
 # Step 3: Execute after approval
 results = await client.execute_tool_intents(intent)
+```
+
+## Dynamic Tool Loading
+
+When your agent has many tools, sending all definitions to the LLM wastes context. Dynamic tool loading lets the agent start with a small set of core tools and discover/load additional tools on demand.
+
+### Quick Setup (Recommended)
+
+```python
+from llm_factory_toolkit import LLMClient, ToolFactory
+
+factory = ToolFactory()
+factory.register_tool(function=call_human, name="call_human", ...)
+factory.register_tool(function=send_email, name="send_email", ...)
+factory.register_tool(function=search_crm, name="search_crm", ...)
+# ... register many more tools ...
+
+client = LLMClient(
+    model="openai/gpt-4.1-mini",
+    tool_factory=factory,
+    core_tools=["call_human"],       # Always available to the agent
+    dynamic_tool_loading=True,       # Enables browse_toolkit + load_tools
+)
+
+result = await client.generate(
+    input=[{"role": "user", "content": "Find customer Alice and send her an email"}],
+)
+```
+
+With `dynamic_tool_loading=True`, the client automatically:
+1. Builds a searchable `InMemoryToolCatalog` from the factory
+2. Registers `browse_toolkit` and `load_tools` meta-tools
+3. Creates a fresh `ToolSession` per `generate()` call with your `core_tools` + meta-tools loaded
+
+The agent uses `browse_toolkit` to search for relevant tools by keyword or category, then `load_tools` to activate them mid-conversation.
+
+### Manual Setup
+
+For full control over the catalog, session, and meta-tools:
+
+```python
+from llm_factory_toolkit import ToolFactory, InMemoryToolCatalog, ToolSession
+
+factory = ToolFactory()
+# ... register tools with category/tags ...
+
+catalog = InMemoryToolCatalog(factory)
+factory.set_catalog(catalog)
+factory.register_meta_tools()
+
+session = ToolSession()
+session.load(["call_human", "browse_toolkit", "load_tools"])
+
+result = await client.generate(input=messages, tool_session=session)
 ```
 
 ## GenerationResult
