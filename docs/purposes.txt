@@ -1,0 +1,8 @@
+P0
+- serve as a toolkit for the agent. tools get registered to the toolkit at startup. the agent is then free to use them during their response generation.
+the generation should become an infinite `for` loop of tool calls where the agent can `break` and respond once they can't use any more tools.
+P1
+- connect to multiple LLM providers, allowing the user to choose between any of them without needing to change the call function
+- provide additional funtionalities, such as `tool_context`, where tools can receive programmatic information without it being forwarded to the agent first. 
+P2
+- tbd
