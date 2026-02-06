@@ -7,11 +7,24 @@
 **License:** MIT
 **Author:** Diego Carboni
 
-LLM Factory Toolkit is a Python library that provides a unified async interface for interacting with 100+ LLM providers. It combines LiteLLM's universal provider routing with a production-grade tool framework featuring context injection, nested execution, mock mode, and intent planning.
+LLM Factory Toolkit is a Python library for building LLM-powered agents. It provides a production-grade tool framework with an agentic execution loop, backed by unified access to 100+ LLM providers.
 
-The library solves two core problems:
-1. **Provider lock-in** -- switching between OpenAI, Anthropic, Google, xAI, Mistral, and others requires only changing a model string.
-2. **Tool orchestration complexity** -- building LLM-powered agents that call functions, inject server-side context, nest tool calls, and support human-in-the-loop approval is hard to get right. The toolkit handles this end-to-end.
+### Product Priorities
+
+**P0 -- Core: Agent tool framework**
+- Tool framework: register tools at startup, the agent uses them freely during generation.
+- Agentic loop: iterate tool calls until the model has nothing left to call, then return a final response.
+
+**P1 -- Unified access**
+- Multi-provider routing: swap between 100+ LLMs without changing application code.
+- Context injection: pass runtime data (user_id, db, etc.) to tools without exposing it to the model.
+- Content/payload separation: tool results split into LLM-facing content and app-facing payload.
+- Structured output: Pydantic model validation on model responses.
+
+**P2 -- Developer experience**
+- Streaming: async generator of chunks for real-time UIs.
+- Mock mode: test tool flows without hitting real APIs.
+- Nested tool calls: tools can invoke other tools via ToolRuntime.
 
 ---
 
@@ -28,7 +41,74 @@ The library solves two core problems:
 
 ## Core Requirements
 
-### R1: Unified Multi-Provider Interface
+### P0 -- Core: Agent Tool Framework
+
+#### R1: Tool Registration
+
+**Goal:** Flexible tool registration for function-based, class-based, and built-in tools.
+
+| Requirement | Status |
+|-------------|--------|
+| Function-based registration: `register_tool(function, name, description, parameters)` | Done |
+| Class-based registration: `register_tool_class(BaseTool subclass)` | Done |
+| Built-in tools: `register_builtins(["safe_math_evaluator", "read_local_file"])` | Done |
+| JSON Schema parameter definitions | Done |
+| Tool definitions export for LLM consumption | Done |
+| `use_tools` filter on `generate()` to select active tools | Done |
+
+#### R2: Agentic Tool Dispatch Loop
+
+**Goal:** Iterate tool calls until the model has nothing left to call, then return a final response.
+
+| Requirement | Status |
+|-------------|--------|
+| Automatic dispatch loop (up to `max_tool_iterations`, default 10) | Done |
+| JSON argument parsing with error handling | Done |
+| Sync and async tool function support | Done |
+| Tool result serialization back to LLM | Done |
+| Tool messages returned for multi-turn persistence | Done |
+
+#### R3: Tool Intent Planning
+
+**Goal:** Human-in-the-loop approval before tool execution.
+
+| Requirement | Status |
+|-------------|--------|
+| `generate_tool_intent()` returns planned calls without executing | Done |
+| `ToolIntentOutput` contains content, tool_calls, raw message | Done |
+| `execute_tool_intents()` runs approved calls | Done |
+| Supports human-in-the-loop approval workflows | Done |
+
+#### R4: Tool Usage Tracking
+
+| Requirement | Status |
+|-------------|--------|
+| Per-tool invocation counters | Done |
+| `get_tool_usage_counts()` / `reset_tool_usage_counts()` | Done |
+| `get_and_reset_tool_usage_counts()` atomic operation | Done |
+
+#### R5: Dynamic Tool Loading
+
+**Goal:** Reduce context bloat by loading tools on-demand via agent-driven discovery.
+
+**Search strategy:** The catalog search is **agentic** -- the agent drives discovery using meta-tools (`browse_toolkit`, `load_tools`) within the normal tool-call loop. This mirrors how agentic code search (using `find`, `rg`, `fd`, `xargs`) outperforms semantic/embedding search in recent literature: the agent iteratively narrows results using structured queries rather than relying on a single vector-similarity pass. Semantic search over tool descriptions remains a viable alternative for future catalog backends.
+
+| Requirement | Status |
+|-------------|--------|
+| `ToolCatalog` ABC with searchable entries (name, description, tags, category) | Done |
+| `InMemoryToolCatalog` built from `ToolFactory` with metadata enrichment | Done |
+| `ToolSession` tracks active tools per conversation (mutable, serialisable) | Done |
+| `browse_toolkit` meta-tool searches catalog via context injection | Done |
+| `load_tools` meta-tool adds tools to session mid-loop | Done |
+| `tool_session` param on `generate()` / `generate_stream()` | Done |
+| Agentic loop recomputes visible tools each iteration from session | Done |
+| Both LiteLLM and OpenAI Responses API paths support dynamic loading | Done |
+| Full backward compatibility: `tool_session=None` = same as before | Done |
+| `ToolSession.to_dict()` / `from_dict()` for external persistence (Redis/DB) | Done |
+
+### P1 -- Unified Access
+
+#### R6: Multi-Provider Interface
 
 **Goal:** One API surface that works identically across 100+ LLM providers.
 
@@ -40,9 +120,9 @@ The library solves two core problems:
 | API key loading: direct arg > env var > `.env` file | Done |
 | Extra kwargs forwarded to underlying provider | Done |
 
-### R2: Dual Routing Architecture
+#### R7: Dual Routing Architecture
 
-**Goal:** Leverage OpenAI's advanced Responses API for OpenAI models while using LiteLLM for universal compatibility.
+**Goal:** Leverage OpenAI's Responses API for OpenAI models while using LiteLLM for universal compatibility.
 
 | Requirement | Status |
 |-------------|--------|
@@ -53,48 +133,9 @@ The library solves two core problems:
 | Message format conversion between Responses API and Chat Completions | Done |
 | `openai` SDK is optional dependency (`pip install llm-factory-toolkit[openai]`) | Done |
 
-### R3: Generation
+#### R8: Context Injection
 
-**Goal:** Async-first text generation with streaming, structured output, and reasoning support.
-
-| Requirement | Status |
-|-------------|--------|
-| `generate()` returns `GenerationResult` (content, payloads, tool_messages, messages) | Done |
-| `GenerationResult` supports tuple unpacking: `content, payloads = ...` | Done |
-| `stream=True` returns `AsyncGenerator[StreamChunk, None]` | Done |
-| `StreamChunk` provides incremental content, done flag, usage stats | Done |
-| `response_format` accepts `{"type": "json_object"}` for JSON mode | Done |
-| `response_format` accepts Pydantic `BaseModel` subclass for structured output | Done |
-| `temperature`, `max_output_tokens` per-call overrides | Done |
-| `reasoning_effort` for reasoning models (o3, o4) | Done |
-| GPT-5 auto-detection (omit temperature) | Done |
-
-### R4: Tool Framework
-
-**Goal:** Production-ready tool orchestration with registration, dispatch, context injection, and execution control.
-
-#### R4.1: Tool Registration
-
-| Requirement | Status |
-|-------------|--------|
-| Function-based registration: `register_tool(function, name, description, parameters)` | Done |
-| Class-based registration: `register_tool_class(BaseTool subclass)` | Done |
-| Built-in tools: `register_builtins(["safe_math_evaluator", "read_local_file"])` | Done |
-| JSON Schema parameter definitions | Done |
-| Tool definitions export for LLM consumption | Done |
-| `use_tools` filter on `generate()` to select active tools | Done |
-
-#### R4.2: Tool Dispatch
-
-| Requirement | Status |
-|-------------|--------|
-| Automatic dispatch loop (up to `max_tool_iterations`, default 10) | Done |
-| JSON argument parsing with error handling | Done |
-| Sync and async tool function support | Done |
-| Tool result serialization back to LLM | Done |
-| Tool messages returned for multi-turn persistence | Done |
-
-#### R4.3: Context Injection
+**Goal:** Pass runtime data to tools without exposing it to the model.
 
 | Requirement | Status |
 |-------------|--------|
@@ -105,46 +146,39 @@ The library solves two core problems:
 | `tool_runtime` auto-injection for nested calls | Done |
 | `tool_call_depth` auto-injection for depth awareness | Done |
 
-#### R4.4: Nested Tool Execution
+#### R9: Content/Payload Separation
+
+**Goal:** Tool results split into LLM-facing content and app-facing payload.
 
 | Requirement | Status |
 |-------------|--------|
-| `ToolRuntime` injected as context parameter | Done |
-| `call_tool()` for single nested invocations | Done |
-| `call_tools()` for parallel/sequential multi-tool calls | Done |
-| Configurable max depth (default 8) | Done |
-| Context propagation across nesting levels | Done |
+| `ToolExecutionResult` returns `content` (for LLM) and `payload` (for app) | Done |
+| Payloads collected in `GenerationResult.payloads` | Done |
 
-#### R4.5: Mock Mode
+#### R10: Structured Output
 
-| Requirement | Status |
-|-------------|--------|
-| `mock_tools=True` on `generate()` prevents real execution | Done |
-| Custom `mock_execute()` on `BaseTool` subclasses | Done |
-| Custom `mock_function` on function-based registration | Done |
-| Auto-generated stubs for tools without mock handlers | Done |
-| Mock flag propagates through nested calls | Done |
-
-#### R4.6: Tool Intent Planning
+**Goal:** Pydantic model validation on model responses.
 
 | Requirement | Status |
 |-------------|--------|
-| `generate_tool_intent()` returns planned calls without executing | Done |
-| `ToolIntentOutput` contains content, tool_calls, raw message | Done |
-| `execute_tool_intents()` runs approved calls | Done |
-| Supports human-in-the-loop approval workflows | Done |
+| `response_format` accepts `{"type": "json_object"}` for JSON mode | Done |
+| `response_format` accepts Pydantic `BaseModel` subclass for structured output | Done |
 
-#### R4.7: Tool Usage Tracking
+#### R11: Generation
+
+**Goal:** Async-first text generation with reasoning support.
 
 | Requirement | Status |
 |-------------|--------|
-| Per-tool invocation counters | Done |
-| `get_tool_usage_counts()` / `reset_tool_usage_counts()` | Done |
-| `get_and_reset_tool_usage_counts()` atomic operation | Done |
+| `generate()` returns `GenerationResult` (content, payloads, tool_messages, messages) | Done |
+| `GenerationResult` supports tuple unpacking: `content, payloads = ...` | Done |
+| `temperature`, `max_output_tokens` per-call overrides | Done |
+| `reasoning_effort` for reasoning models (o3, o4) | Done |
+| GPT-5 auto-detection (omit temperature) | Done |
 
-### R5: Web Search
+#### R12: Web Search
 
-**Goal:** Provider-native web search across multiple providers.
+**Goal:** Provider-native web search.
 
 | Requirement | Status |
 |-------------|--------|
@@ -153,7 +187,7 @@ The library solves two core problems:
 | Full params on OpenAI (user_location, filters) | Done |
 | Limited params on LiteLLM path (search_context_size only) | Done |
 
-### R6: File Search (OpenAI Only)
+#### R13: File Search (OpenAI Only)
 
 **Goal:** Search over documents in OpenAI vector stores.
 
@@ -164,7 +198,42 @@ The library solves two core problems:
 | `UnsupportedFeatureError` on non-OpenAI models | Done |
 | Requires `openai` optional dependency | Done |
 
-### R7: Error Handling
+### P2 -- Developer Experience
+
+#### R14: Streaming
+
+**Goal:** Real-time chunk delivery for UIs.
+
+| Requirement | Status |
+|-------------|--------|
+| `stream=True` returns `AsyncGenerator[StreamChunk, None]` | Done |
+| `StreamChunk` provides incremental content, done flag, usage stats | Done |
+
+#### R15: Mock Mode
+
+**Goal:** Test tool flows without hitting real APIs.
+
+| Requirement | Status |
+|-------------|--------|
+| `mock_tools=True` on `generate()` prevents real execution | Done |
+| Custom `mock_execute()` on `BaseTool` subclasses | Done |
+| Custom `mock_function` on function-based registration | Done |
+| Auto-generated stubs for tools without mock handlers | Done |
+| Mock flag propagates through nested calls | Done |
+
+#### R16: Nested Tool Execution
+
+**Goal:** Tools can invoke other tools via ToolRuntime.
+
+| Requirement | Status |
+|-------------|--------|
+| `ToolRuntime` injected as context parameter | Done |
+| `call_tool()` for single nested invocations | Done |
+| `call_tools()` for parallel/sequential multi-tool calls | Done |
+| Configurable max depth (default 8) | Done |
+| Context propagation across nesting levels | Done |
+
+#### R17: Error Handling
 
 **Goal:** Clear, actionable exceptions for all failure modes.
 
@@ -232,8 +301,11 @@ llm_factory_toolkit/
         __init__.py      # Tool framework exports
         base_tool.py     # BaseTool ABC
         builtins.py      # safe_math_evaluator, read_local_file
+        catalog.py       # ToolCatalog ABC, InMemoryToolCatalog, ToolCatalogEntry
+        meta_tools.py    # browse_toolkit, load_tools (dynamic loading)
         models.py        # GenerationResult, StreamChunk, ParsedToolCall, etc.
         runtime.py       # ToolRuntime for nested tool calls
+        session.py       # ToolSession for per-conversation tool visibility
         tool_factory.py  # Registration, dispatch, context injection, mock mode
 ```
 
