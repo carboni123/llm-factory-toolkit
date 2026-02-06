@@ -361,12 +361,13 @@ llm_factory_toolkit/
 
 | Category | Scope | Count | API Keys Required |
 |----------|-------|-------|-------------------|
-| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit | 113 | No |
+| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit, large catalog audit | 119 | No |
 | Integration tests | End-to-end generation, streaming, tools, structured output, dynamic loading, CRM simulation | 32 | Yes (per provider) |
 
 - Coverage target: >= 80%
 - Framework: pytest + pytest-asyncio
-- 29 test files across 15 unit + 14 integration suites
+- 30 test files across 16 unit + 14 integration suites
+- **Large Catalog Audit:** Dedicated test suite (`test_large_catalog_audit.py`) validates performance and search quality with 50-100 tools
 
 ---
 
@@ -393,8 +394,12 @@ llm_factory_toolkit/
 
 ## Future Considerations
 
+- **Token budget management** -- Automatic context window tracking and truncation. **PRIORITY: HIGH** (identified in large catalog audit - required for production use with 50+ tools)
+- **Tool unloading meta-tool** -- Expose `ToolSession.unload()` to the LLM for strategic tool swapping. **PRIORITY: MEDIUM** (identified in large catalog audit)
 - **Anthropic tool_use native path** -- Similar to OpenAI dual routing, Anthropic's native API could provide richer tool support.
 - **Callback/event hooks** -- Pre/post tool execution hooks for logging, metrics, and authorization.
-- **Token budget management** -- Automatic context window tracking and truncation.
 - **Retry policies** -- Configurable retry with exponential backoff per provider.
 - **Batch generation** -- Process multiple independent requests efficiently.
+- **Tool definition compression** -- Shorter parameter descriptions for large catalogs, tool summary mode (name + category only).
+- **Catalog backends** -- Redis-backed or database-backed catalogs with full-text search for 200+ tool scenarios.
+- **Tool usage analytics** -- Track which tools are most frequently loaded, identify unused tools for catalog pruning.
