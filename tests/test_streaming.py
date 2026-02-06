@@ -16,7 +16,7 @@ from llm_factory_toolkit.exceptions import (
 )
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 SYSTEM_PROMPT = "You are a helpful assistant."
@@ -30,6 +30,20 @@ skip_openai = not OPENAI_API_KEY
 skip_google = not GOOGLE_API_KEY
 skip_reason_openai = "OPENAI_API_KEY environment variable not set"
 skip_reason_google = "GOOGLE_API_KEY environment variable not set"
+
+
+def _is_rate_limit_or_quota_error(error: Exception) -> bool:
+    """Return True when *error* indicates provider throttling or quota exhaustion."""
+    text = str(error).lower()
+    return any(
+        token in text
+        for token in (
+            "rate limit",
+            "quota",
+            "resource_exhausted",
+            "too many requests",
+        )
+    )
 
 
 # --- OpenAI Streaming Test ---
@@ -99,10 +113,14 @@ async def test_openai_streaming_basic(openai_test_model: str) -> None:
     except ConfigurationError as e:
         pytest.fail(f"ConfigurationError: {e}")
     except ProviderError as e:
+        if _is_rate_limit_or_quota_error(e):
+            pytest.skip(f"OpenAI streaming skipped due to rate limit/quota: {e}")
         pytest.fail(f"ProviderError: {type(e).__name__}: {e}")
     except LLMToolkitError as e:
         pytest.fail(f"LLMToolkitError: {type(e).__name__}: {e}")
     except Exception as e:
+        if _is_rate_limit_or_quota_error(e):
+            pytest.skip(f"OpenAI streaming skipped due to rate limit/quota: {e}")
         pytest.fail(f"Unexpected error: {type(e).__name__}: {e}")
 
 
@@ -159,10 +177,14 @@ async def test_openai_streaming_usage_metadata(openai_test_model: str) -> None:
     except ConfigurationError as e:
         pytest.fail(f"ConfigurationError: {e}")
     except ProviderError as e:
+        if _is_rate_limit_or_quota_error(e):
+            pytest.skip(f"OpenAI streaming skipped due to rate limit/quota: {e}")
         pytest.fail(f"ProviderError: {type(e).__name__}: {e}")
     except LLMToolkitError as e:
         pytest.fail(f"LLMToolkitError: {type(e).__name__}: {e}")
     except Exception as e:
+        if _is_rate_limit_or_quota_error(e):
+            pytest.skip(f"OpenAI streaming skipped due to rate limit/quota: {e}")
         pytest.fail(f"Unexpected error: {type(e).__name__}: {e}")
 
 
@@ -227,8 +249,12 @@ async def test_google_genai_streaming_basic(google_test_model: str) -> None:
     except ConfigurationError as e:
         pytest.fail(f"ConfigurationError: {e}")
     except ProviderError as e:
+        if _is_rate_limit_or_quota_error(e):
+            pytest.skip(f"Google streaming skipped due to rate limit/quota: {e}")
         pytest.fail(f"ProviderError: {type(e).__name__}: {e}")
     except LLMToolkitError as e:
         pytest.fail(f"LLMToolkitError: {type(e).__name__}: {e}")
     except Exception as e:
+        if _is_rate_limit_or_quota_error(e):
+            pytest.skip(f"Google streaming skipped due to rate limit/quota: {e}")
         pytest.fail(f"Unexpected error: {type(e).__name__}: {e}")

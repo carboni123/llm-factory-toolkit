@@ -21,6 +21,13 @@ _DEFAULT_GOOGLE_MODEL = "gemini/gemini-2.5-flash"
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register custom command line options for pytest."""
     parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        dest="run_integration",
+        help="Run tests marked as integration.",
+    )
+    parser.addoption(
         "--openai-test-model",
         action="store",
         default=os.environ.get("OPENAI_TEST_MODEL", _DEFAULT_SUPPORTED_MODEL),
@@ -40,6 +47,29 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Can also be provided through the GOOGLE_TEST_MODEL environment variable."
         ),
     )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register custom markers used by the test suite."""
+    config.addinivalue_line(
+        "markers",
+        "integration: marks tests that call external provider APIs",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Skip integration tests unless explicitly requested."""
+    if config.getoption("run_integration"):
+        return
+
+    skip_integration = pytest.mark.skip(
+        reason="integration test; use --run-integration to execute"
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)
 
 
 @pytest.fixture(scope="session")

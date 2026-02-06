@@ -1,44 +1,52 @@
 #!/usr/bin/env python3
-"""
-Script to list available Google GenAI models using the GoogleGenAIProvider.
-"""
+"""List available Google GenAI models from the current API key."""
 
-import asyncio
+from __future__ import annotations
+
+import os
 import sys
 from pathlib import Path
 
-# Add the project root to Python path so we can import llm_factory_toolkit
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-# Load environment variables from .env file
 from dotenv import load_dotenv
 
-load_dotenv(project_root / ".env")
+try:
+    from google import genai
+except Exception as exc:  # pragma: no cover - script-level dependency guard
+    raise SystemExit(f"google-genai is required: {exc}") from exc
 
-from llm_factory_toolkit.providers.googlegenai_adapter import GoogleGenAIProvider
 
+def main() -> int:
+    """Print model names available to the configured Google API key."""
+    project_root = Path(__file__).parent.parent
+    load_dotenv(project_root / ".env")
 
-async def main():
-    """List available Google GenAI models."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        print("GOOGLE_API_KEY is not set.")
+        return 1
+
     try:
-        # Initialize the provider with API key from environment
-        provider = GoogleGenAIProvider()
+        client = genai.Client(api_key=api_key)
+        model_names = sorted(
+            {
+                getattr(model, "name", "")
+                for model in client.models.list()
+                if getattr(model, "name", "")
+            }
+        )
+    except Exception as exc:
+        print(f"Error while listing models: {exc}")
+        return 1
 
-        print("Fetching available Google GenAI models...")
-        models = await provider.list_models()
+    if not model_names:
+        print("No models returned.")
+        return 0
 
-        if models:
-            print(f"\nFound {len(models)} models:")
-            for model in sorted(models):
-                print(f"  - {model}")
-        else:
-            print("No models found.")
-
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    print(f"Found {len(model_names)} models:")
+    for name in model_names:
+        print(f"  - {name}")
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())

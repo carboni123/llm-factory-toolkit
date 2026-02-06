@@ -20,6 +20,7 @@ from .session import ToolSession
 # browse_toolkit
 # ------------------------------------------------------------------
 
+
 def browse_toolkit(
     query: Optional[str] = None,
     category: Optional[str] = None,
@@ -44,20 +45,24 @@ def browse_toolkit(
         )
 
     entries = tool_catalog.search(
-        query=query, category=category, limit=limit,
+        query=query,
+        category=category,
+        limit=limit,
     )
 
     active = tool_session.active_tools if tool_session else set()
 
     results: List[Dict[str, Any]] = []
     for entry in entries:
-        results.append({
-            "name": entry.name,
-            "description": entry.description,
-            "category": entry.category,
-            "tags": entry.tags,
-            "active": entry.name in active,
-        })
+        results.append(
+            {
+                "name": entry.name,
+                "description": entry.description,
+                "category": entry.category,
+                "tags": entry.tags,
+                "active": entry.name in active,
+            }
+        )
 
     categories = tool_catalog.list_categories()
 
@@ -81,6 +86,7 @@ def browse_toolkit(
 # ------------------------------------------------------------------
 # load_tools
 # ------------------------------------------------------------------
+
 
 def load_tools(
     tool_names: List[str],

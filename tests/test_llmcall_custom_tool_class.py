@@ -64,7 +64,7 @@ class SecretDataTool:
 
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 SYSTEM_PROMPT_TOOL = "You are a helpful assistant with access to class-based tools."

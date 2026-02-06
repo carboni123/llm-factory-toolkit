@@ -19,7 +19,7 @@ from llm_factory_toolkit.exceptions import (
 )
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 SYSTEM_PROMPT_TOOL = "You are a helpful assistant with access to tools."
@@ -147,7 +147,7 @@ async def test_openai_tool_call(openai_test_model: str) -> None:
         if "authentication" in str(e).lower():
             pytest.fail(f"OpenAI Provider Authentication Error: {e}. Check API key.")
         elif "rate limit" in str(e).lower():
-            pytest.fail(f"OpenAI Provider Rate Limit Error: {e}. Check usage limits.")
+            pytest.skip(f"OpenAI Provider Rate Limit Error: {e}. Check usage limits.")
         elif "bad request" in str(e).lower() and "tool_calls" in str(e).lower():
             pytest.fail(f"OpenAI Provider Bad Request (likely tool format issue): {e}")
         else:
@@ -242,7 +242,7 @@ async def test_google_genai_tool_call(google_test_model: str) -> None:
                 f"Google GenAI Provider Authentication Error: {e}. Check API key."
             )
         elif "rate limit" in str(e).lower() or "quota" in str(e).lower():
-            pytest.fail(f"Google GenAI Provider Rate Limit/Quota Error: {e}.")
+            pytest.skip(f"Google GenAI Provider Rate Limit/Quota Error: {e}.")
         else:
             pytest.fail(f"ProviderError during API call: {type(e).__name__}: {e}")
     except UnsupportedFeatureError as e:

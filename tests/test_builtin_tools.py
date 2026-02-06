@@ -4,6 +4,7 @@ import tempfile
 import pytest
 
 from llm_factory_toolkit.tools import ToolFactory
+from llm_factory_toolkit.tools import builtins as builtin_tools
 
 pytestmark = pytest.mark.asyncio
 
@@ -56,3 +57,24 @@ async def test_read_local_file_json():
         assert result.payload == data
     finally:
         os.unlink(tmp_path)
+
+
+async def test_read_local_file_missing_returns_error():
+    factory = ToolFactory()
+    factory.register_builtins(["read_local_file"])
+
+    result = await factory.dispatch_tool(
+        "read_local_file", json.dumps({"file_path": "missing-file.txt"})
+    )
+
+    assert result.error is not None
+    assert "File read error" in result.content
+
+
+async def test_safe_math_evaluator_without_sympy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(builtin_tools, "sympify", None)
+
+    result = builtin_tools.safe_math_evaluator("2 + 3")
+
+    assert result.error is not None
+    assert "sympy not installed" in result.content

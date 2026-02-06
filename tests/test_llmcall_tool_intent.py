@@ -21,7 +21,7 @@ from llm_factory_toolkit.exceptions import (
 )
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 SYSTEM_PROMPT_MULTI_TOOL = """

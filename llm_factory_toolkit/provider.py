@@ -20,6 +20,15 @@ from typing import (
 )
 
 import litellm
+from litellm.exceptions import (
+    APIConnectionError,
+    APIError,
+    AuthenticationError,
+    BadRequestError,
+    RateLimitError,
+    ServiceUnavailableError,
+    Timeout,
+)
 from pydantic import BaseModel
 
 from .exceptions import (
@@ -160,10 +169,7 @@ class LiteLLMProvider:
         mock_tools: bool = False,
         parallel_tools: bool = False,
         web_search: bool | Dict[str, Any] = False,
-        file_search: bool
-        | Dict[str, Any]
-        | List[str]
-        | Tuple[str, ...] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> GenerationResult:
@@ -316,10 +322,7 @@ class LiteLLMProvider:
         mock_tools: bool = False,
         parallel_tools: bool = False,
         web_search: bool | Dict[str, Any] = False,
-        file_search: bool
-        | Dict[str, Any]
-        | List[str]
-        | Tuple[str, ...] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
@@ -333,7 +336,7 @@ class LiteLLMProvider:
 
         # Route OpenAI models through the Responses API
         if _is_openai_model(active_model):
-            async for chunk in self._generate_openai_stream(
+            async for openai_chunk in self._generate_openai_stream(
                 input=input,
                 model=active_model,
                 max_tool_iterations=max_tool_iterations,
@@ -349,7 +352,7 @@ class LiteLLMProvider:
                 tool_session=tool_session,
                 **kwargs,
             ):
-                yield chunk
+                yield openai_chunk
             return
 
         # Dynamic tool loading: inject session and catalog into context
@@ -388,16 +391,27 @@ class LiteLLMProvider:
             stream_response = await self._call_litellm(call_kwargs)
 
             chunks: List[Any] = []
-            async for chunk in stream_response:
-                chunks.append(chunk)
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
-                    yield StreamChunk(content=delta.content)
+            async for provider_chunk in stream_response:
+                chunks.append(provider_chunk)
+                provider_choices = getattr(provider_chunk, "choices", None)
+                if not provider_choices:
+                    continue
+                delta = getattr(provider_choices[0], "delta", None)
+                content_delta = getattr(delta, "content", None) if delta else None
+                if content_delta:
+                    yield StreamChunk(content=content_delta)
 
             # Reconstruct the full response to check for tool calls
             complete = litellm.stream_chunk_builder(chunks, messages=current_messages)
-            message = complete.choices[0].message
-            tool_calls = message.tool_calls
+            complete_choices = getattr(complete, "choices", None)
+            if not complete_choices:
+                yield StreamChunk(done=True, usage=None)
+                return
+            message = getattr(complete_choices[0], "message", None)
+            if message is None:
+                yield StreamChunk(done=True, usage=None)
+                return
+            tool_calls = getattr(message, "tool_calls", None)
 
             assistant_msg = self._message_to_dict(message)
             current_messages.append(assistant_msg)
@@ -405,11 +419,12 @@ class LiteLLMProvider:
             if not tool_calls:
                 # Extract usage from the final chunk
                 usage_data = None
-                if hasattr(complete, "usage") and complete.usage:
+                usage = getattr(complete, "usage", None)
+                if usage:
                     usage_data = {
-                        "prompt_tokens": complete.usage.prompt_tokens,
-                        "completion_tokens": complete.usage.completion_tokens,
-                        "total_tokens": complete.usage.total_tokens,
+                        "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                        "completion_tokens": getattr(usage, "completion_tokens", 0),
+                        "total_tokens": getattr(usage, "total_tokens", 0),
                     }
                 yield StreamChunk(done=True, usage=usage_data)
                 return
@@ -632,19 +647,19 @@ class LiteLLMProvider:
         """Call ``litellm.acompletion`` with error mapping."""
         try:
             return await litellm.acompletion(**call_kwargs)
-        except litellm.AuthenticationError as e:
+        except AuthenticationError as e:
             raise ConfigurationError(f"Authentication failed: {e}") from e
-        except litellm.BadRequestError as e:
+        except BadRequestError as e:
             raise ProviderError(f"Bad request: {e}") from e
-        except litellm.RateLimitError as e:
+        except RateLimitError as e:
             raise ProviderError(f"Rate limit exceeded: {e}") from e
-        except litellm.Timeout as e:
+        except Timeout as e:
             raise ProviderError(f"Request timed out: {e}") from e
-        except litellm.APIConnectionError as e:
+        except APIConnectionError as e:
             raise ProviderError(f"API connection error: {e}") from e
-        except litellm.ServiceUnavailableError as e:
+        except ServiceUnavailableError as e:
             raise ProviderError(f"Service unavailable: {e}") from e
-        except litellm.APIError as e:
+        except APIError as e:
             raise ProviderError(f"API error: {e}") from e
         except Exception as e:
             raise ProviderError(f"Unexpected LLM error: {e}") from e
@@ -674,16 +689,12 @@ class LiteLLMProvider:
                 factory.increment_tool_usage(func_name)
 
             if not func_name or call_id is None:
-                logger.error(
-                    "Malformed tool call: ID=%s, Name=%s", call_id, func_name
-                )
+                logger.error("Malformed tool call: ID=%s, Name=%s", call_id, func_name)
                 return {
                     "role": "tool",
                     "tool_call_id": call_id or "unknown",
                     "name": func_name or "unknown",
-                    "content": json.dumps(
-                        {"error": "Malformed tool call received."}
-                    ),
+                    "content": json.dumps({"error": "Malformed tool call received."}),
                 }, None
 
             try:
@@ -728,9 +739,7 @@ class LiteLLMProvider:
                     "role": "tool",
                     "tool_call_id": call_id,
                     "name": func_name,
-                    "content": json.dumps(
-                        {"error": f"Unexpected error: {e}"}
-                    ),
+                    "content": json.dumps({"error": f"Unexpected error: {e}"}),
                 }, None
 
         if parallel_tools:
@@ -767,9 +776,7 @@ class LiteLLMProvider:
         return msg
 
     @staticmethod
-    def _maybe_strip_urls(
-        content: str, web_search: bool | Dict[str, Any]
-    ) -> str:
+    def _maybe_strip_urls(content: str, web_search: bool | Dict[str, Any]) -> str:
         """Conditionally strip URLs when web search citations are disabled."""
         if isinstance(web_search, dict) and not web_search.get("citations", True):
             return _strip_urls(content)
@@ -781,10 +788,10 @@ class LiteLLMProvider:
     ) -> Optional[str]:
         """Extract final assistant text when max iterations are reached."""
         for m in reversed(messages):
-            if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+            content = m.get("content")
+            if m.get("role") == "assistant" and isinstance(content, str):
                 return (
-                    m["content"]
-                    + f"\n\n[Warning: Max tool iterations ({max_iterations}) "
+                    content + f"\n\n[Warning: Max tool iterations ({max_iterations}) "
                     "reached. Result might be incomplete.]"
                 )
         tool_output_detected = any(m.get("role") == "tool" for m in messages)
@@ -804,10 +811,7 @@ class LiteLLMProvider:
         *,
         use_tools: Optional[List[str]] = [],
         web_search: bool | Dict[str, Any] = False,
-        file_search: bool
-        | Dict[str, Any]
-        | List[str]
-        | Tuple[str, ...] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
     ) -> List[Dict[str, Any]]:
         """Build the ``tools`` list for the OpenAI Responses API."""
         tools_list: List[Dict[str, Any]] = []
@@ -822,12 +826,11 @@ class LiteLLMProvider:
         if web_search:
             ws_tool: Dict[str, Any] = {"type": "web_search_preview"}
             if isinstance(web_search, dict):
-                if web_search.get("search_context_size"):
-                    ws_tool["search_context_size"] = web_search[
-                        "search_context_size"
-                    ]
-                if web_search.get("user_location"):
-                    ws_tool["user_location"] = web_search["user_location"]
+                # ``citations`` is local post-processing only and not part of the
+                # provider tool schema.
+                for key, value in web_search.items():
+                    if key != "citations":
+                        ws_tool[key] = value
             tools_list.append(ws_tool)
 
         # Registered function tools
@@ -894,12 +897,8 @@ class LiteLLMProvider:
             Optional[Dict[str, Any]],
         ]:
             func_name = getattr(tc, "name", None) or "unknown"
-            func_args = getattr(
-                tc, "arguments", getattr(tc, "input", None)
-            )
-            call_id = getattr(tc, "call_id", None) or getattr(
-                tc, "id", None
-            )
+            func_args = getattr(tc, "arguments", getattr(tc, "input", None))
+            call_id = getattr(tc, "call_id", None) or getattr(tc, "id", None)
 
             if func_name:
                 factory.increment_tool_usage(func_name)
@@ -933,9 +932,7 @@ class LiteLLMProvider:
                     payload,
                 )
             except Exception as e:
-                logger.error(
-                    "Tool dispatch error for %s: %s", func_name, e
-                )
+                logger.error("Tool dispatch error for %s: %s", func_name, e)
                 error_content = json.dumps({"error": str(e)})
                 return (
                     {
@@ -953,9 +950,7 @@ class LiteLLMProvider:
                 )
 
         if parallel_tools:
-            results = await asyncio.gather(
-                *[_dispatch_one(tc) for tc in tool_calls]
-            )
+            results = await asyncio.gather(*[_dispatch_one(tc) for tc in tool_calls])
         else:
             results = [await _dispatch_one(tc) for tc in tool_calls]
 
@@ -1073,9 +1068,7 @@ class LiteLLMProvider:
                 # Convert Chat Completions assistant tool_calls to
                 # individual function_call items
                 if msg.get("content"):
-                    converted.append(
-                        {"role": "assistant", "content": msg["content"]}
-                    )
+                    converted.append({"role": "assistant", "content": msg["content"]})
                 for tc in msg["tool_calls"]:
                     func = tc.get("function", {})
                     converted.append(
@@ -1122,10 +1115,12 @@ class LiteLLMProvider:
             payload["reasoning"] = {"effort": kwargs.pop("reasoning_effort")}
 
         # Structured output via text_format
-        if isinstance(response_format, type) and issubclass(
-            response_format, BaseModel
-        ):
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             payload["text_format"] = response_format
+        elif isinstance(response_format, dict):
+            # Keep JSON mode compatible with the Chat Completions surface.
+            # ``{"type": "json_object"}`` maps to Responses ``text.format``.
+            payload["text"] = {"format": dict(response_format)}
 
         return payload
 
@@ -1143,10 +1138,7 @@ class LiteLLMProvider:
         mock_tools: bool = False,
         parallel_tools: bool = False,
         web_search: bool | Dict[str, Any] = False,
-        file_search: bool
-        | Dict[str, Any]
-        | List[str]
-        | Tuple[str, ...] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> GenerationResult:
@@ -1200,16 +1192,13 @@ class LiteLLMProvider:
             try:
                 completion = await client.responses.parse(**request_payload)
             except Exception as e:
-                raise ProviderError(
-                    f"OpenAI Responses API error: {e}"
-                ) from e
+                raise ProviderError(f"OpenAI Responses API error: {e}") from e
 
             assistant_text = getattr(completion, "output_text", "") or ""
             tool_calls = [
                 item
                 for item in getattr(completion, "output", [])
-                if getattr(item, "type", None)
-                in {"function_call", "custom_tool_call"}
+                if getattr(item, "type", None) in {"function_call", "custom_tool_call"}
             ]
 
             # Append output items to conversation
@@ -1221,9 +1210,7 @@ class LiteLLMProvider:
 
             if not tool_calls:
                 # Normalise to Chat Completions format before returning
-                normalised = self._responses_to_chat_messages(
-                    current_messages
-                )
+                normalised = self._responses_to_chat_messages(current_messages)
 
                 # Handle structured output parsing
                 if isinstance(response_format, type) and issubclass(
@@ -1231,15 +1218,11 @@ class LiteLLMProvider:
                 ):
                     if assistant_text:
                         try:
-                            parsed = response_format.model_validate_json(
-                                assistant_text
-                            )
+                            parsed = response_format.model_validate_json(assistant_text)
                             return GenerationResult(
                                 content=parsed,
                                 payloads=list(collected_payloads),
-                                tool_messages=copy.deepcopy(
-                                    tool_result_messages
-                                ),
+                                tool_messages=copy.deepcopy(tool_result_messages),
                                 messages=normalised,
                             )
                         except Exception:
@@ -1263,13 +1246,11 @@ class LiteLLMProvider:
                     "Received tool calls but no ToolFactory is configured."
                 )
 
-            api_results, chat_results, payloads = (
-                await self._handle_openai_tool_calls(
-                    tool_calls,
-                    tool_execution_context=tool_execution_context,
-                    mock_tools=mock_tools,
-                    parallel_tools=parallel_tools,
-                )
+            api_results, chat_results, payloads = await self._handle_openai_tool_calls(
+                tool_calls,
+                tool_execution_context=tool_execution_context,
+                mock_tools=mock_tools,
+                parallel_tools=parallel_tools,
             )
             current_messages.extend(api_results)
             tool_result_messages.extend(copy.deepcopy(chat_results))
@@ -1279,9 +1260,7 @@ class LiteLLMProvider:
         # Max iterations reached – normalise messages to Chat Completions
         normalised = self._responses_to_chat_messages(current_messages)
         return GenerationResult(
-            content=self._aggregate_final_content(
-                normalised, max_tool_iterations
-            ),
+            content=self._aggregate_final_content(normalised, max_tool_iterations),
             payloads=list(collected_payloads),
             tool_messages=copy.deepcopy(tool_result_messages),
             messages=normalised,
@@ -1301,10 +1280,7 @@ class LiteLLMProvider:
         mock_tools: bool = False,
         parallel_tools: bool = False,
         web_search: bool | Dict[str, Any] = False,
-        file_search: bool
-        | Dict[str, Any]
-        | List[str]
-        | Tuple[str, ...] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
@@ -1357,9 +1333,7 @@ class LiteLLMProvider:
             try:
                 stream = await client.responses.create(**request_payload)
             except Exception as e:
-                raise ProviderError(
-                    f"OpenAI Responses API stream error: {e}"
-                ) from e
+                raise ProviderError(f"OpenAI Responses API stream error: {e}") from e
 
             response_obj = None
             async for event in stream:
@@ -1457,9 +1431,7 @@ class LiteLLMProvider:
         try:
             completion = await client.responses.parse(**request_payload)
         except Exception as e:
-            raise ProviderError(
-                f"OpenAI Responses API error: {e}"
-            ) from e
+            raise ProviderError(f"OpenAI Responses API error: {e}") from e
 
         assistant_text = getattr(completion, "output_text", "") or ""
         output_items = getattr(completion, "output", [])
@@ -1467,21 +1439,14 @@ class LiteLLMProvider:
         tool_calls = [
             item
             for item in output_items
-            if getattr(item, "type", None)
-            in {"function_call", "custom_tool_call"}
+            if getattr(item, "type", None) in {"function_call", "custom_tool_call"}
         ]
 
         parsed_tool_calls: List[ParsedToolCall] = []
         for tc in tool_calls:
             func_name = getattr(tc, "name", "") or ""
-            func_args = getattr(
-                tc, "arguments", getattr(tc, "input", None)
-            ) or "{}"
-            call_id = (
-                getattr(tc, "call_id", None)
-                or getattr(tc, "id", None)
-                or ""
-            )
+            func_args = getattr(tc, "arguments", getattr(tc, "input", None)) or "{}"
+            call_id = getattr(tc, "call_id", None) or getattr(tc, "id", None) or ""
 
             if func_name and self.tool_factory:
                 self.tool_factory.increment_tool_usage(func_name)
@@ -1490,14 +1455,10 @@ class LiteLLMProvider:
             parsing_error: Optional[str] = None
             try:
                 parsed_args = (
-                    json.loads(func_args)
-                    if isinstance(func_args, str)
-                    else func_args
+                    json.loads(func_args) if isinstance(func_args, str) else func_args
                 )
                 if not isinstance(parsed_args, dict):
-                    parsing_error = (
-                        f"Not a JSON object. Type: {type(parsed_args)}"
-                    )
+                    parsing_error = f"Not a JSON object. Type: {type(parsed_args)}"
                     args_dict_or_str = str(func_args)
                 else:
                     args_dict_or_str = parsed_args

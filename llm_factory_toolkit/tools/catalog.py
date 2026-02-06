@@ -90,9 +90,7 @@ class InMemoryToolCatalog(ToolCatalog):
                 description=func.get("description", ""),
                 parameters=func.get("parameters"),
             )
-        logger.info(
-            "InMemoryToolCatalog built with %d entries.", len(self._entries)
-        )
+        logger.info("InMemoryToolCatalog built with %d entries.", len(self._entries))
 
     def add_metadata(
         self,
@@ -135,9 +133,7 @@ class InMemoryToolCatalog(ToolCatalog):
         for entry in self._entries.values():
             if category and entry.category != category:
                 continue
-            if tag_set and not tag_set.intersection(
-                t.lower() for t in entry.tags
-            ):
+            if tag_set and not tag_set.intersection(t.lower() for t in entry.tags):
                 continue
             if query and not entry.matches_query(query):
                 continue

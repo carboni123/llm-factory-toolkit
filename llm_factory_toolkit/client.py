@@ -324,16 +324,12 @@ class LLMClient:
                 continue
 
             args_to_dump = (
-                tool_call.arguments
-                if isinstance(tool_call.arguments, dict)
-                else {}
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
             )
             try:
                 tool_args_str = json.dumps(args_to_dump)
             except TypeError as e:
-                logger.error(
-                    "Failed to serialise args for tool '%s': %s", tool_name, e
-                )
+                logger.error("Failed to serialise args for tool '%s': %s", tool_name, e)
                 tool_result_messages.append(
                     {
                         "role": "tool",
@@ -347,13 +343,11 @@ class LLMClient:
                 continue
 
             try:
-                result: ToolExecutionResult = (
-                    await self.tool_factory.dispatch_tool(
-                        tool_name,
-                        tool_args_str,
-                        tool_execution_context=tool_execution_context,
-                        use_mock=mock_tools,
-                    )
+                result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
+                    tool_name,
+                    tool_args_str,
+                    tool_execution_context=tool_execution_context,
+                    use_mock=mock_tools,
                 )
                 tool_result_messages.append(
                     {

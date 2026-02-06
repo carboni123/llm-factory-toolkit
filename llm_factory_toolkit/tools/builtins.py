@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Collection of optional built-in tools for quick prototyping."""
+
+from __future__ import annotations
 
 import json
 from pathlib import Path

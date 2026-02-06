@@ -16,7 +16,7 @@ from llm_factory_toolkit.exceptions import (
 )
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 SYSTEM_PROMPT = "You are a helpful assistant."
@@ -88,7 +88,7 @@ async def test_google_simple_call(google_test_model: str) -> None:
                 f"Google GenAI Provider Authentication Error: {e}. Check if API key is valid and has credit."
             )
         elif "rate limit" in str(e).lower() or "quota" in str(e).lower():
-            pytest.fail(f"Google GenAI Provider Rate Limit Error: {e}.")
+            pytest.skip(f"Google GenAI Provider Rate Limit Error: {e}.")
         else:
             pytest.fail(f"ProviderError during API call: {type(e).__name__}: {e}")
     except LLMToolkitError as e:
