@@ -54,13 +54,15 @@ def browse_toolkit(
 
     results: List[Dict[str, Any]] = []
     for entry in entries:
+        is_active = entry.name in active
         results.append(
             {
                 "name": entry.name,
                 "description": entry.description,
                 "category": entry.category,
                 "tags": entry.tags,
-                "active": entry.name in active,
+                "active": is_active,
+                "status": "loaded" if is_active else "available - call load_tools to activate",
             }
         )
 
@@ -149,12 +151,12 @@ BROWSE_TOOLKIT_PARAMETERS: Dict[str, Any] = {
     "type": "object",
     "properties": {
         "query": {
-            "type": "string",
-            "description": "Search keywords to find tools by name, description, or tags.",
+            "type": ["string", "null"],
+            "description": "Search keywords to find tools by name, description, or tags. Pass null to list all.",
         },
         "category": {
-            "type": "string",
-            "description": "Filter results by category.",
+            "type": ["string", "null"],
+            "description": "Filter results by exact category name. Pass null to skip category filtering.",
         },
         "limit": {
             "type": "integer",

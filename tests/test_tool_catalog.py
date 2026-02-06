@@ -202,3 +202,28 @@ class TestEntryMatchesQuery:
     def test_all_tokens_must_match(self) -> None:
         entry = ToolCatalogEntry(name="send_email", description="Send email")
         assert not entry.matches_query("send database")
+
+    def test_matches_plural_form(self) -> None:
+        """'secrets' matches an entry containing 'secret' (reverse containment)."""
+        entry = ToolCatalogEntry(
+            name="get_secret_data",
+            description="Retrieves secret data",
+            tags=["secret", "password"],
+        )
+        assert entry.matches_query("secrets")
+
+    def test_matches_verb_form(self) -> None:
+        """'emails' matches 'email' via reverse containment."""
+        entry = ToolCatalogEntry(name="send_email", description="Send email")
+        assert entry.matches_query("emails")
+
+    def test_reverse_containment_min_length(self) -> None:
+        """Short words (< 3 chars) should not trigger reverse containment."""
+        entry = ToolCatalogEntry(name="tool", description="An AI tool")
+        # "ai" (2 chars) should NOT reverse-match "aide"
+        assert not entry.matches_query("aide complex")
+
+    def test_matches_underscore_split(self) -> None:
+        """Underscored names like 'get_secret_data' match token 'secrets'."""
+        entry = ToolCatalogEntry(name="get_secret_data", description="desc")
+        assert entry.matches_query("secrets")

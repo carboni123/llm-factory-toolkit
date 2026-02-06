@@ -24,10 +24,30 @@ class ToolCatalogEntry:
     category: Optional[str] = None
 
     def matches_query(self, query: str) -> bool:
-        """Return True if *query* keywords match name, description, or tags."""
+        """Return True if *query* keywords match name, description, or tags.
+
+        Matching is substring-based and tolerant of morphological variants:
+        each query token must appear as a substring of the searchable text,
+        OR a word from the searchable text (>= 3 chars) must appear as a
+        substring of the token (e.g. "secrets" matches "secret").
+        """
         tokens = query.lower().split()
-        searchable = f"{self.name} {self.description} {' '.join(self.tags)}".lower()
-        return all(tok in searchable for tok in tokens)
+        searchable = (
+            f"{self.name} {self.description} {' '.join(self.tags)}".lower()
+        )
+        searchable_words = set(
+            searchable.replace("_", " ").replace("-", " ").split()
+        )
+
+        for tok in tokens:
+            if tok in searchable:
+                continue
+            # Reverse containment: handles plurals / verb forms
+            # e.g. "secrets" matches because "secret" (a word) is in "secrets"
+            if any(w in tok for w in searchable_words if len(w) >= 3):
+                continue
+            return False
+        return True
 
 
 class ToolCatalog(ABC):
