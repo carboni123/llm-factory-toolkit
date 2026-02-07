@@ -82,6 +82,76 @@ class ToolCatalogEntry:
             return False
         return True
 
+    def relevance_score(self, query: str) -> float:
+        """Compute a 0.0–1.0 relevance score against *query*.
+
+        Scoring uses weighted field matching:
+
+        - **name** (weight 3): exact match → 1.0 instantly; substring match
+          contributes ``3 × (len(token) / len(name))``.
+        - **tags** (weight 2): each token matched against each tag.
+        - **description** (weight 1): substring presence.
+        - **category** (weight 1): substring presence.
+
+        The raw weighted sum is normalised to ``[0.0, 1.0]`` by dividing by
+        the theoretical maximum (``tokens × (3 + 2 + 1 + 1)``).
+
+        An empty *query* always returns ``0.0``.
+        """
+        if not query or not query.strip():
+            return 0.0
+
+        query_lower = query.lower().strip()
+
+        # Exact name match → instant 1.0
+        if query_lower == self.name.lower():
+            return 1.0
+
+        tokens = query_lower.split()
+        if not tokens:
+            return 0.0
+
+        name_lower = self.name.lower()
+        desc_lower = self.description.lower()
+        tags_lower = [t.lower() for t in self.tags]
+        cat_lower = (self.category or "").lower()
+        # Also consider underscore/hyphen-split words in the name
+        name_words = set(name_lower.replace("_", " ").replace("-", " ").split())
+
+        weight_name = 3.0
+        weight_tags = 2.0
+        weight_desc = 1.0
+        weight_cat = 1.0
+        max_per_token = weight_name + weight_tags + weight_desc + weight_cat
+
+        total = 0.0
+        for tok in tokens:
+            # Name scoring (weight 3)
+            if tok in name_lower:
+                total += weight_name * (len(tok) / len(name_lower))
+            elif any(tok in w or w in tok for w in name_words if len(w) >= 3):
+                total += weight_name * 0.3  # partial / morphological
+
+            # Tags scoring (weight 2)
+            tag_score = 0.0
+            for tl in tags_lower:
+                if tok == tl:
+                    tag_score = 1.0
+                    break
+                if tok in tl or tl in tok:
+                    tag_score = max(tag_score, 0.6)
+            total += weight_tags * tag_score
+
+            # Description scoring (weight 1)
+            if tok in desc_lower:
+                total += weight_desc * (len(tok) / max(len(desc_lower), 1))
+            # Category scoring (weight 1)
+            if cat_lower and tok in cat_lower:
+                total += weight_cat * (len(tok) / max(len(cat_lower), 1))
+
+        max_possible = len(tokens) * max_per_token
+        return min(1.0, total / max_possible)
+
 
 class ToolCatalog(ABC):
     """Abstract base class for searchable tool catalogs.
@@ -99,8 +169,13 @@ class ToolCatalog(ABC):
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
         limit: int = 10,
+        min_score: float = 0.0,
     ) -> List[ToolCatalogEntry]:
         """Search the catalog and return matching entries.
+
+        When *query* is given, results are sorted by descending relevance
+        score (see :meth:`ToolCatalogEntry.relevance_score`).  Entries with
+        a score below *min_score* are excluded.
 
         When *group* is given, only entries whose ``group`` starts with the
         provided prefix are returned (e.g. ``group="crm"`` matches both
@@ -199,6 +274,7 @@ class InMemoryToolCatalog(ToolCatalog):
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
         limit: int = 10,
+        min_score: float = 0.0,
     ) -> List[ToolCatalogEntry]:
         results: List[ToolCatalogEntry] = []
         tag_set = set(t.lower() for t in tags) if tags else None
@@ -218,10 +294,19 @@ class InMemoryToolCatalog(ToolCatalog):
             if query and not entry.matches_query(query):
                 continue
             results.append(entry)
-            if len(results) >= limit:
-                break
 
-        return results
+        # When a query is provided, sort by relevance score descending
+        # and apply min_score filter.
+        if query:
+            scored = [
+                (entry, entry.relevance_score(query)) for entry in results
+            ]
+            if min_score > 0.0:
+                scored = [(e, s) for e, s in scored if s >= min_score]
+            scored.sort(key=lambda pair: pair[1], reverse=True)
+            results = [e for e, _ in scored]
+
+        return results[:limit]
 
     def get_entry(self, tool_name: str) -> Optional[ToolCatalogEntry]:
         return self._entries.get(tool_name)
