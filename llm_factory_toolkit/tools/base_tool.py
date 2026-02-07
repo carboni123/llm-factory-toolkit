@@ -14,6 +14,7 @@ class BaseTool(ABC):
     PARAMETERS: Optional[Dict[str, Any]] = None  # JSON schema for arguments
     CATEGORY: Optional[str] = None  # Category for catalog discovery
     TAGS: Optional[List[str]] = None  # Tags for catalog search
+    GROUP: Optional[str] = None  # Dotted namespace for group filtering
 
     @abstractmethod
     def execute(self, **kwargs: Any) -> ToolExecutionResult:

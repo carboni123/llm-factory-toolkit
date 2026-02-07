@@ -81,24 +81,34 @@ class StreamChunk:
 
 
 class ParsedToolCall(BaseModel):
-    id: str  # Tool call ID from the provider
-    name: str  # Name of the function to be called
-    arguments: Union[
-        Dict[str, Any], str
-    ]  # Parsed arguments as a dict, or raw string if parsing fails
-    arguments_parsing_error: Optional[
-        str
-    ] = None  # Error message if argument parsing failed
+    """A single tool call parsed from the LLM response."""
+
+    id: str = Field(description="Tool call ID from the provider.")
+    name: str = Field(description="Name of the function to be called.")
+    arguments: Union[Dict[str, Any], str] = Field(
+        description="Parsed arguments as a dict, or raw string if parsing failed."
+    )
+    arguments_parsing_error: Optional[str] = Field(
+        default=None,
+        description="Error message if argument parsing failed.",
+    )
 
 
 class ToolIntentOutput(BaseModel):
-    content: Optional[
-        str
-    ] = None  # Text content if LLM replied directly without a tool call
-    tool_calls: Optional[List[ParsedToolCall]] = None  # List of parsed tool calls
+    """Result of :meth:`LLMClient.generate_tool_intent` — planned tool calls
+    that have not yet been executed."""
+
+    content: Optional[str] = Field(
+        default=None,
+        description="Text content if the LLM replied directly without a tool call.",
+    )
+    tool_calls: Optional[List[ParsedToolCall]] = Field(
+        default=None,
+        description="List of parsed tool calls planned by the model.",
+    )
     raw_assistant_message: List[Dict[str, Any]] = Field(
         default_factory=list,
-        description="Raw output items from the assistant (e.g., function_call items)",
+        description="Raw output items from the assistant (e.g., function_call items).",
     )
 
 

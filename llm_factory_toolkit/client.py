@@ -76,6 +76,12 @@ class LLMClient:
         lets the agent start with only ``core_tools`` and discover/load
         additional tools on demand, reducing context bloat.  Requires an
         explicit ``tool_factory`` with registered tools.
+    compact_tools:
+        When ``True``, non-core tool definitions are sent to the LLM
+        with nested ``description`` and ``default`` fields stripped,
+        saving 20-40% tokens.  Core tools (listed in ``core_tools``)
+        always retain full definitions.  Can be overridden per-call
+        via ``generate(compact_tools=...)``.  Default ``False``.
     **kwargs:
         Extra keyword arguments forwarded to every ``litellm.acompletion``
         call (e.g. ``api_base``, ``drop_params``, ``num_retries``).
@@ -183,6 +189,7 @@ class LLMClient:
         parameters: Optional[Dict[str, Any]] = None,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        group: Optional[str] = None,
     ) -> None:
         """Register a Python function as a tool for the LLM.
 
@@ -193,6 +200,8 @@ class LLMClient:
             parameters: JSON Schema for the function's parameters.
             category: Category for catalog discovery.
             tags: Tags for catalog search.
+            group: Dotted namespace for group-based filtering
+                (e.g. ``"crm.contacts"``).
         """
         if name is None:
             name = function.__name__
@@ -212,6 +221,7 @@ class LLMClient:
             parameters=parameters,
             category=category,
             tags=tags,
+            group=group,
         )
         logger.info("Tool '%s' registered.", name)
 
@@ -312,6 +322,10 @@ class LLMClient:
                 If ``dynamic_tool_loading=True`` and no ``tool_session`` is
                 passed, a fresh session with ``core_tools`` + meta-tools is
                 created automatically.
+            compact_tools: Override the client's ``compact_tools`` setting
+                for this call.  ``True`` strips nested descriptions and
+                defaults from non-core tool definitions.  ``None`` (default)
+                inherits from the constructor.
             **kwargs: Forwarded to the underlying provider (e.g.
                 ``reasoning_effort``, ``thinking``, ``top_p``).
 

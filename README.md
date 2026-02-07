@@ -110,12 +110,12 @@ async def stream_example():
 ### Basic Tool Registration
 
 ```python
-from llm_factory_toolkit import LLMClient
-from llm_factory_toolkit.tools import ToolFactory
+from llm_factory_toolkit import LLMClient, ToolFactory, ToolExecutionResult
 
-def get_weather(location: str) -> dict:
+def get_weather(location: str) -> ToolExecutionResult:
     """Get weather for a location."""
-    return {"temp": 20, "condition": "sunny", "location": location}
+    data = {"temp": 20, "condition": "sunny", "location": location}
+    return ToolExecutionResult(content=f"{data['temp']}C and {data['condition']} in {location}", payload=data)
 
 tool_factory = ToolFactory()
 tool_factory.register_tool(
@@ -148,12 +148,12 @@ print(result.content)  # LLM response incorporating the weather data
 Inject server-side data into tools without the LLM seeing it:
 
 ```python
-def process_order(order_id: str, user_id: str, db_connection: Any) -> dict:
+def process_order(order_id: str, user_id: str, db_connection) -> ToolExecutionResult:
     """Process an order. user_id and db_connection are injected from context."""
     # user_id and db_connection come from tool_execution_context,
     # NOT from the LLM -- the LLM only provides order_id
     record = db_connection.query(user_id, order_id)
-    return {"status": "processed", "record": record}
+    return ToolExecutionResult(content=f"Order {order_id} processed.", payload=record)
 
 tool_factory.register_tool(
     function=process_order,
@@ -190,7 +190,7 @@ intent = await client.generate_tool_intent(
 )
 
 # Step 2: Review planned calls
-for call in intent.tool_calls:
+for call in intent.tool_calls or []:
     print(f"Tool: {call.name}, Args: {call.arguments}")
 
 # Step 3: Execute after approval

@@ -113,7 +113,7 @@ from .exceptions import ToolError  # noqa: E402
 from .exceptions import UnsupportedFeatureError  # noqa: E402
 from .tools import builtins  # noqa: E402
 from .tools.base_tool import BaseTool  # noqa: E402
-from .tools.models import GenerationResult, StreamChunk  # noqa: E402
+from .tools.models import GenerationResult, StreamChunk, ToolExecutionResult  # noqa: E402
 from .tools.catalog import InMemoryToolCatalog, ToolCatalog, ToolCatalogEntry  # noqa: E402
 from .tools.session import ToolSession  # noqa: E402
 from .tools.tool_factory import ToolFactory  # noqa: E402
@@ -150,6 +150,7 @@ __all__ = [
     "InMemoryToolCatalog",
     "ToolCatalogEntry",
     "ToolSession",
+    "ToolExecutionResult",
     "clean_json_string",
     "extract_json_from_markdown",
     "builtins",
