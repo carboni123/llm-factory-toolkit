@@ -236,7 +236,9 @@ The agent uses `browse_toolkit` to search for relevant tools by keyword, categor
 
 **Token optimization:** Use `compact_tools=True` to strip nested descriptions and defaults from non-core tool definitions, saving 20-40% tokens. Core tools always retain full definitions for critical agent understanding.
 
-### Manual Setup
+**Auto-compact on budget pressure:** When you configure a `token_budget` on your `ToolSession`, the toolkit automatically monitors token utilisation. If usage reaches 75% of the budget, compact mode is automatically enabled for subsequent iterations, reducing token consumption while protecting core tools. Set `auto_compact=False` on `ToolSession` to disable this behaviour.
+
+### Manual Setup with Token Budget
 
 For full control over the catalog, session, and meta-tools:
 
@@ -250,11 +252,28 @@ catalog = InMemoryToolCatalog(factory)
 factory.set_catalog(catalog)
 factory.register_meta_tools()
 
-session = ToolSession()
+# Create session with token budget (recommended for large catalogs)
+session = ToolSession(
+    token_budget=8000,      # Reserve 8K tokens for tool definitions
+    auto_compact=True,      # Auto-enable compact mode at 75% usage (default)
+)
 session.load(["call_human", "browse_toolkit", "load_tools", "unload_tools"])
 
 result = await client.generate(input=messages, tool_session=session)
+
+# Check budget usage
+budget = session.get_budget_usage()
+print(f"Token usage: {budget['utilisation']*100:.1f}%")
+print(f"Warning state: {budget['warning']}")  # True if ≥75%
 ```
+
+**How auto-compact works:**
+- When `token_budget` is set, the session tracks token usage for loaded tools
+- If usage reaches 75% (`WARNING_THRESHOLD`), auto-compact activates on the next iteration
+- Core tools always retain full definitions; non-core tools switch to compact mode
+- The transition is logged at INFO level with utilisation percentage
+- Meta-tool responses include a `compact_mode` field to inform the agent
+- Set `auto_compact=False` if you want manual control over compact mode
 
 ## GenerationResult
 

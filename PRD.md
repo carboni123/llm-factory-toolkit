@@ -375,14 +375,17 @@ llm_factory_toolkit/
 
 | Category | Scope | Count | API Keys Required |
 |----------|-------|-------|-------------------|
-| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit, large catalog audit, relevance scoring | 206 | No |
+| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit, large catalog audit, relevance scoring, compact mode, auto-compact | 274 | No |
 | Integration tests | End-to-end generation, streaming, tools, structured output, dynamic loading, CRM simulation | 32 | Yes (per provider) |
 
 - Coverage target: >= 80%
 - Framework: pytest + pytest-asyncio
-- 31 test files across 17 unit + 14 integration suites
+- 32 test files across 20 unit + 12 integration suites
 - **Large Catalog Audit:** Dedicated test suite (`test_large_catalog_audit.py`) validates performance and search quality with 50-100 tools
 - **Relevance Scoring Tests:** 28 tests in `test_relevance_score.py` covering score calculation, sorting, filtering, performance benchmarks
+- **Compact Mode Tests:** 28 tests in `test_compact_mode.py` covering nested description removal, token reduction, round-trip dispatch
+- **Compact Provider Integration Tests:** 16 tests in `test_compact_provider_integration.py` covering all 4 execution paths
+- **Auto-Compact Tests:** 24 tests in `test_auto_compact.py` covering budget pressure triggers, logging, meta-tool responses, serialisation
 
 ---
 
@@ -407,10 +410,23 @@ llm_factory_toolkit/
 
 ---
 
-## Future Considerations
+## Implemented Features (Post-v1.0)
 
-- **Token budget management** -- Automatic context window tracking and truncation. **PRIORITY: HIGH** (identified in large catalog audit - required for production use with 50+ tools)
-- **Tool unloading meta-tool** -- Expose `ToolSession.unload()` to the LLM for strategic tool swapping. **PRIORITY: MEDIUM** (identified in large catalog audit)
+### Token Budget Management (v1.4.0)
+- **ToolSession token budget tracking** -- `token_budget` field with utilisation monitoring via `get_budget_usage()`
+- **Budget-based load rejection** -- Tools rejected when loading would exceed 90% threshold (`ERROR_THRESHOLD`)
+- **Warning threshold at 75%** -- `WARNING_THRESHOLD` triggers warnings and enables auto-compact
+- **Auto-compact on budget pressure** -- When `auto_compact=True` (default) and `warning=True`, provider automatically switches to compact tool definitions for subsequent iterations
+- **Logged transitions** -- Auto-compact activation logged at INFO level with utilisation percentage
+- **Meta-tool budget awareness** -- All meta-tools (`browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools`) include `compact_mode` and `budget` fields when budget is configured
+- **Serialisation support** -- `auto_compact` field included in `ToolSession.to_dict()`/`from_dict()` (defaults to `True` for backward compatibility)
+
+### Tool Unloading Meta-Tool (v1.0.0)
+- **`unload_tools` meta-tool** -- Exposes `ToolSession.unload()` to the LLM for strategic tool swapping
+- **Protected tools** -- Prevents unloading of core tools and meta-tools (browse_toolkit, load_tools, load_tool_group, unload_tools)
+- **Token reclamation** -- Frees token budget when tools are unloaded
+
+## Future Considerations
 - **Anthropic tool_use native path** -- Similar to OpenAI dual routing, Anthropic's native API could provide richer tool support.
 - **Callback/event hooks** -- Pre/post tool execution hooks for logging, metrics, and authorization.
 - **Retry policies** -- Configurable retry with exponential backoff per provider.
