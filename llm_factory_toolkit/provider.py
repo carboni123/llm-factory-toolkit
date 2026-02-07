@@ -174,6 +174,20 @@ class LiteLLMProvider:
                 ctx["tool_catalog"] = catalog
         return ctx
 
+    @staticmethod
+    def _extract_core_tool_names(
+        tool_execution_context: Optional[Dict[str, Any]],
+    ) -> set[str]:
+        """Return the set of core-tool names from *tool_execution_context*.
+
+        Reads the ``"core_tools"`` key (expected to be an iterable of
+        tool-name strings).  Returns an empty set when the context is
+        ``None`` or the key is absent.
+        """
+        if not tool_execution_context:
+            return set()
+        return set(tool_execution_context.get("core_tools", []))
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -236,11 +250,7 @@ class LiteLLMProvider:
             tool_session, tool_execution_context
         )
 
-        # Determine core tool names for compact mode (keep full definitions).
-        # Always extract so auto-compact can use them when triggered mid-loop.
-        _core_names: set[str] = set()
-        if tool_execution_context:
-            _core_names = set(tool_execution_context.get("core_tools", []))
+        _core_names = self._extract_core_tool_names(tool_execution_context)
 
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
@@ -408,11 +418,7 @@ class LiteLLMProvider:
             tool_session, tool_execution_context
         )
 
-        # Determine core tool names for compact mode.
-        # Always extract so auto-compact can use them when triggered mid-loop.
-        _core_names: set[str] = set()
-        if tool_execution_context:
-            _core_names = set(tool_execution_context.get("core_tools", []))
+        _core_names = self._extract_core_tool_names(tool_execution_context)
 
         current_messages = copy.deepcopy(input)
         iteration_count = 0
@@ -1295,11 +1301,7 @@ class LiteLLMProvider:
             tool_session, tool_execution_context
         )
 
-        # Determine core tool names for compact mode.
-        # Always extract so auto-compact can use them when triggered mid-loop.
-        _core_names: set[str] = set()
-        if tool_execution_context:
-            _core_names = set(tool_execution_context.get("core_tools", []))
+        _core_names = self._extract_core_tool_names(tool_execution_context)
 
         tools_list = self._build_openai_tools(
             use_tools=use_tools,
@@ -1461,11 +1463,7 @@ class LiteLLMProvider:
             tool_session, tool_execution_context
         )
 
-        # Determine core tool names for compact mode.
-        # Always extract so auto-compact can use them when triggered mid-loop.
-        _core_names: set[str] = set()
-        if tool_execution_context:
-            _core_names = set(tool_execution_context.get("core_tools", []))
+        _core_names = self._extract_core_tool_names(tool_execution_context)
 
         tools_list = self._build_openai_tools(
             use_tools=use_tools,
