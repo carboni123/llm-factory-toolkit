@@ -106,6 +106,20 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 | Full backward compatibility: `tool_session=None` = same as before | Done |
 | `ToolSession.to_dict()` / `from_dict()` for external persistence (Redis/DB) | Done |
 
+#### R5c: Context-Aware Tool Selection
+
+**Goal:** Improve tool discovery quality via relevance scoring.
+
+| Requirement | Status |
+|-------------|--------|
+| `relevance_score(query)` method on `ToolCatalogEntry` returns float 0.0-1.0 | Done |
+| Weighted field matching: name=3x, tags=2x, description=1x, category=1x | Done |
+| `search()` sorts results by descending relevance score when query is provided | Done |
+| `min_score` parameter filters low-relevance results | Done |
+| Exact name match returns score of 1.0 | Done |
+| Empty query returns all tools unsorted (backward compatibility) | Done |
+| Performance: <5ms for 100-tool catalog with scoring | Done |
+
 #### R5a: Tool Registration Metadata
 
 **Goal:** Category and tags as first-class registration params, auto-populating the catalog.
@@ -361,13 +375,14 @@ llm_factory_toolkit/
 
 | Category | Scope | Count | API Keys Required |
 |----------|-------|-------|-------------------|
-| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit, large catalog audit | 119 | No |
+| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit, large catalog audit, relevance scoring | 206 | No |
 | Integration tests | End-to-end generation, streaming, tools, structured output, dynamic loading, CRM simulation | 32 | Yes (per provider) |
 
 - Coverage target: >= 80%
 - Framework: pytest + pytest-asyncio
-- 30 test files across 16 unit + 14 integration suites
+- 31 test files across 17 unit + 14 integration suites
 - **Large Catalog Audit:** Dedicated test suite (`test_large_catalog_audit.py`) validates performance and search quality with 50-100 tools
+- **Relevance Scoring Tests:** 28 tests in `test_relevance_score.py` covering score calculation, sorting, filtering, performance benchmarks
 
 ---
 
