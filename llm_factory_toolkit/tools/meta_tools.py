@@ -165,11 +165,89 @@ def load_tools(
 
 
 # ------------------------------------------------------------------
+# load_tool_group
+# ------------------------------------------------------------------
+
+
+def load_tool_group(
+    group: str,
+    *,
+    tool_catalog: Optional[ToolCatalog] = None,
+    tool_session: Optional[ToolSession] = None,
+) -> ToolExecutionResult:
+    """Load all tools matching a group prefix in one call.
+
+    Looks up every tool in the catalog whose ``group`` starts with the
+    given prefix (e.g. ``"crm"`` loads both ``"crm.contacts"`` and
+    ``"crm.pipeline"`` tools) and loads them into the active session,
+    respecting ``token_budget`` and ``max_tools`` limits.
+
+    The response shape matches :func:`load_tools` with an additional
+    ``group`` field indicating which group prefix was requested.
+
+    Args:
+        group: Group prefix to match (e.g. ``"crm"`` or ``"crm.contacts"``).
+        tool_catalog: Injected -- the catalog to search.
+        tool_session: Injected -- session to modify.
+    """
+    if tool_session is None:
+        return ToolExecutionResult(
+            content=json.dumps({"error": "Tool session not available."}),
+            error="No session configured",
+        )
+
+    if tool_catalog is None:
+        return ToolExecutionResult(
+            content=json.dumps({"error": "Tool catalog not configured."}),
+            error="No catalog configured",
+        )
+
+    # Find all tools in the group (use a high limit to get all)
+    entries = tool_catalog.search(group=group, limit=10_000)
+    tool_names = [e.name for e in entries]
+
+    loaded: List[str] = []
+    already_active: List[str] = []
+
+    # Build token_counts map and separate already-active tools
+    token_counts: Dict[str, int] = {}
+    for name in tool_names:
+        if name in tool_session.active_tools:
+            already_active.append(name)
+            continue
+        loaded.append(name)
+        token_counts[name] = tool_catalog.get_token_count(name)
+
+    # Attempt to load validated names (with token budget enforcement)
+    failed_limit = tool_session.load(loaded, token_counts=token_counts)
+    actually_loaded = [n for n in loaded if n not in failed_limit]
+
+    response: Dict[str, Any] = {
+        "group": group,
+        "loaded": actually_loaded,
+        "already_active": already_active,
+        "invalid": [],
+        "failed_limit": failed_limit,
+        "active_count": len(tool_session.active_tools),
+    }
+
+    # Include budget snapshot when available
+    if tool_session.token_budget is not None:
+        response["budget"] = tool_session.get_budget_usage()
+
+    return ToolExecutionResult(
+        content=json.dumps(response, indent=2),
+        payload=response,
+        metadata={"group": group, "requested": tool_names},
+    )
+
+
+# ------------------------------------------------------------------
 # unload_tools
 # ------------------------------------------------------------------
 
 #: Tool names that cannot be unloaded (meta-tools themselves).
-_META_TOOL_NAMES = frozenset({"browse_toolkit", "load_tools", "unload_tools"})
+_META_TOOL_NAMES = frozenset({"browse_toolkit", "load_tools", "load_tool_group", "unload_tools"})
 
 
 def unload_tools(
@@ -269,6 +347,17 @@ LOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
         },
     },
     "required": ["tool_names"],
+}
+
+LOAD_TOOL_GROUP_PARAMETERS: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "group": {
+            "type": "string",
+            "description": "Group prefix to load. All tools whose group starts with this prefix will be loaded (e.g. 'crm' loads crm.contacts and crm.pipeline tools).",
+        },
+    },
+    "required": ["group"],
 }
 
 UNLOAD_TOOLS_PARAMETERS: Dict[str, Any] = {

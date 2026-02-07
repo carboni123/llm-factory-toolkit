@@ -291,12 +291,14 @@ class ToolFactory:
             )
 
     def register_meta_tools(self) -> None:
-        """Register ``browse_toolkit``, ``load_tools``, and ``unload_tools``."""
+        """Register ``browse_toolkit``, ``load_tools``, ``load_tool_group``, and ``unload_tools``."""
         from .meta_tools import (
             BROWSE_TOOLKIT_PARAMETERS,
+            LOAD_TOOL_GROUP_PARAMETERS,
             LOAD_TOOLS_PARAMETERS,
             UNLOAD_TOOLS_PARAMETERS,
             browse_toolkit,
+            load_tool_group,
             load_tools,
             unload_tools,
         )
@@ -325,6 +327,18 @@ class ToolFactory:
             tags=["meta", "loading"],
         )
         self.register_tool(
+            function=load_tool_group,
+            name="load_tool_group",
+            description=(
+                "Load all tools in a group by prefix in one call. "
+                "For example, group='crm' loads all crm.contacts and crm.pipeline tools. "
+                "Respects token budget and max_tools limits."
+            ),
+            parameters=LOAD_TOOL_GROUP_PARAMETERS,
+            category="system",
+            tags=["meta", "loading", "group"],
+        )
+        self.register_tool(
             function=unload_tools,
             name="unload_tools",
             description=(
@@ -336,7 +350,7 @@ class ToolFactory:
             tags=["meta", "unloading"],
         )
         module_logger.info(
-            "Registered meta-tools: browse_toolkit, load_tools, unload_tools"
+            "Registered meta-tools: browse_toolkit, load_tools, load_tool_group, unload_tools"
         )
 
     def get_tool_definitions(
