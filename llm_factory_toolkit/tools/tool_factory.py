@@ -354,34 +354,86 @@ class ToolFactory:
         )
 
     def get_tool_definitions(
-        self, filter_tool_names: Optional[Sequence[str]] = None
+        self,
+        filter_tool_names: Optional[Sequence[str]] = None,
+        compact: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Return definitions optionally filtered by ``filter_tool_names``."""
+        """Return definitions optionally filtered by ``filter_tool_names``.
 
+        Args:
+            filter_tool_names: If given, only include tools with these names.
+            compact: When ``True``, strip ``description`` fields from nested
+                parameter properties (keeping only the top-level function
+                description) and remove ``default`` values.  Parameter names
+                and types are preserved, so dispatch still works.
+        """
         if filter_tool_names is None:
             module_logger.debug("Returning all tool definitions.")
-            return self.tool_definitions
+            definitions = self.tool_definitions
+        else:
+            allowed = set(filter_tool_names)
+            ordered_names = [
+                registration.name for registration in self._registry.values()
+            ]
+            definitions = [
+                registration.definition
+                for registration in self._registry.values()
+                if registration.name in allowed
+            ]
 
-        allowed = set(filter_tool_names)
-        ordered_names = [registration.name for registration in self._registry.values()]
-        definitions = [
-            registration.definition
-            for registration in self._registry.values()
-            if registration.name in allowed
-        ]
+            missing = allowed - set(ordered_names)
+            if missing:
+                module_logger.warning(
+                    "Requested tools not found in factory: %s. They will be excluded.",
+                    list(missing),
+                )
 
-        missing = allowed - set(ordered_names)
-        if missing:
-            module_logger.warning(
-                "Requested tools not found in factory: %s. They will be excluded.",
-                list(missing),
+            module_logger.debug(
+                "Returning filtered tool definitions for names: %s",
+                [name for name in ordered_names if name in allowed],
             )
 
-        module_logger.debug(
-            "Returning filtered tool definitions for names: %s",
-            [name for name in ordered_names if name in allowed],
-        )
+        if compact:
+            definitions = [self._compact_definition(d) for d in definitions]
+
         return definitions
+
+    # ------------------------------------------------------------------
+    # Compact mode helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compact_definition(definition: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a deep copy of *definition* with nested property
+        ``description`` and ``default`` fields removed.
+
+        The top-level ``function.description`` is preserved.
+        """
+        import copy
+
+        out = copy.deepcopy(definition)
+        params = out.get("function", {}).get("parameters")
+        if params is not None:
+            ToolFactory._strip_properties(params)
+        return out
+
+    @staticmethod
+    def _strip_properties(schema: Dict[str, Any]) -> None:
+        """Recursively strip ``description`` and ``default`` from properties."""
+        props = schema.get("properties")
+        if isinstance(props, dict):
+            for prop_schema in props.values():
+                if isinstance(prop_schema, dict):
+                    prop_schema.pop("description", None)
+                    prop_schema.pop("default", None)
+                    # Recurse into nested objects / array items
+                    ToolFactory._strip_properties(prop_schema)
+        # Handle array items
+        items = schema.get("items")
+        if isinstance(items, dict):
+            items.pop("description", None)
+            items.pop("default", None)
+            ToolFactory._strip_properties(items)
 
     async def dispatch_tool(
         self,

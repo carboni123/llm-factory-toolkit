@@ -203,6 +203,22 @@ class ToolCatalog(ABC):
         entry = self.get_entry(tool_name)
         return entry.token_count if entry else 0
 
+    def estimate_token_savings(self) -> Dict[str, Dict[str, int]]:
+        """Estimate per-tool and total token savings from compact mode.
+
+        Returns a dict keyed by tool name, each containing:
+
+        - ``full``: token count for the full definition.
+        - ``compact``: token count for the compact (stripped) definition.
+        - ``saved``: difference (``full - compact``).
+
+        A special ``"__total__"`` key aggregates across all tools.
+
+        Requires the factory to be available (only meaningful for
+        :class:`InMemoryToolCatalog`).
+        """
+        raise NotImplementedError  # pragma: no cover
+
 
 class InMemoryToolCatalog(ToolCatalog):
     """In-memory catalog built from a :class:`ToolFactory` registry.
@@ -321,3 +337,32 @@ class InMemoryToolCatalog(ToolCatalog):
 
     def list_all(self) -> List[ToolCatalogEntry]:
         return list(self._entries.values())
+
+    def estimate_token_savings(self) -> Dict[str, Dict[str, int]]:
+        """Estimate per-tool and total savings from compact mode."""
+        from .tool_factory import ToolFactory
+
+        total_full = 0
+        total_compact = 0
+        result: Dict[str, Dict[str, int]] = {}
+
+        for name, reg in self._factory.registrations.items():
+            full_def = reg.definition
+            compact_def = ToolFactory._compact_definition(full_def)
+            full_tokens = estimate_token_count(full_def)
+            compact_tokens = estimate_token_count(compact_def)
+            saved = full_tokens - compact_tokens
+            result[name] = {
+                "full": full_tokens,
+                "compact": compact_tokens,
+                "saved": saved,
+            }
+            total_full += full_tokens
+            total_compact += compact_tokens
+
+        result["__total__"] = {
+            "full": total_full,
+            "compact": total_compact,
+            "saved": total_full - total_compact,
+        }
+        return result
