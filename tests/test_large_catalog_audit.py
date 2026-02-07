@@ -4,8 +4,6 @@ import json
 import time
 from typing import Any, Dict
 
-import pytest
-
 from llm_factory_toolkit.tools import InMemoryToolCatalog, ToolFactory, ToolSession
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 
@@ -254,13 +252,28 @@ def test_load_tools_with_session():
 # =====================================================================
 
 
-def test_token_budget_tracking_gap():
-    """Gap: No token budget tracking exists yet."""
-    # This test documents the missing feature
-    # Expected: provider should track tokens consumed by tool definitions
-    # Expected: session should be aware when adding tools would exceed budget
-    # Expected: meta-tools should warn LLM when approaching context limits
-    pytest.skip("Token budget tracking not yet implemented - identified gap")
+def test_token_budget_tracking():
+    """Verify token budget tracking works with large catalogs."""
+    factory, catalog = _build_large_catalog(50)
+    session = ToolSession(max_tools=50, token_budget=2000)
+
+    # Load tools with token counts from the catalog
+    names = [f"tool_{i:03d}" for i in range(50)]
+    token_counts = {n: catalog.get_token_count(n) for n in names}
+    failed = session.load(names, token_counts=token_counts)
+
+    # Budget should prevent loading all 50 tools
+    assert len(failed) > 0, "Budget should reject some tools"
+    assert session.tokens_used <= 2000, "Should not exceed budget"
+
+    # Budget usage snapshot should be populated
+    usage = session.get_budget_usage()
+    assert usage["tokens_used"] > 0
+    assert usage["token_budget"] == 2000
+    assert usage["tokens_remaining"] >= 0
+    assert isinstance(usage["utilisation"], float)
+    assert isinstance(usage["warning"], bool)
+    assert isinstance(usage["budget_exceeded"], bool)
 
 
 def test_tool_unloading_via_meta_tool():

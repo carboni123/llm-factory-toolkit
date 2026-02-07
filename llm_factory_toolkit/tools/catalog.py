@@ -233,6 +233,7 @@ class ToolCatalog(ABC):
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
         limit: int = 10,
+        offset: int = 0,
         min_score: float = 0.0,
         include_params: bool = False,
     ) -> List[ToolCatalogEntry]:
@@ -249,6 +250,16 @@ class ToolCatalog(ABC):
         When *include_params* is ``True``, the returned entries have their
         ``parameters`` field populated.  The default (``False``) returns
         lightweight entries without parameter schemas to save memory.
+
+        Args:
+            query: Search keywords (matches name, description, tags).
+            category: Filter by exact category name.
+            tags: Filter by tag overlap (at least one must match).
+            group: Filter by group prefix.
+            limit: Maximum results to return (after offset).
+            offset: Number of results to skip before returning.
+            min_score: Minimum relevance score (only with *query*).
+            include_params: Populate ``parameters`` on returned entries.
         """
 
     @abstractmethod
@@ -323,6 +334,7 @@ class InMemoryToolCatalog(ToolCatalog):
     def __init__(self, tool_factory: ToolFactory) -> None:
         self._factory = tool_factory
         self._entries: Dict[str, ToolCatalogEntry] = {}
+        self._last_search_total: int = 0
         self._build_from_factory()
 
     # ------------------------------------------------------------------
@@ -405,6 +417,7 @@ class InMemoryToolCatalog(ToolCatalog):
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
         limit: int = 10,
+        offset: int = 0,
         min_score: float = 0.0,
         include_params: bool = False,
     ) -> List[ToolCatalogEntry]:
@@ -443,7 +456,11 @@ class InMemoryToolCatalog(ToolCatalog):
             scored.sort(key=lambda pair: pair[1], reverse=True)
             results = [e for e, _ in scored]
 
-        results = results[:limit]
+        # Store total before pagination for callers that need it.
+        self._last_search_total = len(results)
+
+        # Apply offset and limit.
+        results = results[offset : offset + limit]
 
         # Trigger lazy resolution only when the caller needs parameters.
         if include_params:

@@ -26,6 +26,7 @@ def browse_toolkit(
     category: Optional[str] = None,
     group: Optional[str] = None,
     limit: int = 10,
+    offset: int = 0,
     *,
     tool_catalog: Optional[ToolCatalog] = None,
     tool_session: Optional[ToolSession] = None,
@@ -37,6 +38,7 @@ def browse_toolkit(
         category: Filter by category.
         group: Filter by group prefix (e.g. ``"crm"`` matches ``"crm.contacts"``).
         limit: Maximum results to return.
+        offset: Number of results to skip (for pagination).
         tool_catalog: Injected -- the catalog to search.
         tool_session: Injected -- current session (for active status).
     """
@@ -51,6 +53,7 @@ def browse_toolkit(
         category=category,
         group=group,
         limit=limit,
+        offset=offset,
     )
 
     active = tool_session.active_tools if tool_session else set()
@@ -74,9 +77,13 @@ def browse_toolkit(
     categories = tool_catalog.list_categories()
     groups = tool_catalog.list_groups()
 
+    # Retrieve total matching count from the catalog (before pagination).
+    total_matched = getattr(tool_catalog, "_last_search_total", len(results))
+
     body: Dict[str, Any] = {
         "results": results,
         "total_found": len(results),
+        "total_matched": total_matched,
         "available_categories": categories,
         "available_groups": groups,
     }
@@ -86,6 +93,10 @@ def browse_toolkit(
         body["category_filter"] = category
     if group:
         body["group_filter"] = group
+    if offset > 0:
+        body["offset"] = offset
+    if total_matched > offset + len(results):
+        body["has_more"] = True
 
     # Include budget snapshot when available
     if tool_session is not None and tool_session.token_budget is not None:
@@ -96,7 +107,7 @@ def browse_toolkit(
     return ToolExecutionResult(
         content=json.dumps(body, indent=2),
         payload=results,
-        metadata={"query": query, "category": category, "group": group},
+        metadata={"query": query, "category": category, "group": group, "offset": offset},
     )
 
 
@@ -341,6 +352,11 @@ BROWSE_TOOLKIT_PARAMETERS: Dict[str, Any] = {
             "type": "integer",
             "description": "Maximum number of results to return.",
             "default": 10,
+        },
+        "offset": {
+            "type": "integer",
+            "description": "Number of results to skip for pagination. Use with limit to page through results.",
+            "default": 0,
         },
     },
     "required": [],

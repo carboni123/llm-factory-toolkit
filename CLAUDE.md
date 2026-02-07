@@ -45,9 +45,9 @@ Detection happens in `_is_openai_model()` at the top of `generate()`, `generate_
 | `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
 | `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking | ~190 |
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` (category `"utility"`) | ~60 |
-| `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `ToolCatalogEntry` -- auto-builds from factory registrations | ~150 |
-| `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation | ~95 |
-| `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `unload_tools` -- meta-tools for dynamic discovery (category `"system"`) | ~275 |
+| `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, search with offset/pagination | ~510 |
+| `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation, analytics tracking | ~250 |
+| `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools` -- meta-tools for dynamic discovery with pagination (category `"system"`) | ~400 |
 | `__init__.py` | Public exports, `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~75 |
 
 ### Data Flow
@@ -111,7 +111,7 @@ In `provider.py`, both the LiteLLM path (where `_build_call_kwargs` is inside th
 
 ## Testing
 
-### Unit Tests (no API keys, 126 tests)
+### Unit Tests (no API keys, 401 tests)
 - `test_builtin_tools.py` -- built-in tool functions + category metadata
 - `test_client_unit.py` -- LLMClient generate/intent/error wrapping
 - `test_dynamic_loading_unit.py` -- `core_tools`/`dynamic_tool_loading` constructor feature
@@ -127,6 +127,17 @@ In `provider.py`, both the LiteLLM path (where `_build_call_kwargs` is inside th
 - `test_tool_session.py` -- load/unload, limits, serialisation
 - `test_toolfactory_context_injection.py` -- context injection
 - `test_toolfactory_usage_counts_unit.py` -- usage tracking + tuple unpacking
+- `test_tool_groups.py` -- group namespacing, prefix filtering, `load_tool_group` meta-tool (52 tests)
+- `test_relevance_score.py` -- relevance scoring, search sorting, min_score filtering (28 tests)
+- `test_compact_mode.py` -- nested description removal, token reduction, round-trip dispatch (28 tests)
+- `test_compact_provider_integration.py` -- compact mode across all 4 execution paths (16 tests)
+- `test_auto_compact.py` -- budget pressure triggers, logging, meta-tool responses (24 tests)
+- `test_extract_core_tool_names.py` -- core tool extraction helper (8 tests)
+- `test_lazy_catalog.py` -- lazy catalog building, deferred parameter loading (36 tests)
+- `test_large_catalog_audit.py` -- search accuracy, performance, meta-tool integration at 50-100 tools (8 tests)
+- `test_browse_pagination.py` -- catalog offset, browse_toolkit pagination, has_more flag (16 tests)
+- `test_tool_analytics.py` -- load/unload/call tracking, aggregation, reset, serialisation (16 tests)
+- `test_scale_stress.py` -- 200-500 tool catalogs, search perf, lazy resolution, memory (34 tests)
 
 ### Integration Tests (require API keys, 32 tests)
 - `test_llmcall.py` -- basic generation (OpenAI)

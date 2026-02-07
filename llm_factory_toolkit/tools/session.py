@@ -52,6 +52,11 @@ class ToolSession:
     # automatically when budget utilisation reaches the warning threshold.
     auto_compact: bool = True
 
+    # Analytics: per-tool event counters.
+    _analytics_loads: Dict[str, int] = field(default_factory=dict)
+    _analytics_unloads: Dict[str, int] = field(default_factory=dict)
+    _analytics_calls: Dict[str, int] = field(default_factory=dict)
+
     # ------------------------------------------------------------------
     # Mutators
     # ------------------------------------------------------------------
@@ -87,6 +92,7 @@ class ToolSession:
                     failed.append(name)
                     continue
             self.active_tools.add(name)
+            self._analytics_loads[name] = self._analytics_loads.get(name, 0) + 1
             if cost > 0:
                 self._token_counts[name] = cost
         if failed:
@@ -101,6 +107,10 @@ class ToolSession:
     def unload(self, names: List[str]) -> None:
         """Remove tools from the active set."""
         for name in names:
+            if name in self.active_tools:
+                self._analytics_unloads[name] = (
+                    self._analytics_unloads.get(name, 0) + 1
+                )
             self.active_tools.discard(name)
             self._token_counts.pop(name, None)
 
@@ -115,6 +125,54 @@ class ToolSession:
     def is_active(self, name: str) -> bool:
         """Return ``True`` if *name* is in the active set."""
         return name in self.active_tools
+
+    # ------------------------------------------------------------------
+    # Analytics
+    # ------------------------------------------------------------------
+
+    def record_tool_call(self, name: str) -> None:
+        """Increment the call counter for *name*."""
+        self._analytics_calls[name] = self._analytics_calls.get(name, 0) + 1
+
+    def get_analytics(self) -> Dict[str, Any]:
+        """Return a snapshot of session-level tool analytics.
+
+        Returns a dict with per-tool event counts::
+
+            {
+                "loads": {"send_email": 2, "search_crm": 1},
+                "unloads": {"send_email": 1},
+                "calls": {"search_crm": 3, "send_email": 1},
+                "most_loaded": [("send_email", 2), ("search_crm", 1)],
+                "most_called": [("search_crm", 3), ("send_email", 1)],
+                "never_called": ["browse_toolkit"],
+            }
+        """
+        most_loaded = sorted(
+            self._analytics_loads.items(), key=lambda kv: kv[1], reverse=True
+        )
+        most_called = sorted(
+            self._analytics_calls.items(), key=lambda kv: kv[1], reverse=True
+        )
+        # Tools that were loaded at least once but never called.
+        loaded_names = set(self._analytics_loads.keys())
+        called_names = set(self._analytics_calls.keys())
+        never_called = sorted(loaded_names - called_names)
+
+        return {
+            "loads": dict(self._analytics_loads),
+            "unloads": dict(self._analytics_unloads),
+            "calls": dict(self._analytics_calls),
+            "most_loaded": most_loaded,
+            "most_called": most_called,
+            "never_called": never_called,
+        }
+
+    def reset_analytics(self) -> None:
+        """Clear all analytics counters."""
+        self._analytics_loads.clear()
+        self._analytics_unloads.clear()
+        self._analytics_calls.clear()
 
     # ------------------------------------------------------------------
     # Token budget queries
@@ -188,6 +246,9 @@ class ToolSession:
             "token_budget": self.token_budget,
             "_token_counts": dict(self._token_counts),
             "auto_compact": self.auto_compact,
+            "_analytics_loads": dict(self._analytics_loads),
+            "_analytics_unloads": dict(self._analytics_unloads),
+            "_analytics_calls": dict(self._analytics_calls),
         }
 
     @classmethod
@@ -202,4 +263,7 @@ class ToolSession:
             auto_compact=data.get("auto_compact", True),
         )
         session._token_counts = dict(data.get("_token_counts", {}))
+        session._analytics_loads = dict(data.get("_analytics_loads", {}))
+        session._analytics_unloads = dict(data.get("_analytics_unloads", {}))
+        session._analytics_calls = dict(data.get("_analytics_calls", {}))
         return session

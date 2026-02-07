@@ -375,17 +375,21 @@ llm_factory_toolkit/
 
 | Category | Scope | Count | API Keys Required |
 |----------|-------|-------|-------------------|
-| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit, large catalog audit, relevance scoring, compact mode, auto-compact | 274 | No |
+| Unit tests | Tool framework, mocking, merging, builtins, catalog, session, meta-tools, dynamic loading, provider unit, large catalog audit, relevance scoring, compact mode, auto-compact, lazy catalog, pagination, analytics, stress | 401 | No |
 | Integration tests | End-to-end generation, streaming, tools, structured output, dynamic loading, CRM simulation | 32 | Yes (per provider) |
 
 - Coverage target: >= 80%
 - Framework: pytest + pytest-asyncio
-- 32 test files across 20 unit + 12 integration suites
+- 40 test files across 26 unit + 14 integration suites
 - **Large Catalog Audit:** Dedicated test suite (`test_large_catalog_audit.py`) validates performance and search quality with 50-100 tools
 - **Relevance Scoring Tests:** 28 tests in `test_relevance_score.py` covering score calculation, sorting, filtering, performance benchmarks
 - **Compact Mode Tests:** 28 tests in `test_compact_mode.py` covering nested description removal, token reduction, round-trip dispatch
 - **Compact Provider Integration Tests:** 16 tests in `test_compact_provider_integration.py` covering all 4 execution paths
 - **Auto-Compact Tests:** 24 tests in `test_auto_compact.py` covering budget pressure triggers, logging, meta-tool responses, serialisation
+- **Lazy Catalog Tests:** 36 tests in `test_lazy_catalog.py` covering deferred parameter loading, lazy resolution, memory savings
+- **Pagination Tests:** 16 tests in `test_browse_pagination.py` covering catalog offset, browse_toolkit pagination, has_more flag
+- **Analytics Tests:** 16 tests in `test_tool_analytics.py` covering load/unload/call tracking, aggregation, reset, serialisation
+- **Stress Tests:** 34 tests in `test_scale_stress.py` covering 200-500 tool catalogs, search perf, pagination at scale, lazy resolution
 
 ---
 
@@ -426,11 +430,29 @@ llm_factory_toolkit/
 - **Protected tools** -- Prevents unloading of core tools and meta-tools (browse_toolkit, load_tools, load_tool_group, unload_tools)
 - **Token reclamation** -- Frees token budget when tools are unloaded
 
+### Lazy Catalog Building (v1.5.0)
+- **Deferred parameter loading** -- `LazyCatalogEntry` stores a resolver callable instead of copying parameters during construction
+- **On-demand resolution** -- Parameters resolved from factory on first access via `__getattribute__` override
+- **Memory savings** -- Avoids copying parameter dicts for 200+ tools until actually needed
+- **Search-safe** -- `matches_query()` and `relevance_score()` work without triggering resolution
+- **Lightweight checks** -- `has_entry()` and `get_token_count()` do not resolve parameters
+
+### `browse_toolkit` Pagination (v1.5.0)
+- **`offset` parameter** -- Skip results for pagination: `browse_toolkit(offset=10, limit=5)`
+- **`total_matched` response field** -- Total matching count before pagination
+- **`has_more` response field** -- Boolean indicating more results exist
+- **Catalog support** -- `catalog.search(offset=5, limit=10)` with `_last_search_total` tracking
+
+### Tool Usage Analytics (v1.5.0)
+- **Session-level tracking** -- Per-tool load, unload, and call counters in `ToolSession`
+- **Auto-tracked** -- `load()` and `unload()` automatically increment analytics counters
+- **Manual recording** -- `session.record_tool_call(name)` for call tracking
+- **Aggregation** -- `get_analytics()` returns most_loaded, most_called, never_called
+- **Serialisation** -- Analytics included in `to_dict()`/`from_dict()` (backward compatible)
+
 ## Future Considerations
 - **Anthropic tool_use native path** -- Similar to OpenAI dual routing, Anthropic's native API could provide richer tool support.
 - **Callback/event hooks** -- Pre/post tool execution hooks for logging, metrics, and authorization.
 - **Retry policies** -- Configurable retry with exponential backoff per provider.
 - **Batch generation** -- Process multiple independent requests efficiently.
-- **Tool definition compression** -- Shorter parameter descriptions for large catalogs, tool summary mode (name + category only).
-- **Catalog backends** -- Redis-backed or database-backed catalogs with full-text search for 200+ tool scenarios.
-- **Tool usage analytics** -- Track which tools are most frequently loaded, identify unused tools for catalog pruning.
+- **Catalog backends** -- Redis-backed or database-backed catalogs with full-text search for 500+ tool scenarios.

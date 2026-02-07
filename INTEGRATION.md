@@ -859,20 +859,102 @@ The catalog uses **agentic search** (substring-based keyword matching) rather th
    print(f"Currently active: {len(active_tools)} tools")
    ```
 
-### Known Limitations
+4. **Use Token Budget for Context Control**
+   ```python
+   # Reserve 8000 tokens for tool definitions
+   session = ToolSession(max_tools=50, token_budget=8000)
 
-⚠️ **Token Budget Tracking:** The current implementation uses count-based limits (`max_tools`) rather than token-aware budgeting. With 50 tools × ~200 tokens/tool = 10,000 tokens, you may exhaust the context window mid-conversation. Token budget tracking is planned for a future release.
+   # Budget usage is tracked automatically
+   usage = session.get_budget_usage()
+   print(f"Used: {usage['tokens_used']}/{usage['token_budget']} tokens")
+   ```
 
-⚠️ **Tool Unloading:** `ToolSession.unload()` exists programmatically but is not exposed to the LLM via a meta-tool. The agent cannot strategically swap tools (e.g., "unload sales tools, load analytics tools"). A `unload_tools` meta-tool is planned for a future release.
+5. **Leverage Pagination for Large Result Sets**
+   ```python
+   # Page through results
+   result = browse_toolkit(query="analytics", limit=10, offset=0)
+   # Next page
+   result = browse_toolkit(query="analytics", limit=10, offset=10)
+   ```
+
+### Pagination
+
+`browse_toolkit` supports pagination via `offset` and `limit` parameters. The response includes:
+
+- `total_found`: Number of results in the current page.
+- `total_matched`: Total matching results before pagination.
+- `has_more`: `True` if more results exist beyond the current page.
+- `offset`: The offset used (only when > 0).
+
+```python
+# Page 1
+result = browse_toolkit(query="crm", limit=5, offset=0)
+# Response: {"total_found": 5, "total_matched": 20, "has_more": true, ...}
+
+# Page 2
+result = browse_toolkit(query="crm", limit=5, offset=5)
+# Response: {"total_found": 5, "total_matched": 20, "offset": 5, "has_more": true, ...}
+```
+
+The catalog `search()` method also supports `offset`:
+
+```python
+catalog.search(query="email", limit=10, offset=0)   # first page
+catalog.search(query="email", limit=10, offset=10)  # second page
+```
+
+### Tool Usage Analytics
+
+`ToolSession` tracks tool load, unload, and call events for monitoring and optimization:
+
+```python
+session = ToolSession()
+session.load(["send_email", "search_crm"])
+session.record_tool_call("search_crm")
+session.record_tool_call("search_crm")
+
+analytics = session.get_analytics()
+# {
+#     "loads": {"send_email": 1, "search_crm": 1},
+#     "unloads": {},
+#     "calls": {"search_crm": 2},
+#     "most_loaded": [("send_email", 1), ("search_crm", 1)],
+#     "most_called": [("search_crm", 2)],
+#     "never_called": ["send_email"],
+# }
+
+# Reset counters
+session.reset_analytics()
+```
+
+Analytics are included in `to_dict()` / `from_dict()` serialization, so they persist across conversation turns.
+
+### Lazy Catalog Building
+
+`InMemoryToolCatalog` uses deferred parameter loading to reduce memory usage with large catalogs (200+ tools). Tool parameter schemas are **not** copied during catalog construction -- they are resolved lazily from the factory on first access.
+
+- `catalog.search()` does **not** resolve parameters (fast, lightweight).
+- `catalog.search(include_params=True)` resolves parameters for returned entries only.
+- `catalog.get_entry("tool_name")` resolves parameters for the requested entry.
+- `catalog.has_entry("tool_name")` does **not** resolve parameters (existence check only).
+- `catalog.get_token_count("tool_name")` does **not** resolve parameters.
+
+This is transparent to users -- the API is unchanged.
 
 ### Scaling Beyond 200 Tools
 
-For very large catalogs (200+ tools), consider:
+The system has been stress-tested with 200-500 tool catalogs. Key performance characteristics:
 
-- **Ranking/Scoring:** Prioritize exact matches over substring matches in search results
-- **Search Result Caching:** Cache frequent queries to reduce recomputation
-- **Pagination:** Expose the `limit` parameter to `browse_toolkit` for controlled result sets
+- **Catalog construction:** < 100ms for 200 tools
+- **Keyword search:** < 10ms per query with 200 tools
+- **Relevance-scored search:** < 20ms per query with 200 tools
+- **Session recomputation:** < 5ms for 25 iterations with 200 active tools
+- **Memory:** Lazy catalog entries avoid copying parameter schemas until accessed
+
+For very large catalogs (500+ tools), consider:
+
 - **Custom Catalog Backends:** Implement a Redis-backed or database-backed `ToolCatalog` for distributed systems
+- **Group-based loading:** Use `load_tool_group()` to load entire tool groups efficiently
 
 ## Migration from v0.x
 
