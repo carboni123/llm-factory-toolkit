@@ -193,15 +193,17 @@ class LazyCatalogEntry(ToolCatalogEntry):
         object.__setattr__(self, "_resolved", False)
 
     # Override attribute access so ``entry.parameters`` triggers lazy
-    # resolution on first read.
+    # resolution on first read.  The ``name != "parameters"`` fast-path
+    # avoids overhead for the far more common non-parameters accesses.
     def __getattribute__(self, name: str) -> Any:
-        if name == "parameters":
-            if not object.__getattribute__(self, "_resolved"):
-                resolver = object.__getattribute__(self, "_resolver")
-                if resolver is not None:
-                    params = resolver()
-                    object.__setattr__(self, "parameters", params)
-                object.__setattr__(self, "_resolved", True)
+        if name != "parameters":
+            return object.__getattribute__(self, name)
+        if not object.__getattribute__(self, "_resolved"):
+            resolver = object.__getattribute__(self, "_resolver")
+            if resolver is not None:
+                params = resolver()
+                object.__setattr__(self, "parameters", params)
+            object.__setattr__(self, "_resolved", True)
         return object.__getattribute__(self, name)
 
     @property
@@ -255,6 +257,15 @@ class ToolCatalog(ABC):
 
         For :class:`InMemoryToolCatalog` this lazily resolves the
         ``parameters`` dict from the factory on first access.
+        """
+
+    @abstractmethod
+    def has_entry(self, tool_name: str) -> bool:
+        """Return ``True`` if *tool_name* exists in the catalog.
+
+        Unlike :meth:`get_entry`, this does **not** trigger lazy
+        parameter resolution, making it suitable for lightweight
+        existence checks (e.g. validating tool names in meta-tools).
         """
 
     @abstractmethod
@@ -447,6 +458,14 @@ class InMemoryToolCatalog(ToolCatalog):
             # Force lazy resolution so callers always see parameters.
             _ = entry.parameters
         return entry
+
+    def has_entry(self, tool_name: str) -> bool:
+        return tool_name in self._entries
+
+    def get_token_count(self, tool_name: str) -> int:
+        """Return estimated token count without triggering lazy resolution."""
+        entry = self._entries.get(tool_name)
+        return entry.token_count if entry else 0
 
     def list_categories(self) -> List[str]:
         cats = {e.category for e in self._entries.values() if e.category}

@@ -281,6 +281,64 @@ class TestSearchIncludeParams:
 
 
 # ------------------------------------------------------------------
+# has_entry() — lightweight existence check
+# ------------------------------------------------------------------
+
+
+class TestHasEntry:
+    """has_entry() must not trigger lazy resolution."""
+
+    def test_has_entry_returns_true(self) -> None:
+        factory = _make_factory(3)
+        catalog = InMemoryToolCatalog(factory)
+        assert catalog.has_entry("tool_0")
+
+    def test_has_entry_returns_false(self) -> None:
+        factory = _make_factory(1)
+        catalog = InMemoryToolCatalog(factory)
+        assert not catalog.has_entry("no_such_tool")
+
+    def test_has_entry_does_not_resolve(self) -> None:
+        """has_entry() should not trigger lazy parameter resolution."""
+        factory = _make_factory(3)
+        catalog = InMemoryToolCatalog(factory)
+        _ = catalog.has_entry("tool_0")
+        for entry in catalog.list_all():
+            if isinstance(entry, LazyCatalogEntry):
+                assert not entry.is_resolved
+
+
+# ------------------------------------------------------------------
+# get_token_count() — no lazy resolution
+# ------------------------------------------------------------------
+
+
+class TestGetTokenCountNoResolution:
+    """get_token_count() should return the count without resolving params."""
+
+    def test_returns_count(self) -> None:
+        factory = _make_factory(1)
+        catalog = InMemoryToolCatalog(factory)
+        count = catalog.get_token_count("tool_0")
+        assert count > 0
+
+    def test_does_not_trigger_resolution(self) -> None:
+        factory = _make_factory(3)
+        catalog = InMemoryToolCatalog(factory)
+        _ = catalog.get_token_count("tool_0")
+        _ = catalog.get_token_count("tool_1")
+        _ = catalog.get_token_count("tool_2")
+        for entry in catalog.list_all():
+            if isinstance(entry, LazyCatalogEntry):
+                assert not entry.is_resolved
+
+    def test_returns_zero_for_missing(self) -> None:
+        factory = _make_factory(1)
+        catalog = InMemoryToolCatalog(factory)
+        assert catalog.get_token_count("no_such_tool") == 0
+
+
+# ------------------------------------------------------------------
 # Memory footprint test
 # ------------------------------------------------------------------
 
@@ -404,3 +462,58 @@ class TestBackwardCompatibility:
         savings = catalog.estimate_token_savings()
         assert "__total__" in savings
         assert savings["__total__"]["full"] > 0
+
+
+# ------------------------------------------------------------------
+# Meta-tool integration — load_tools validates via has_entry()
+# ------------------------------------------------------------------
+
+
+class TestMetaToolNoResolution:
+    """load_tools name validation should not resolve parameters."""
+
+    def test_load_tools_validation_does_not_resolve_any(self) -> None:
+        """Calling load_tools should not resolve any catalog entries."""
+        from llm_factory_toolkit.tools.meta_tools import load_tools
+        from llm_factory_toolkit.tools.session import ToolSession
+
+        factory = _make_factory(5)
+        catalog = InMemoryToolCatalog(factory)
+        session = ToolSession(max_tools=10)
+
+        # Load only tool_0 — no entries should be resolved (has_entry
+        # and get_token_count both bypass lazy resolution).
+        load_tools(
+            tool_names=["tool_0"],
+            tool_catalog=catalog,
+            tool_session=session,
+        )
+        assert session.is_active("tool_0")
+
+        # ALL entries should stay unresolved
+        for entry in catalog.list_all():
+            if isinstance(entry, LazyCatalogEntry):
+                assert not entry.is_resolved, (
+                    f"{entry.name} was resolved unexpectedly"
+                )
+
+    def test_load_tools_invalid_name(self) -> None:
+        """Invalid names checked via has_entry() should not resolve anything."""
+        from llm_factory_toolkit.tools.meta_tools import load_tools
+        from llm_factory_toolkit.tools.session import ToolSession
+
+        factory = _make_factory(3)
+        catalog = InMemoryToolCatalog(factory)
+        session = ToolSession()
+
+        result = load_tools(
+            tool_names=["nonexistent"],
+            tool_catalog=catalog,
+            tool_session=session,
+        )
+        assert "nonexistent" in result.payload["invalid"]
+
+        # No entries should have been resolved
+        for entry in catalog.list_all():
+            if isinstance(entry, LazyCatalogEntry):
+                assert not entry.is_resolved

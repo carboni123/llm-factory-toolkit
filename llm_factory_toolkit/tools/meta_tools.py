@@ -131,8 +131,9 @@ def load_tools(
     # Build token_counts map from catalog for budget enforcement
     token_counts: Dict[str, int] = {}
     for name in tool_names:
-        # Validate against catalog if available
-        if tool_catalog and tool_catalog.get_entry(name) is None:
+        # Validate against catalog if available (has_entry avoids lazy
+        # parameter resolution, keeping the check lightweight).
+        if tool_catalog and not tool_catalog.has_entry(name):
             invalid.append(name)
             continue
         if name in tool_session.active_tools:
