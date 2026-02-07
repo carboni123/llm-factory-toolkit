@@ -217,6 +217,7 @@ client = LLMClient(
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
     dynamic_tool_loading=True,       # Enables browse_toolkit, load_tools, unload_tools
+    compact_tools=True,              # 20-40% token savings on non-core tools
 )
 
 result = await client.generate(
@@ -232,6 +233,8 @@ With `dynamic_tool_loading=True`, the client automatically:
 The agent uses `browse_toolkit` to search for relevant tools by keyword, category, or group, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs.
 
 **Context-aware tool selection:** Search results are automatically sorted by relevance score (0.0-1.0) using weighted field matching (name=3x, tags=2x, description=1x, category=1x). This ensures the most relevant tools appear first, improving discovery quality for the agent.
+
+**Token optimization:** Use `compact_tools=True` to strip nested descriptions and defaults from non-core tool definitions, saving 20-40% tokens. Core tools always retain full definitions for critical agent understanding.
 
 ### Manual Setup
 

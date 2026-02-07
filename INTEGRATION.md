@@ -665,6 +665,7 @@ client = LLMClient(
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
     dynamic_tool_loading=True,       # Enables browse_toolkit, load_tools, unload_tools
+    compact_tools=True,              # Optional: strip nested descriptions from non-core tools (20-40% token savings)
 )
 
 result = await client.generate(
@@ -750,6 +751,41 @@ groups = catalog.list_groups()  # Returns sorted list of unique groups
 
 # Override metadata after build
 catalog.add_metadata("my_tool", category="custom", tags=["new"], group="custom.tools")
+```
+
+### Compact Tool Definitions (Token Optimization)
+
+When working with large tool catalogs, you can reduce context token usage by 20-40% using compact tool definitions:
+
+```python
+# Enable at client level (applies to all calls)
+client = LLMClient(
+    model="openai/gpt-4.1-mini",
+    tool_factory=factory,
+    core_tools=["call_human"],
+    dynamic_tool_loading=True,
+    compact_tools=True,  # Non-core tools get stripped descriptions
+)
+
+# Or override per-call
+result = await client.generate(
+    input=messages,
+    compact_tools=True,  # Override for this call only
+)
+```
+
+**How it works:**
+- Strips nested `description` and `default` fields from parameter properties
+- Core tools always get full definitions (critical for agent understanding)
+- Non-core tools get compact definitions (saves tokens)
+- Top-level function descriptions are always preserved
+- Round-trip safe: dispatch still works with compact definitions
+
+**Token savings example:**
+```python
+# Full CRM contact tool: ~800 tokens
+# Compact CRM contact tool: ~600 tokens
+# Savings: 25% per tool × 20 tools = ~4,000 tokens saved
 ```
 
 ### Tool Session
