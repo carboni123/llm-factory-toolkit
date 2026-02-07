@@ -117,11 +117,13 @@ class LLMClient:
         timeout: float = 180.0,
         core_tools: Optional[List[str]] = None,
         dynamic_tool_loading: bool = False,
+        compact_tools: bool = False,
         **kwargs: Any,
     ) -> None:
         logger.info("Initialising LLMClient for model: %s", model)
 
         self.model = model
+        self.compact_tools = compact_tools
         self.tool_factory = tool_factory or ToolFactory()
 
         self.provider = LiteLLMProvider(
@@ -233,6 +235,7 @@ class LLMClient:
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
+        compact_tools: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
         """Generate a response from the configured LLM.
@@ -381,6 +384,9 @@ class LLMClient:
             tool_execution_context = dict(tool_execution_context or {})
             tool_execution_context["core_tools"] = list(self.core_tools)
 
+        # Resolve compact_tools: per-call override > constructor default
+        effective_compact = compact_tools if compact_tools is not None else self.compact_tools
+
         processed_input = (
             self._merge_conversation_history(input)
             if merge_history
@@ -400,6 +406,7 @@ class LLMClient:
             "parallel_tools": parallel_tools,
             "web_search": web_search,
             "tool_session": tool_session,
+            "compact_tools": effective_compact,
             **kwargs,
         }
         # Filter None values but keep meaningful None/empty (use_tools,

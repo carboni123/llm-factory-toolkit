@@ -171,6 +171,7 @@ class LiteLLMProvider:
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
+        compact_tools: bool = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, executing tool calls iteratively.
@@ -196,6 +197,7 @@ class LiteLLMProvider:
                 web_search=web_search,
                 file_search=file_search,
                 tool_session=tool_session,
+                compact_tools=compact_tools,
                 **kwargs,
             )
 
@@ -214,6 +216,11 @@ class LiteLLMProvider:
                 catalog = self.tool_factory.get_catalog()
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
+
+        # Determine core tool names for compact mode (keep full definitions)
+        _core_names: set[str] = set()
+        if compact_tools and tool_execution_context:
+            _core_names = set(tool_execution_context.get("core_tools", []))
 
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
@@ -236,6 +243,8 @@ class LiteLLMProvider:
                 response_format=response_format,
                 use_tools=effective_use_tools,
                 web_search=web_search,
+                compact_tools=compact_tools,
+                core_tool_names=_core_names,
                 **kwargs,
             )
 
@@ -324,6 +333,7 @@ class LiteLLMProvider:
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
+        compact_tools: bool = False,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, yielding :class:`StreamChunk` objects.
@@ -350,6 +360,7 @@ class LiteLLMProvider:
                 web_search=web_search,
                 file_search=file_search,
                 tool_session=tool_session,
+                compact_tools=compact_tools,
                 **kwargs,
             ):
                 yield openai_chunk
@@ -363,6 +374,11 @@ class LiteLLMProvider:
                 catalog = self.tool_factory.get_catalog()
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
+
+        # Determine core tool names for compact mode
+        _core_names: set[str] = set()
+        if compact_tools and tool_execution_context:
+            _core_names = set(tool_execution_context.get("core_tools", []))
 
         current_messages = copy.deepcopy(input)
         iteration_count = 0
@@ -383,6 +399,8 @@ class LiteLLMProvider:
                 response_format=response_format,
                 use_tools=effective_use_tools,
                 web_search=web_search,
+                compact_tools=compact_tools,
+                core_tool_names=_core_names,
                 stream=True,
                 stream_options={"include_usage": True},
                 **kwargs,
@@ -558,6 +576,8 @@ class LiteLLMProvider:
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         web_search: bool | Dict[str, Any] = False,
+        compact_tools: bool = False,
+        core_tool_names: Optional[set[str]] = None,
         **extra: Any,
     ) -> Dict[str, Any]:
         """Build keyword arguments for ``litellm.acompletion``."""
@@ -588,7 +608,12 @@ class LiteLLMProvider:
                 kw["response_format"] = response_format
 
         # Tools
-        tools, tool_choice = self._prepare_tools(use_tools, kw.get("tool_choice"))
+        tools, tool_choice = self._prepare_tools(
+            use_tools,
+            kw.get("tool_choice"),
+            compact=compact_tools,
+            core_tool_names=core_tool_names or set(),
+        )
         if tools is not None:
             kw["tools"] = tools
         if tool_choice is not None:
@@ -606,8 +631,15 @@ class LiteLLMProvider:
         self,
         use_tools: Optional[List[str]],
         explicit_tool_choice: Any = None,
+        compact: bool = False,
+        core_tool_names: Optional[set[str]] = None,
     ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Any]]:
-        """Return ``(tools, tool_choice)`` for the API call."""
+        """Return ``(tools, tool_choice)`` for the API call.
+
+        When *compact* is ``True``, non-core tool definitions are stripped of
+        nested property descriptions and defaults to save context tokens.
+        Tools whose names are in *core_tool_names* always get full definitions.
+        """
         if use_tools is None:
             # Explicitly disabled
             return None, explicit_tool_choice or "none"
@@ -615,12 +647,42 @@ class LiteLLMProvider:
         if not self.tool_factory:
             return None, explicit_tool_choice
 
-        if use_tools == []:
-            definitions = self.tool_factory.get_tool_definitions()
+        if not compact:
+            # Standard (non-compact) path
+            if use_tools == []:
+                definitions = self.tool_factory.get_tool_definitions()
+            else:
+                definitions = self.tool_factory.get_tool_definitions(
+                    filter_tool_names=use_tools
+                )
         else:
-            definitions = self.tool_factory.get_tool_definitions(
-                filter_tool_names=use_tools
+            # Compact path: full defs for core tools, compact for the rest
+            _core = core_tool_names or set()
+            if use_tools == []:
+                all_names = self.tool_factory.available_tool_names
+            else:
+                all_names = list(use_tools)
+
+            core_names_in_use = [n for n in all_names if n in _core]
+            non_core_names = [n for n in all_names if n not in _core]
+
+            full_defs = (
+                self.tool_factory.get_tool_definitions(
+                    filter_tool_names=core_names_in_use,
+                    compact=False,
+                )
+                if core_names_in_use
+                else []
             )
+            compact_defs = (
+                self.tool_factory.get_tool_definitions(
+                    filter_tool_names=non_core_names,
+                    compact=True,
+                )
+                if non_core_names
+                else []
+            )
+            definitions = full_defs + compact_defs
 
         if not definitions:
             return None, explicit_tool_choice
@@ -812,6 +874,8 @@ class LiteLLMProvider:
         use_tools: Optional[List[str]] = [],
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        compact_tools: bool = False,
+        core_tool_names: Optional[set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Build the ``tools`` list for the OpenAI Responses API."""
         tools_list: List[Dict[str, Any]] = []
@@ -835,12 +899,41 @@ class LiteLLMProvider:
 
         # Registered function tools
         if use_tools is not None and self.tool_factory:
-            if use_tools == []:
-                defs = self.tool_factory.get_tool_definitions()
+            if not compact_tools:
+                # Standard (non-compact) path
+                if use_tools == []:
+                    defs = self.tool_factory.get_tool_definitions()
+                else:
+                    defs = self.tool_factory.get_tool_definitions(
+                        filter_tool_names=use_tools
+                    )
             else:
-                defs = self.tool_factory.get_tool_definitions(
-                    filter_tool_names=use_tools
+                # Compact path: full defs for core, compact for the rest
+                _core = core_tool_names or set()
+                if use_tools == []:
+                    all_names = self.tool_factory.available_tool_names
+                else:
+                    all_names = list(use_tools)
+
+                core_in_use = [n for n in all_names if n in _core]
+                non_core = [n for n in all_names if n not in _core]
+
+                full_defs = (
+                    self.tool_factory.get_tool_definitions(
+                        filter_tool_names=core_in_use, compact=False
+                    )
+                    if core_in_use
+                    else []
                 )
+                compact_defs = (
+                    self.tool_factory.get_tool_definitions(
+                        filter_tool_names=non_core, compact=True
+                    )
+                    if non_core
+                    else []
+                )
+                defs = full_defs + compact_defs
+
             if defs:
                 for tool in defs:
                     if tool.get("type") == "function":
@@ -1140,6 +1233,7 @@ class LiteLLMProvider:
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
+        compact_tools: bool = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate via OpenAI Responses API (non-streaming)."""
@@ -1154,10 +1248,17 @@ class LiteLLMProvider:
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
 
+        # Determine core tool names for compact mode
+        _core_names: set[str] = set()
+        if compact_tools and tool_execution_context:
+            _core_names = set(tool_execution_context.get("core_tools", []))
+
         tools_list = self._build_openai_tools(
             use_tools=use_tools,
             web_search=web_search,
             file_search=file_search,
+            compact_tools=compact_tools,
+            core_tool_names=_core_names,
         )
 
         request_payload = self._build_openai_request(
@@ -1184,6 +1285,8 @@ class LiteLLMProvider:
                         use_tools=active,
                         web_search=web_search,
                         file_search=file_search,
+                        compact_tools=compact_tools,
+                        core_tool_names=_core_names,
                     )
                     request_payload["tools"] = tools_list or None
 
@@ -1282,6 +1385,7 @@ class LiteLLMProvider:
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
+        compact_tools: bool = False,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream via OpenAI Responses API, yielding :class:`StreamChunk`."""
@@ -1296,10 +1400,17 @@ class LiteLLMProvider:
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
 
+        # Determine core tool names for compact mode
+        _core_names: set[str] = set()
+        if compact_tools and tool_execution_context:
+            _core_names = set(tool_execution_context.get("core_tools", []))
+
         tools_list = self._build_openai_tools(
             use_tools=use_tools,
             web_search=web_search,
             file_search=file_search,
+            compact_tools=compact_tools,
+            core_tool_names=_core_names,
         )
 
         request_payload = self._build_openai_request(
@@ -1325,6 +1436,8 @@ class LiteLLMProvider:
                         use_tools=active,
                         web_search=web_search,
                         file_search=file_search,
+                        compact_tools=compact_tools,
+                        core_tool_names=_core_names,
                     )
                     request_payload["tools"] = tools_list or None
 
