@@ -89,7 +89,9 @@ def browse_toolkit(
 
     # Include budget snapshot when available
     if tool_session is not None and tool_session.token_budget is not None:
-        body["budget"] = tool_session.get_budget_usage()
+        budget_info = tool_session.get_budget_usage()
+        body["budget"] = budget_info
+        body["compact_mode"] = budget_info["warning"] and tool_session.auto_compact
 
     return ToolExecutionResult(
         content=json.dumps(body, indent=2),
@@ -155,7 +157,9 @@ def load_tools(
 
     # Include budget snapshot when available
     if tool_session.token_budget is not None:
-        response["budget"] = tool_session.get_budget_usage()
+        budget_info = tool_session.get_budget_usage()
+        response["budget"] = budget_info
+        response["compact_mode"] = budget_info["warning"] and tool_session.auto_compact
 
     return ToolExecutionResult(
         content=json.dumps(response, indent=2),
@@ -233,7 +237,9 @@ def load_tool_group(
 
     # Include budget snapshot when available
     if tool_session.token_budget is not None:
-        response["budget"] = tool_session.get_budget_usage()
+        budget_info = tool_session.get_budget_usage()
+        response["budget"] = budget_info
+        response["compact_mode"] = budget_info["warning"] and tool_session.auto_compact
 
     return ToolExecutionResult(
         content=json.dumps(response, indent=2),
@@ -300,7 +306,9 @@ def unload_tools(
 
     # Include budget snapshot when available
     if tool_session.token_budget is not None:
-        response["budget"] = tool_session.get_budget_usage()
+        budget_info = tool_session.get_budget_usage()
+        response["budget"] = budget_info
+        response["compact_mode"] = budget_info["warning"] and tool_session.auto_compact
 
     return ToolExecutionResult(
         content=json.dumps(response, indent=2),

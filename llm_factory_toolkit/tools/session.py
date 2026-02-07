@@ -48,6 +48,10 @@ class ToolSession:
     token_budget: Optional[int] = None
     _token_counts: Dict[str, int] = field(default_factory=dict)
 
+    # Auto-compact: when True, provider enables compact definitions
+    # automatically when budget utilisation reaches the warning threshold.
+    auto_compact: bool = True
+
     # ------------------------------------------------------------------
     # Mutators
     # ------------------------------------------------------------------
@@ -183,6 +187,7 @@ class ToolSession:
             "metadata": self.metadata,
             "token_budget": self.token_budget,
             "_token_counts": dict(self._token_counts),
+            "auto_compact": self.auto_compact,
         }
 
     @classmethod
@@ -194,6 +199,7 @@ class ToolSession:
             session_id=data.get("session_id"),
             metadata=data.get("metadata", {}),
             token_budget=data.get("token_budget"),
+            auto_compact=data.get("auto_compact", True),
         )
         session._token_counts = dict(data.get("_token_counts", {}))
         return session

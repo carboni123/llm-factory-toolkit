@@ -217,9 +217,10 @@ class LiteLLMProvider:
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
 
-        # Determine core tool names for compact mode (keep full definitions)
+        # Determine core tool names for compact mode (keep full definitions).
+        # Always extract so auto-compact can use them when triggered mid-loop.
         _core_names: set[str] = set()
-        if compact_tools and tool_execution_context:
+        if tool_execution_context:
             _core_names = set(tool_execution_context.get("core_tools", []))
 
         collected_payloads: List[Any] = []
@@ -306,6 +307,23 @@ class LiteLLMProvider:
             collected_payloads.extend(payloads)
             iteration_count += 1
 
+            # Auto-compact on budget pressure
+            if (
+                tool_session is not None
+                and not compact_tools
+                and tool_session.auto_compact
+                and tool_session.token_budget is not None
+            ):
+                _budget = tool_session.get_budget_usage()
+                if _budget["warning"]:
+                    compact_tools = True
+                    logger.info(
+                        "Auto-compact enabled: budget utilisation %.1f%% "
+                        "exceeds warning threshold (session=%s)",
+                        _budget["utilisation"] * 100,
+                        tool_session.session_id,
+                    )
+
         # Max iterations reached
         final_content = self._aggregate_final_content(
             current_messages, max_tool_iterations
@@ -375,9 +393,10 @@ class LiteLLMProvider:
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
 
-        # Determine core tool names for compact mode
+        # Determine core tool names for compact mode.
+        # Always extract so auto-compact can use them when triggered mid-loop.
         _core_names: set[str] = set()
-        if compact_tools and tool_execution_context:
+        if tool_execution_context:
             _core_names = set(tool_execution_context.get("core_tools", []))
 
         current_messages = copy.deepcopy(input)
@@ -461,6 +480,23 @@ class LiteLLMProvider:
             )
             current_messages.extend(results)
             iteration_count += 1
+
+            # Auto-compact on budget pressure
+            if (
+                tool_session is not None
+                and not compact_tools
+                and tool_session.auto_compact
+                and tool_session.token_budget is not None
+            ):
+                _budget = tool_session.get_budget_usage()
+                if _budget["warning"]:
+                    compact_tools = True
+                    logger.info(
+                        "Auto-compact enabled: budget utilisation %.1f%% "
+                        "exceeds warning threshold (session=%s)",
+                        _budget["utilisation"] * 100,
+                        tool_session.session_id,
+                    )
 
         yield StreamChunk(
             content="\n\n[Warning: Max tool iterations reached.]", done=True
@@ -1248,9 +1284,10 @@ class LiteLLMProvider:
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
 
-        # Determine core tool names for compact mode
+        # Determine core tool names for compact mode.
+        # Always extract so auto-compact can use them when triggered mid-loop.
         _core_names: set[str] = set()
-        if compact_tools and tool_execution_context:
+        if tool_execution_context:
             _core_names = set(tool_execution_context.get("core_tools", []))
 
         tools_list = self._build_openai_tools(
@@ -1360,6 +1397,23 @@ class LiteLLMProvider:
             collected_payloads.extend(payloads)
             iteration_count += 1
 
+            # Auto-compact on budget pressure
+            if (
+                tool_session is not None
+                and not compact_tools
+                and tool_session.auto_compact
+                and tool_session.token_budget is not None
+            ):
+                _budget = tool_session.get_budget_usage()
+                if _budget["warning"]:
+                    compact_tools = True
+                    logger.info(
+                        "Auto-compact enabled: budget utilisation %.1f%% "
+                        "exceeds warning threshold (session=%s)",
+                        _budget["utilisation"] * 100,
+                        tool_session.session_id,
+                    )
+
         # Max iterations reached – normalise messages to Chat Completions
         normalised = self._responses_to_chat_messages(current_messages)
         return GenerationResult(
@@ -1400,9 +1454,10 @@ class LiteLLMProvider:
                 if catalog:
                     tool_execution_context["tool_catalog"] = catalog
 
-        # Determine core tool names for compact mode
+        # Determine core tool names for compact mode.
+        # Always extract so auto-compact can use them when triggered mid-loop.
         _core_names: set[str] = set()
-        if compact_tools and tool_execution_context:
+        if tool_execution_context:
             _core_names = set(tool_execution_context.get("core_tools", []))
 
         tools_list = self._build_openai_tools(
@@ -1504,6 +1559,23 @@ class LiteLLMProvider:
             )
             current_messages.extend(api_results)
             iteration_count += 1
+
+            # Auto-compact on budget pressure
+            if (
+                tool_session is not None
+                and not compact_tools
+                and tool_session.auto_compact
+                and tool_session.token_budget is not None
+            ):
+                _budget = tool_session.get_budget_usage()
+                if _budget["warning"]:
+                    compact_tools = True
+                    logger.info(
+                        "Auto-compact enabled: budget utilisation %.1f%% "
+                        "exceeds warning threshold (session=%s)",
+                        _budget["utilisation"] * 100,
+                        tool_session.session_id,
+                    )
 
         yield StreamChunk(
             content="\n\n[Warning: Max tool iterations reached.]",
