@@ -7,6 +7,9 @@ on:
   pull_request:
     branches:
       - master
+  schedule:
+    # Weekly dependency-compatibility check (Sunday 06:00 UTC)
+    - cron: "0 6 * * 0"
   workflow_dispatch:
 
 jobs:
@@ -44,3 +47,29 @@ jobs:
 
       - name: Unit tests with coverage
         run: pytest --cov=llm_factory_toolkit --cov-fail-under=80 -m "not integration" tests -q
+
+  # Monthly integration smoke test (runs on schedule only, needs repo secrets)
+  integration-smoke:
+    name: Integration Smoke Test
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,builtins,openai]"
+
+      - name: Integration tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: pytest -m integration tests -q --tb=short

@@ -21,9 +21,9 @@ classifiers = [
 ]
 
 dependencies = [
-    "python-dotenv>=1.1",
-    "pydantic>=2.11",
-    "litellm>=1.70",
+    "python-dotenv>=1.1,<2",
+    "pydantic>=2.11,<3",
+    "litellm>=1.70,<2",
 ]
 
 [project.urls]
@@ -33,15 +33,15 @@ dependencies = [
 [project.optional-dependencies]
 # OpenAI models use the Responses API via the openai SDK
 openai = [
-    "openai>=2.7.1",
+    "openai>=2.7.1,<3",
 ]
 
 dev = [
-   "pytest>=9.0.1",
-   "pytest-asyncio>=1.3.0",
+   "pytest>=9.0.1,<10",
+   "pytest-asyncio>=1.3.0,<2",
 ]
 builtins = [
-   "sympy>=1.12",
+   "sympy>=1.12,<2",
 ]
 
 [tool.pytest.ini_options]
