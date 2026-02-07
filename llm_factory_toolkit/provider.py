@@ -244,9 +244,7 @@ class LiteLLMProvider:
         if not compact:
             if use_tools == []:
                 return self.tool_factory.get_tool_definitions()
-            return self.tool_factory.get_tool_definitions(
-                filter_tool_names=use_tools
-            )
+            return self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
 
         # Compact path: full defs for core tools, compact for the rest
         _core = core_tool_names or set()
@@ -344,6 +342,11 @@ class LiteLLMProvider:
         tool_result_messages: List[Dict[str, Any]] = []
         current_messages = copy.deepcopy(input)
         iteration_count = 0
+        accumulated_usage: Dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
 
         while iteration_count < max_tool_iterations:
             # Recompute visible tools from session each iteration
@@ -368,6 +371,19 @@ class LiteLLMProvider:
 
             response = await self._call_litellm(call_kwargs)
 
+            # Accumulate token usage
+            resp_usage = getattr(response, "usage", None)
+            if resp_usage:
+                accumulated_usage["prompt_tokens"] += (
+                    getattr(resp_usage, "prompt_tokens", 0) or 0
+                )
+                accumulated_usage["completion_tokens"] += (
+                    getattr(resp_usage, "completion_tokens", 0) or 0
+                )
+                accumulated_usage["total_tokens"] += (
+                    getattr(resp_usage, "total_tokens", 0) or 0
+                )
+
             message = response.choices[0].message
             assistant_content = message.content or ""
             tool_calls = message.tool_calls
@@ -391,6 +407,7 @@ class LiteLLMProvider:
                                 payloads=list(collected_payloads),
                                 tool_messages=copy.deepcopy(tool_result_messages),
                                 messages=copy.deepcopy(current_messages),
+                                usage=accumulated_usage,
                             )
                         except Exception:
                             logger.warning(
@@ -404,6 +421,7 @@ class LiteLLMProvider:
                     payloads=list(collected_payloads),
                     tool_messages=copy.deepcopy(tool_result_messages),
                     messages=copy.deepcopy(current_messages),
+                    usage=accumulated_usage,
                 )
 
             # --- Tool execution loop ---
@@ -438,6 +456,7 @@ class LiteLLMProvider:
             payloads=list(collected_payloads),
             tool_messages=copy.deepcopy(tool_result_messages),
             messages=copy.deepcopy(current_messages),
+            usage=accumulated_usage,
         )
 
     async def generate_stream(
@@ -1323,6 +1342,11 @@ class LiteLLMProvider:
         tool_result_messages: List[Dict[str, Any]] = []
         current_messages = self._convert_messages_for_responses_api(input)
         iteration_count = 0
+        accumulated_usage: Dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
 
         while iteration_count < max_tool_iterations:
             # Recompute tools from session if dynamic loading is active
@@ -1344,6 +1368,15 @@ class LiteLLMProvider:
                 completion = await client.responses.parse(**request_payload)
             except Exception as e:
                 raise ProviderError(f"OpenAI Responses API error: {e}") from e
+
+            # Accumulate token usage (OpenAI uses input_tokens/output_tokens)
+            comp_usage = getattr(completion, "usage", None)
+            if comp_usage:
+                input_tokens = getattr(comp_usage, "input_tokens", 0) or 0
+                output_tokens = getattr(comp_usage, "output_tokens", 0) or 0
+                accumulated_usage["prompt_tokens"] += input_tokens
+                accumulated_usage["completion_tokens"] += output_tokens
+                accumulated_usage["total_tokens"] += input_tokens + output_tokens
 
             assistant_text = getattr(completion, "output_text", "") or ""
             tool_calls = [
@@ -1375,6 +1408,7 @@ class LiteLLMProvider:
                                 payloads=list(collected_payloads),
                                 tool_messages=copy.deepcopy(tool_result_messages),
                                 messages=normalised,
+                                usage=accumulated_usage,
                             )
                         except Exception:
                             logger.warning(
@@ -1389,6 +1423,7 @@ class LiteLLMProvider:
                     payloads=list(collected_payloads),
                     tool_messages=copy.deepcopy(tool_result_messages),
                     messages=normalised,
+                    usage=accumulated_usage,
                 )
 
             # --- Tool dispatch ---
@@ -1420,6 +1455,7 @@ class LiteLLMProvider:
             payloads=list(collected_payloads),
             tool_messages=copy.deepcopy(tool_result_messages),
             messages=normalised,
+            usage=accumulated_usage,
         )
 
     async def _generate_openai_stream(

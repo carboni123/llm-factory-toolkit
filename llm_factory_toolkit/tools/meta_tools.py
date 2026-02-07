@@ -68,7 +68,9 @@ def browse_toolkit(
             "group": entry.group,
             "tags": entry.tags,
             "active": is_active,
-            "status": "loaded" if is_active else "available - call load_tools to activate",
+            "status": "loaded"
+            if is_active
+            else "available - call load_tools to activate",
         }
         if entry.token_count > 0:
             result_item["estimated_tokens"] = entry.token_count
@@ -107,7 +109,12 @@ def browse_toolkit(
     return ToolExecutionResult(
         content=json.dumps(body, indent=2),
         payload=results,
-        metadata={"query": query, "category": category, "group": group, "offset": offset},
+        metadata={
+            "query": query,
+            "category": category,
+            "group": group,
+            "offset": offset,
+        },
     )
 
 
@@ -265,7 +272,9 @@ def load_tool_group(
 # ------------------------------------------------------------------
 
 #: Tool names that cannot be unloaded (meta-tools themselves).
-_META_TOOL_NAMES = frozenset({"browse_toolkit", "load_tools", "load_tool_group", "unload_tools"})
+_META_TOOL_NAMES = frozenset(
+    {"browse_toolkit", "load_tools", "load_tool_group", "unload_tools"}
+)
 
 
 def unload_tools(

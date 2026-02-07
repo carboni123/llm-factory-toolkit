@@ -150,7 +150,8 @@ class LLMClient:
             if "browse_toolkit" not in self.tool_factory.available_tool_names:
                 self.tool_factory.register_meta_tools()
             invalid = [
-                t for t in self.core_tools
+                t
+                for t in self.core_tools
                 if t not in self.tool_factory.available_tool_names
             ]
             if invalid:
@@ -385,7 +386,9 @@ class LLMClient:
             tool_execution_context["core_tools"] = list(self.core_tools)
 
         # Resolve compact_tools: per-call override > constructor default
-        effective_compact = compact_tools if compact_tools is not None else self.compact_tools
+        effective_compact = (
+            compact_tools if compact_tools is not None else self.compact_tools
+        )
 
         processed_input = (
             self._merge_conversation_history(input)

@@ -65,12 +65,8 @@ class ToolCatalogEntry:
         substring of the token (e.g. "secrets" matches "secret").
         """
         tokens = query.lower().split()
-        searchable = (
-            f"{self.name} {self.description} {' '.join(self.tags)}".lower()
-        )
-        searchable_words = set(
-            searchable.replace("_", " ").replace("-", " ").split()
-        )
+        searchable = f"{self.name} {self.description} {' '.join(self.tags)}".lower()
+        searchable_words = set(searchable.replace("_", " ").replace("-", " ").split())
 
         for tok in tokens:
             if tok in searchable:
@@ -363,18 +359,16 @@ class InMemoryToolCatalog(ToolCatalog):
             "InMemoryToolCatalog built with %d lazy entries.", len(self._entries)
         )
 
-    def _make_resolver(
-        self, tool_name: str
-    ) -> Callable[[], Optional[Dict[str, Any]]]:
+    def _make_resolver(self, tool_name: str) -> Callable[[], Optional[Dict[str, Any]]]:
         """Return a closure that fetches parameters from the factory."""
 
         def _resolve() -> Optional[Dict[str, Any]]:
             reg = self._factory.registrations.get(tool_name)
             if reg is None:
                 return None
-            params: Optional[Dict[str, Any]] = reg.definition.get(
-                "function", {}
-            ).get("parameters")
+            params: Optional[Dict[str, Any]] = reg.definition.get("function", {}).get(
+                "parameters"
+            )
             return params
 
         return _resolve
@@ -431,15 +425,10 @@ class InMemoryToolCatalog(ToolCatalog):
                 continue
             if group_prefix and (
                 not entry.group
-                or (
-                    entry.group != group
-                    and not entry.group.startswith(group_prefix)
-                )
+                or (entry.group != group and not entry.group.startswith(group_prefix))
             ):
                 continue
-            if tag_set and not tag_set.intersection(
-                t.lower() for t in entry.tags
-            ):
+            if tag_set and not tag_set.intersection(t.lower() for t in entry.tags):
                 continue
             if query and not entry.matches_query(query):
                 continue
@@ -448,9 +437,7 @@ class InMemoryToolCatalog(ToolCatalog):
         # When a query is provided, sort by relevance score descending
         # and apply min_score filter.
         if query:
-            scored = [
-                (entry, entry.relevance_score(query)) for entry in results
-            ]
+            scored = [(entry, entry.relevance_score(query)) for entry in results]
             if min_score > 0.0:
                 scored = [(e, s) for e, s in scored if s >= min_score]
             scored.sort(key=lambda pair: pair[1], reverse=True)

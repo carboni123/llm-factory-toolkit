@@ -29,6 +29,10 @@ class GenerationResult:
             history for multi-turn persistence.
         messages: Full transcript snapshot including all intermediate
             assistant and tool messages from the agentic loop.
+        usage: Token usage metadata accumulated across all LLM calls in the
+            agentic loop.  Contains ``prompt_tokens``, ``completion_tokens``,
+            and ``total_tokens``.  ``None`` if the provider did not report
+            usage.
 
     Supports tuple unpacking for backwards compatibility::
 
@@ -39,6 +43,7 @@ class GenerationResult:
     payloads: List[Any] = field(default_factory=list)
     tool_messages: List[Dict[str, Any]] = field(default_factory=list)
     messages: Optional[List[Dict[str, Any]]] = None
+    usage: Optional[Dict[str, int]] = None
 
     def __iter__(self) -> Iterator[Any]:
         """Yield items so callers can unpack the result like a tuple."""

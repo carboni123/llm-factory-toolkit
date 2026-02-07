@@ -108,9 +108,7 @@ class ToolSession:
         """Remove tools from the active set."""
         for name in names:
             if name in self.active_tools:
-                self._analytics_unloads[name] = (
-                    self._analytics_unloads.get(name, 0) + 1
-                )
+                self._analytics_unloads[name] = self._analytics_unloads.get(name, 0) + 1
             self.active_tools.discard(name)
             self._token_counts.pop(name, None)
 
