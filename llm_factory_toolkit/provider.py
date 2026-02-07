@@ -188,6 +188,37 @@ class LiteLLMProvider:
             return set()
         return set(tool_execution_context.get("core_tools", []))
 
+    @staticmethod
+    def _check_and_enable_auto_compact(
+        tool_session: Optional["ToolSession"],
+        compact_tools: bool,
+    ) -> bool:
+        """Check budget pressure and flip *compact_tools* on if needed.
+
+        Returns the (possibly updated) *compact_tools* flag.  When
+        ``tool_session`` is ``None``, has no budget, ``auto_compact`` is
+        disabled, or compact mode is already active, the flag is returned
+        unchanged.  Otherwise, if ``get_budget_usage()`` reports
+        ``warning=True`` (≥75 % utilisation), the flag is set to ``True``
+        and an INFO log is emitted.
+        """
+        if (
+            tool_session is not None
+            and not compact_tools
+            and tool_session.auto_compact
+            and tool_session.token_budget is not None
+        ):
+            _budget = tool_session.get_budget_usage()
+            if _budget["warning"]:
+                compact_tools = True
+                logger.info(
+                    "Auto-compact enabled: budget utilisation %.1f%% "
+                    "exceeds warning threshold (session=%s)",
+                    _budget["utilisation"] * 100,
+                    tool_session.session_id,
+                )
+        return compact_tools
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -337,21 +368,9 @@ class LiteLLMProvider:
             iteration_count += 1
 
             # Auto-compact on budget pressure
-            if (
-                tool_session is not None
-                and not compact_tools
-                and tool_session.auto_compact
-                and tool_session.token_budget is not None
-            ):
-                _budget = tool_session.get_budget_usage()
-                if _budget["warning"]:
-                    compact_tools = True
-                    logger.info(
-                        "Auto-compact enabled: budget utilisation %.1f%% "
-                        "exceeds warning threshold (session=%s)",
-                        _budget["utilisation"] * 100,
-                        tool_session.session_id,
-                    )
+            compact_tools = self._check_and_enable_auto_compact(
+                tool_session, compact_tools
+            )
 
         # Max iterations reached
         final_content = self._aggregate_final_content(
@@ -503,21 +522,9 @@ class LiteLLMProvider:
             iteration_count += 1
 
             # Auto-compact on budget pressure
-            if (
-                tool_session is not None
-                and not compact_tools
-                and tool_session.auto_compact
-                and tool_session.token_budget is not None
-            ):
-                _budget = tool_session.get_budget_usage()
-                if _budget["warning"]:
-                    compact_tools = True
-                    logger.info(
-                        "Auto-compact enabled: budget utilisation %.1f%% "
-                        "exceeds warning threshold (session=%s)",
-                        _budget["utilisation"] * 100,
-                        tool_session.session_id,
-                    )
+            compact_tools = self._check_and_enable_auto_compact(
+                tool_session, compact_tools
+            )
 
         yield StreamChunk(
             content="\n\n[Warning: Max tool iterations reached.]", done=True
@@ -1411,21 +1418,9 @@ class LiteLLMProvider:
             iteration_count += 1
 
             # Auto-compact on budget pressure
-            if (
-                tool_session is not None
-                and not compact_tools
-                and tool_session.auto_compact
-                and tool_session.token_budget is not None
-            ):
-                _budget = tool_session.get_budget_usage()
-                if _budget["warning"]:
-                    compact_tools = True
-                    logger.info(
-                        "Auto-compact enabled: budget utilisation %.1f%% "
-                        "exceeds warning threshold (session=%s)",
-                        _budget["utilisation"] * 100,
-                        tool_session.session_id,
-                    )
+            compact_tools = self._check_and_enable_auto_compact(
+                tool_session, compact_tools
+            )
 
         # Max iterations reached – normalise messages to Chat Completions
         normalised = self._responses_to_chat_messages(current_messages)
@@ -1566,21 +1561,9 @@ class LiteLLMProvider:
             iteration_count += 1
 
             # Auto-compact on budget pressure
-            if (
-                tool_session is not None
-                and not compact_tools
-                and tool_session.auto_compact
-                and tool_session.token_budget is not None
-            ):
-                _budget = tool_session.get_budget_usage()
-                if _budget["warning"]:
-                    compact_tools = True
-                    logger.info(
-                        "Auto-compact enabled: budget utilisation %.1f%% "
-                        "exceeds warning threshold (session=%s)",
-                        _budget["utilisation"] * 100,
-                        tool_session.session_id,
-                    )
+            compact_tools = self._check_and_enable_auto_compact(
+                tool_session, compact_tools
+            )
 
         yield StreamChunk(
             content="\n\n[Warning: Max tool iterations reached.]",
