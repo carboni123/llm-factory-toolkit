@@ -219,6 +219,63 @@ class LiteLLMProvider:
                 )
         return compact_tools
 
+    def _resolve_tool_definitions(
+        self,
+        use_tools: Optional[List[str]],
+        compact: bool = False,
+        core_tool_names: Optional[set[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return tool definitions, splitting core vs non-core for compact mode.
+
+        Shared logic used by both the LiteLLM (``_prepare_tools``) and OpenAI
+        (``_build_openai_tools``) code paths.
+
+        * *compact* ``False`` → standard full definitions for all requested
+          tools.
+        * *compact* ``True`` → tools in *core_tool_names* get full definitions;
+          all others are compacted (nested ``description``/``default`` stripped).
+
+        Returns an empty list when *use_tools* is ``None`` or no
+        ``tool_factory`` is configured.
+        """
+        if use_tools is None or not self.tool_factory:
+            return []
+
+        if not compact:
+            if use_tools == []:
+                return self.tool_factory.get_tool_definitions()
+            return self.tool_factory.get_tool_definitions(
+                filter_tool_names=use_tools
+            )
+
+        # Compact path: full defs for core tools, compact for the rest
+        _core = core_tool_names or set()
+        if use_tools == []:
+            all_names = self.tool_factory.available_tool_names
+        else:
+            all_names = list(use_tools)
+
+        core_in_use = [n for n in all_names if n in _core]
+        non_core = [n for n in all_names if n not in _core]
+
+        full_defs = (
+            self.tool_factory.get_tool_definitions(
+                filter_tool_names=core_in_use,
+                compact=False,
+            )
+            if core_in_use
+            else []
+        )
+        compact_defs = (
+            self.tool_factory.get_tool_definitions(
+                filter_tool_names=non_core,
+                compact=True,
+            )
+            if non_core
+            else []
+        )
+        return full_defs + compact_defs
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -705,48 +762,14 @@ class LiteLLMProvider:
         Tools whose names are in *core_tool_names* always get full definitions.
         """
         if use_tools is None:
-            # Explicitly disabled
             return None, explicit_tool_choice or "none"
 
         if not self.tool_factory:
             return None, explicit_tool_choice
 
-        if not compact:
-            # Standard (non-compact) path
-            if use_tools == []:
-                definitions = self.tool_factory.get_tool_definitions()
-            else:
-                definitions = self.tool_factory.get_tool_definitions(
-                    filter_tool_names=use_tools
-                )
-        else:
-            # Compact path: full defs for core tools, compact for the rest
-            _core = core_tool_names or set()
-            if use_tools == []:
-                all_names = self.tool_factory.available_tool_names
-            else:
-                all_names = list(use_tools)
-
-            core_names_in_use = [n for n in all_names if n in _core]
-            non_core_names = [n for n in all_names if n not in _core]
-
-            full_defs = (
-                self.tool_factory.get_tool_definitions(
-                    filter_tool_names=core_names_in_use,
-                    compact=False,
-                )
-                if core_names_in_use
-                else []
-            )
-            compact_defs = (
-                self.tool_factory.get_tool_definitions(
-                    filter_tool_names=non_core_names,
-                    compact=True,
-                )
-                if non_core_names
-                else []
-            )
-            definitions = full_defs + compact_defs
+        definitions = self._resolve_tool_definitions(
+            use_tools, compact=compact, core_tool_names=core_tool_names
+        )
 
         if not definitions:
             return None, explicit_tool_choice
@@ -962,63 +985,31 @@ class LiteLLMProvider:
             tools_list.append(ws_tool)
 
         # Registered function tools
-        if use_tools is not None and self.tool_factory:
-            if not compact_tools:
-                # Standard (non-compact) path
-                if use_tools == []:
-                    defs = self.tool_factory.get_tool_definitions()
+        defs = self._resolve_tool_definitions(
+            use_tools, compact=compact_tools, core_tool_names=core_tool_names
+        )
+
+        if defs:
+            for tool in defs:
+                if tool.get("type") == "function":
+                    func = tool.get("function", {})
+                    params = func.get("parameters", {}) or {}
+                    if params and "additionalProperties" not in params:
+                        params = {**params, "additionalProperties": False}
+                    properties = params.get("properties", {}) or {}
+                    # Strict mode requires all properties in required
+                    params["required"] = list(properties.keys())
+                    tools_list.append(
+                        {
+                            "type": "function",
+                            "name": func.get("name"),
+                            "description": func.get("description"),
+                            "parameters": params,
+                            "strict": True,
+                        }
+                    )
                 else:
-                    defs = self.tool_factory.get_tool_definitions(
-                        filter_tool_names=use_tools
-                    )
-            else:
-                # Compact path: full defs for core, compact for the rest
-                _core = core_tool_names or set()
-                if use_tools == []:
-                    all_names = self.tool_factory.available_tool_names
-                else:
-                    all_names = list(use_tools)
-
-                core_in_use = [n for n in all_names if n in _core]
-                non_core = [n for n in all_names if n not in _core]
-
-                full_defs = (
-                    self.tool_factory.get_tool_definitions(
-                        filter_tool_names=core_in_use, compact=False
-                    )
-                    if core_in_use
-                    else []
-                )
-                compact_defs = (
-                    self.tool_factory.get_tool_definitions(
-                        filter_tool_names=non_core, compact=True
-                    )
-                    if non_core
-                    else []
-                )
-                defs = full_defs + compact_defs
-
-            if defs:
-                for tool in defs:
-                    if tool.get("type") == "function":
-                        func = tool.get("function", {})
-                        params = func.get("parameters", {}) or {}
-                        if params and "additionalProperties" not in params:
-                            params = {**params, "additionalProperties": False}
-                        properties = params.get("properties", {}) or {}
-                        # Strict mode requires all properties in required
-                        params["required"] = list(properties.keys())
-                        tools_list.append(
-                            {
-                                "type": "function",
-                                "name": func.get("name"),
-                                "description": func.get("description"),
-                                "parameters": params,
-                                "strict": True,
-                            }
-                        )
-                    else:
-                        tools_list.append(tool)
+                    tools_list.append(tool)
 
         return tools_list
 
