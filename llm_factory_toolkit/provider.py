@@ -151,6 +151,29 @@ class LiteLLMProvider:
         """Strip the ``openai/`` prefix to get the bare model name."""
         return model.split("/", 1)[-1] if "/" in model else model
 
+    def _inject_dynamic_tool_context(
+        self,
+        tool_session: Optional[ToolSession],
+        tool_execution_context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Inject *tool_session* and *tool_catalog* into the execution context.
+
+        When *tool_session* is not ``None``, a **shallow copy** of
+        *tool_execution_context* (or a new dict) is returned with
+        ``tool_session`` and, when available, ``tool_catalog`` keys set.
+        If *tool_session* is ``None`` the original context is returned
+        unchanged.
+        """
+        if tool_session is None:
+            return tool_execution_context
+        ctx = dict(tool_execution_context or {})
+        ctx["tool_session"] = tool_session
+        if self.tool_factory:
+            catalog = self.tool_factory.get_catalog()
+            if catalog:
+                ctx["tool_catalog"] = catalog
+        return ctx
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -209,13 +232,9 @@ class LiteLLMProvider:
             )
 
         # Dynamic tool loading: inject session and catalog into context
-        if tool_session is not None:
-            tool_execution_context = dict(tool_execution_context or {})
-            tool_execution_context["tool_session"] = tool_session
-            if self.tool_factory:
-                catalog = self.tool_factory.get_catalog()
-                if catalog:
-                    tool_execution_context["tool_catalog"] = catalog
+        tool_execution_context = self._inject_dynamic_tool_context(
+            tool_session, tool_execution_context
+        )
 
         # Determine core tool names for compact mode (keep full definitions).
         # Always extract so auto-compact can use them when triggered mid-loop.
@@ -385,13 +404,9 @@ class LiteLLMProvider:
             return
 
         # Dynamic tool loading: inject session and catalog into context
-        if tool_session is not None:
-            tool_execution_context = dict(tool_execution_context or {})
-            tool_execution_context["tool_session"] = tool_session
-            if self.tool_factory:
-                catalog = self.tool_factory.get_catalog()
-                if catalog:
-                    tool_execution_context["tool_catalog"] = catalog
+        tool_execution_context = self._inject_dynamic_tool_context(
+            tool_session, tool_execution_context
+        )
 
         # Determine core tool names for compact mode.
         # Always extract so auto-compact can use them when triggered mid-loop.
@@ -1276,13 +1291,9 @@ class LiteLLMProvider:
         client = self._get_openai_client()
 
         # Dynamic tool loading: inject session and catalog into context
-        if tool_session is not None:
-            tool_execution_context = dict(tool_execution_context or {})
-            tool_execution_context["tool_session"] = tool_session
-            if self.tool_factory:
-                catalog = self.tool_factory.get_catalog()
-                if catalog:
-                    tool_execution_context["tool_catalog"] = catalog
+        tool_execution_context = self._inject_dynamic_tool_context(
+            tool_session, tool_execution_context
+        )
 
         # Determine core tool names for compact mode.
         # Always extract so auto-compact can use them when triggered mid-loop.
@@ -1446,13 +1457,9 @@ class LiteLLMProvider:
         client = self._get_openai_client()
 
         # Dynamic tool loading: inject session and catalog into context
-        if tool_session is not None:
-            tool_execution_context = dict(tool_execution_context or {})
-            tool_execution_context["tool_session"] = tool_session
-            if self.tool_factory:
-                catalog = self.tool_factory.get_catalog()
-                if catalog:
-                    tool_execution_context["tool_catalog"] = catalog
+        tool_execution_context = self._inject_dynamic_tool_context(
+            tool_session, tool_execution_context
+        )
 
         # Determine core tool names for compact mode.
         # Always extract so auto-compact can use them when triggered mid-loop.
