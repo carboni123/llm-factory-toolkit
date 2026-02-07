@@ -1,6 +1,6 @@
 # tests/test_llmcall_tools_with_context.py
 """
-Tests tool-based OpenAI API calls using the LLMClient, ToolFactory,
+Tests tool-based API calls using the LLMClient, ToolFactory,
 and the tool_execution_context feature.
 Requires a valid OPENAI_API_KEY environment variable.
 """
@@ -25,7 +25,7 @@ from llm_factory_toolkit.exceptions import (
 )
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 SYSTEM_PROMPT_CONTEXT_TOOL = (
@@ -39,7 +39,7 @@ USER_PASSWORDS = {
     "user_gamma": "gamma_grape_soda",
 }
 
-# We'll test retrieving the password for user_beta
+# We'll test retrieving the password for user_gamma
 TARGET_USER_ID = "user_gamma"
 EXPECTED_PASSWORD = USER_PASSWORDS[TARGET_USER_ID]
 
@@ -155,10 +155,10 @@ async def test_openai_tool_call_with_context_injection(
 
         # 2. Instantiate the LLMClient
         client = LLMClient(
-            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
+            model=openai_test_model, tool_factory=tool_factory
         )
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory"
+            f"LLMClient initialized with model: {client.model} and Tool Factory"
         )
 
         # 3. Prepare messages
@@ -173,20 +173,12 @@ async def test_openai_tool_call_with_context_injection(
 
         # 5. Make the API call, passing the context
         print("Calling client.generate (tool use with context expected)...")
-        # The LLM should generate a final response that includes the password.
-        # The tool itself returns a snippet to the LLM, but the LLM might rephrase.
-        generation_kwargs: Dict[str, Any] = {}
-        if client.provider._is_reasoning_model(openai_test_model):
-            generation_kwargs["tool_choice"] = "required"
-
         generation_result = await client.generate(
             input=messages,
             model=openai_test_model,
             temperature=0.1,
             use_tools=[MOCK_TOOL_NAME_CONTEXT],
-            tool_execution_context=execution_context,  # <--- Pass the context here
-            # max_tool_iterations defaults to 5 in provider
-            **generation_kwargs,
+            tool_execution_context=execution_context,
         )
         response_content = generation_result.content
         tool_payloads = generation_result.payloads

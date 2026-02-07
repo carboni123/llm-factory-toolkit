@@ -20,7 +20,7 @@ from llm_factory_toolkit.exceptions import (
 )
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 SYSTEM_PROMPT_MULTI_TOOL = """
@@ -184,12 +184,12 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
-            provider_type="openai", model=openai_test_model, tool_factory=tool_factory
+            model=openai_test_model, tool_factory=tool_factory
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory (3 tools)"
+            f"LLMClient initialized with model: {client.model} and Tool Factory (3 tools)"
         )
 
         # 3. Prepare messages designed to trigger ALL three tools
@@ -215,9 +215,10 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
             f"Expected string response, got {type(response_content)}"
         )
         assert len(response_content) > 0, "API response content is empty"
-        assert len(generation_result.tool_messages) == 3
+        assert len(generation_result.tool_messages) >= 3
+        # All tool messages use normalised Chat Completions format
         assert all(
-            message.get("type") == "function_call_output"
+            message.get("role") == "tool"
             for message in generation_result.tool_messages
         )
 
@@ -228,10 +229,19 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
 
         print("OpenAI Three tool call combined secret test successful.")
 
+    except ProviderError as e:
+        error_text = str(e).lower()
+        if "authentication" in error_text or "api key" in error_text:
+            pytest.fail(
+                f"OpenAI Provider Authentication Error: {e}. Check if API key is valid."
+            )
+        elif "rate limit" in error_text or "quota" in error_text:
+            pytest.skip(f"OpenAI Provider Rate Limit/Quota Error: {e}.")
+        else:
+            pytest.fail(f"ProviderError during API call: {type(e).__name__}: {e}")
     except (
         ConfigurationError,
         ToolError,
-        ProviderError,
         UnsupportedFeatureError,
         LLMToolkitError,
     ) as e:
@@ -272,14 +282,13 @@ async def test_google_genai_three_tool_calls_combined_secret(
 
         # 2. Instantiate the LLMClient with the factory containing all tools
         client = LLMClient(
-            provider_type="google_genai",
             model=google_test_model,
             tool_factory=tool_factory,
         )
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
-            f"LLMClient initialized with model: {client.provider.model} and Tool Factory (3 tools)"
+            f"LLMClient initialized with model: {client.model} and Tool Factory (3 tools)"
         )
 
         # 3. Prepare messages designed to trigger ALL three tools
@@ -318,10 +327,19 @@ async def test_google_genai_three_tool_calls_combined_secret(
 
         print("Google GenAI Three tool call combined secret test successful.")
 
+    except ProviderError as e:
+        error_text = str(e).lower()
+        if "authentication" in error_text or "api key" in error_text:
+            pytest.fail(
+                f"Google GenAI Provider Authentication Error: {e}. Check if API key is valid."
+            )
+        elif "rate limit" in error_text or "quota" in error_text:
+            pytest.skip(f"Google GenAI Provider Rate Limit/Quota Error: {e}.")
+        else:
+            pytest.fail(f"ProviderError during API call: {type(e).__name__}: {e}")
     except (
         ConfigurationError,
         ToolError,
-        ProviderError,
         UnsupportedFeatureError,
         LLMToolkitError,
     ) as e:

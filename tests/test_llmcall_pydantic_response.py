@@ -17,7 +17,7 @@ from llm_factory_toolkit.exceptions import (
 )
 
 # Use pytest-asyncio for async tests
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 # --- Test Configuration ---
 
@@ -78,9 +78,9 @@ async def test_openai_pydantic_response_format(openai_test_model: str) -> None:
 
     try:
         # 1. Initialize LLMClient
-        client = LLMClient(provider_type="openai", model=openai_test_model)
+        client = LLMClient(model=openai_test_model)
         assert client is not None
-        print(f"LLMClient initialized with model: {client.provider.model}")
+        print(f"LLMClient initialized with model: {client.model}")
 
         # 2. Prepare messages
         messages = [
@@ -151,9 +151,9 @@ async def test_google_genai_pydantic_response_format(google_test_model: str) -> 
 
     try:
         # 1. Initialize LLMClient
-        client = LLMClient(provider_type="google_genai", model=google_test_model)
+        client = LLMClient(model=google_test_model)
         assert client is not None
-        print(f"LLMClient initialized with model: {client.provider.model}")
+        print(f"LLMClient initialized with model: {client.model}")
 
         # 2. Prepare messages
         messages = [
@@ -201,7 +201,7 @@ async def test_google_genai_pydantic_response_format(google_test_model: str) -> 
         if "authentication" in str(e).lower() or "api key" in str(e).lower():
             pytest.fail(f"Google GenAI Provider Authentication Error: {e}. Check API key.")
         elif "rate limit" in str(e).lower() or "quota" in str(e).lower():
-            pytest.fail(f"Google GenAI Provider Rate Limit/Quota Error: {e}.")
+            pytest.skip(f"Google GenAI Provider Rate Limit/Quota Error: {e}.")
         else:
             pytest.fail(f"ProviderError during API call: {type(e).__name__}: {e}")
     except LLMToolkitError as e:

@@ -7,7 +7,7 @@ import importlib
 import inspect
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, cast
 
 from ..exceptions import ToolError
@@ -28,6 +28,9 @@ class ToolRegistration:
     executor: ToolHandler
     mock_executor: ToolHandler
     definition: Dict[str, Any]
+    category: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    group: Optional[str] = None
 
 
 BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
@@ -39,6 +42,8 @@ BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
             "properties": {"expression": {"type": "string"}},
             "required": ["expression"],
         },
+        "category": "utility",
+        "tags": ["math", "calculator"],
     },
     "read_local_file": {
         "function": "builtins.read_local_file",
@@ -55,17 +60,56 @@ BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
             },
             "required": ["file_path"],
         },
+        "category": "utility",
+        "tags": ["file", "io", "read"],
     },
 }
 
 
 class ToolFactory:
-    """Registry and dispatcher for tools exposed to language models."""
+    """Registry and dispatcher for tools exposed to language models.
+
+    The ``ToolFactory`` is the central hub for tool management:
+
+    * **Register** tools via :meth:`register_tool` (function-based),
+      :meth:`register_tool_class` (class-based / :class:`BaseTool`),
+      or :meth:`register_builtins` (built-in helpers).
+    * **Dispatch** calls via :meth:`dispatch_tool` — handles argument
+      parsing, context injection, and mock mode.
+    * **Export** tool schemas via :meth:`get_tool_definitions` for the LLM.
+    * **Catalog** support: attach an :class:`InMemoryToolCatalog` with
+      :meth:`set_catalog`, and register ``browse_toolkit`` / ``load_tools``
+      meta-tools with :meth:`register_meta_tools`.
+
+    Typical usage::
+
+        factory = ToolFactory()
+        factory.register_tool(
+            function=my_func,
+            name="my_func",
+            description="Does something useful.",
+            parameters={...},
+            category="general",
+            tags=["example"],
+        )
+
+        # Pass to LLMClient
+        client = LLMClient(model="openai/gpt-4o-mini", tool_factory=factory)
+    """
 
     def __init__(self) -> None:
         self._registry: Dict[str, ToolRegistration] = {}
         self.tool_usage_counts: Dict[str, int] = {}
+        self._catalog: Optional[Any] = None
         module_logger.info("ToolFactory initialized.")
+
+    def set_catalog(self, catalog: Any) -> None:
+        """Attach a :class:`ToolCatalog` for dynamic tool loading."""
+        self._catalog = catalog
+
+    def get_catalog(self) -> Optional[Any]:
+        """Return the attached catalog, if any."""
+        return self._catalog
 
     @property
     def tool_definitions(self) -> List[Dict[str, Any]]:
@@ -97,8 +141,53 @@ class ToolFactory:
         description: str,
         parameters: Optional[Dict[str, Any]] = None,
         mock_function: Optional[ToolHandler] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        group: Optional[str] = None,
     ) -> None:
-        """Register a callable tool along with its metadata."""
+        """Register a callable tool the LLM can invoke during generation.
+
+        The tool function is called automatically by the agentic loop when
+        the model decides to use it.  The ``parameters`` JSON Schema tells
+        the model what arguments to provide; any parameters **not** listed
+        in the schema but present in the function signature will be filled
+        from ``tool_execution_context`` at dispatch time (context injection).
+
+        Args:
+            function: The callable to execute.  May be sync or async.
+                Must return a :class:`ToolExecutionResult` (or a plain dict/
+                str, which is auto-wrapped).
+            name: Unique tool name the model uses to invoke it.
+            description: Human-readable description shown to the model.
+            parameters: JSON Schema for the arguments the **model** provides.
+                Context-injected params must NOT appear here.
+            mock_function: Optional alternative callable used when
+                ``mock_tools=True``.
+            category: Optional category string (e.g. ``"communication"``,
+                ``"crm"``) for catalog discovery.
+            tags: Optional list of tag strings (e.g. ``["email", "notify"]``)
+                for catalog search.
+            group: Optional dotted namespace (e.g. ``"crm.contacts"``,
+                ``"sales.pipeline"``) for group-based filtering.
+
+        Example::
+
+            factory.register_tool(
+                function=send_email,
+                name="send_email",
+                description="Send an email to a recipient.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string"},
+                        "body": {"type": "string"},
+                    },
+                    "required": ["to", "body"],
+                },
+                category="communication",
+                tags=["email", "notify"],
+            )
+        """
 
         if name in self._registry:
             module_logger.warning("Tool '%s' is already registered. Overwriting.", name)
@@ -111,6 +200,9 @@ class ToolFactory:
             executor=function,
             mock_executor=mock_executor,
             definition=definition,
+            category=category,
+            tags=tags if tags is not None else [],
+            group=group,
         )
         self.tool_usage_counts[name] = 0
         module_logger.info("Registered tool: %s", name)
@@ -122,6 +214,9 @@ class ToolFactory:
         name_override: Optional[str] = None,
         description_override: Optional[str] = None,
         parameters_override: Optional[Dict[str, Any]] = None,
+        category_override: Optional[str] = None,
+        tags_override: Optional[List[str]] = None,
+        group_override: Optional[str] = None,
     ) -> None:
         """Register a :class:`BaseTool` subclass by wiring wrappers for execution."""
 
@@ -133,6 +228,9 @@ class ToolFactory:
         name = name_override or getattr(tool_class, "NAME", None)
         description = description_override or getattr(tool_class, "DESCRIPTION", None)
         parameters = parameters_override or getattr(tool_class, "PARAMETERS", None)
+        category = category_override or getattr(tool_class, "CATEGORY", None)
+        tags = tags_override or getattr(tool_class, "TAGS", None)
+        group = group_override or getattr(tool_class, "GROUP", None)
 
         if not name or not description:
             raise ToolError(
@@ -158,6 +256,9 @@ class ToolFactory:
             description=description,
             parameters=parameters,
             mock_function=mock_wrapper,
+            category=category,
+            tags=tags,
+            group=group,
         )
         module_logger.info(
             "Registered tool class: %s as '%s'", tool_class.__name__, name
@@ -185,37 +286,154 @@ class ToolFactory:
                 name=name,
                 description=info["description"],
                 parameters=info.get("parameters"),
+                category=info.get("category"),
+                tags=info.get("tags"),
             )
+
+    def register_meta_tools(self) -> None:
+        """Register ``browse_toolkit``, ``load_tools``, ``load_tool_group``, and ``unload_tools``."""
+        from .meta_tools import (
+            BROWSE_TOOLKIT_PARAMETERS,
+            LOAD_TOOL_GROUP_PARAMETERS,
+            LOAD_TOOLS_PARAMETERS,
+            UNLOAD_TOOLS_PARAMETERS,
+            browse_toolkit,
+            load_tool_group,
+            load_tools,
+            unload_tools,
+        )
+
+        self.register_tool(
+            function=browse_toolkit,
+            name="browse_toolkit",
+            description=(
+                "Search the tool catalog to discover available tools. "
+                "Returns matching tools with name, description, category, and tags. "
+                "Use load_tools to activate the tools you need."
+            ),
+            parameters=BROWSE_TOOLKIT_PARAMETERS,
+            category="system",
+            tags=["meta", "discovery"],
+        )
+        self.register_tool(
+            function=load_tools,
+            name="load_tools",
+            description=(
+                "Load tools into the active session so you can use them. "
+                "Pass a list of tool names discovered via browse_toolkit."
+            ),
+            parameters=LOAD_TOOLS_PARAMETERS,
+            category="system",
+            tags=["meta", "loading"],
+        )
+        self.register_tool(
+            function=load_tool_group,
+            name="load_tool_group",
+            description=(
+                "Load all tools in a group by prefix in one call. "
+                "For example, group='crm' loads all crm.contacts and crm.pipeline tools. "
+                "Respects token budget and max_tools limits."
+            ),
+            parameters=LOAD_TOOL_GROUP_PARAMETERS,
+            category="system",
+            tags=["meta", "loading", "group"],
+        )
+        self.register_tool(
+            function=unload_tools,
+            name="unload_tools",
+            description=(
+                "Remove tools from the active session to free context tokens. "
+                "Core tools and meta-tools cannot be unloaded."
+            ),
+            parameters=UNLOAD_TOOLS_PARAMETERS,
+            category="system",
+            tags=["meta", "unloading"],
+        )
+        module_logger.info(
+            "Registered meta-tools: browse_toolkit, load_tools, load_tool_group, unload_tools"
+        )
 
     def get_tool_definitions(
-        self, filter_tool_names: Optional[Sequence[str]] = None
+        self,
+        filter_tool_names: Optional[Sequence[str]] = None,
+        compact: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Return definitions optionally filtered by ``filter_tool_names``."""
+        """Return definitions optionally filtered by ``filter_tool_names``.
 
+        Args:
+            filter_tool_names: If given, only include tools with these names.
+            compact: When ``True``, strip ``description`` fields from nested
+                parameter properties (keeping only the top-level function
+                description) and remove ``default`` values.  Parameter names
+                and types are preserved, so dispatch still works.
+        """
         if filter_tool_names is None:
             module_logger.debug("Returning all tool definitions.")
-            return self.tool_definitions
+            definitions = self.tool_definitions
+        else:
+            allowed = set(filter_tool_names)
+            ordered_names = [
+                registration.name for registration in self._registry.values()
+            ]
+            definitions = [
+                registration.definition
+                for registration in self._registry.values()
+                if registration.name in allowed
+            ]
 
-        allowed = set(filter_tool_names)
-        ordered_names = [registration.name for registration in self._registry.values()]
-        definitions = [
-            registration.definition
-            for registration in self._registry.values()
-            if registration.name in allowed
-        ]
+            missing = allowed - set(ordered_names)
+            if missing:
+                module_logger.warning(
+                    "Requested tools not found in factory: %s. They will be excluded.",
+                    list(missing),
+                )
 
-        missing = allowed - set(ordered_names)
-        if missing:
-            module_logger.warning(
-                "Requested tools not found in factory: %s. They will be excluded.",
-                list(missing),
+            module_logger.debug(
+                "Returning filtered tool definitions for names: %s",
+                [name for name in ordered_names if name in allowed],
             )
 
-        module_logger.debug(
-            "Returning filtered tool definitions for names: %s",
-            [name for name in ordered_names if name in allowed],
-        )
+        if compact:
+            definitions = [self._compact_definition(d) for d in definitions]
+
         return definitions
+
+    # ------------------------------------------------------------------
+    # Compact mode helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compact_definition(definition: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a deep copy of *definition* with nested property
+        ``description`` and ``default`` fields removed.
+
+        The top-level ``function.description`` is preserved.
+        """
+        import copy
+
+        out = copy.deepcopy(definition)
+        params = out.get("function", {}).get("parameters")
+        if params is not None:
+            ToolFactory._strip_properties(params)
+        return out
+
+    @staticmethod
+    def _strip_properties(schema: Dict[str, Any]) -> None:
+        """Recursively strip ``description`` and ``default`` from properties."""
+        props = schema.get("properties")
+        if isinstance(props, dict):
+            for prop_schema in props.values():
+                if isinstance(prop_schema, dict):
+                    prop_schema.pop("description", None)
+                    prop_schema.pop("default", None)
+                    # Recurse into nested objects / array items
+                    ToolFactory._strip_properties(prop_schema)
+        # Handle array items
+        items = schema.get("items")
+        if isinstance(items, dict):
+            items.pop("description", None)
+            items.pop("default", None)
+            ToolFactory._strip_properties(items)
 
     async def dispatch_tool(
         self,
@@ -330,6 +548,12 @@ class ToolFactory:
         """Names of all registered tools."""
 
         return list(self._registry.keys())
+
+    @property
+    def registrations(self) -> Dict[str, ToolRegistration]:
+        """Return a copy of all tool registrations."""
+
+        return dict(self._registry)
 
     def _build_definition(
         self, name: str, description: str, parameters: Optional[Dict[str, Any]]

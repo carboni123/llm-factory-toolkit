@@ -3,77 +3,31 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from llm_factory_toolkit.client import LLMClient
-from llm_factory_toolkit.providers.base import BaseProvider, GenerationResult
+from llm_factory_toolkit.tools.models import GenerationResult
 
 
 pytestmark = pytest.mark.asyncio
 
 
-class _RecordingProvider(BaseProvider):
-    """Test double that records the input passed to ``generate``."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.last_messages: List[Dict[str, Any]] | None = None
-        self.last_kwargs: Dict[str, Any] | None = None
-
-    async def generate(
-        self,
-        input: List[Dict[str, Any]],
-        *,
-        tool_execution_context: Optional[Dict[str, Any]] = None,
-        mock_tools: bool = False,
-        web_search: Any = False,
-        file_search: Any = False,
-        **kwargs: Any,
-    ) -> GenerationResult:
-        self.last_messages = copy.deepcopy(input)
-        self.last_kwargs = {
-            "tool_execution_context": tool_execution_context,
-            "web_search": web_search,
-            "file_search": file_search,
-            **kwargs,
-        }
-        return GenerationResult(content=None)
-
-    async def generate_tool_intent(
-        self,
-        input: List[Dict[str, Any]],
-        *,
-        model: Optional[str] = None,
-        use_tools: Optional[List[str]] = [],
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[Any]] = None,
-        web_search: bool = False,
-        file_search: bool = False,
-        **kwargs: Any,
-    ) -> Any:
-        raise NotImplementedError
+def _make_client() -> LLMClient:
+    """Create an LLMClient with a mocked LiteLLMProvider.generate."""
+    with patch("llm_factory_toolkit.client.LiteLLMProvider") as MockProvider:
+        instance = MockProvider.return_value
+        instance.model = "openai/gpt-4o-mini"
+        instance.generate = AsyncMock(return_value=GenerationResult(content=None))
+        client = LLMClient(model="openai/gpt-4o-mini")
+    return client
 
 
-def _patch_client_with_provider(monkeypatch: pytest.MonkeyPatch) -> _RecordingProvider:
-    provider = _RecordingProvider()
-
-    def _factory(
-        *, provider_type: str, api_key: str | None = None, **kwargs: Any
-    ) -> BaseProvider:
-        return provider
-
-    monkeypatch.setattr("llm_factory_toolkit.client.create_provider_instance", _factory)
-    return provider
-
-
-async def test_generate_merge_history_combines_adjacent_turns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    provider = _patch_client_with_provider(monkeypatch)
-    client = LLMClient(provider_type="dummy")
+async def test_generate_merge_history_combines_adjacent_turns() -> None:
+    client = _make_client()
+    provider_generate = client.provider.generate
 
     messages = [
         {"role": "system", "content": "system"},
@@ -89,7 +43,15 @@ async def test_generate_merge_history_combines_adjacent_turns(
     await client.generate(input=messages, merge_history=True)
 
     assert messages == original_messages, "Input messages should not be mutated"
-    assert provider.last_messages == [
+
+    # Verify the provider received the merged messages
+    call_kwargs = provider_generate.call_args
+    actual_input = call_kwargs.kwargs.get("input") or call_kwargs.args[0] if call_kwargs.args else None
+    if actual_input is None:
+        # Try to get from keyword arguments
+        actual_input = call_kwargs[1].get("input", call_kwargs[0][0] if call_kwargs[0] else None)
+
+    assert actual_input == [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "Hello\n\nHow are you?"},
         {"role": "assistant", "content": "Hi there\n\nAll good."},
@@ -97,11 +59,9 @@ async def test_generate_merge_history_combines_adjacent_turns(
     ]
 
 
-async def test_generate_merge_history_default_keeps_sequence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    provider = _patch_client_with_provider(monkeypatch)
-    client = LLMClient(provider_type="dummy")
+async def test_generate_merge_history_default_keeps_sequence() -> None:
+    client = _make_client()
+    provider_generate = client.provider.generate
 
     messages = [
         {"role": "user", "content": "First"},
@@ -111,4 +71,9 @@ async def test_generate_merge_history_default_keeps_sequence(
 
     await client.generate(input=messages)
 
-    assert provider.last_messages == messages
+    call_kwargs = provider_generate.call_args
+    actual_input = call_kwargs.kwargs.get("input") or call_kwargs.args[0] if call_kwargs.args else None
+    if actual_input is None:
+        actual_input = call_kwargs[1].get("input", call_kwargs[0][0] if call_kwargs[0] else None)
+
+    assert actual_input == messages

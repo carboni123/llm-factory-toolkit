@@ -1,10 +1,24 @@
 # llm_factory_toolkit/llm_factory_toolkit/client.py
+"""High-level client for LLM generation with tool support."""
+
+from __future__ import annotations
+
 import copy
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+)
 
-from pydantic import BaseModel  # Import for type hinting
+from pydantic import BaseModel
 
 from .exceptions import (
     ConfigurationError,
@@ -13,58 +27,152 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
-from .providers import BaseProvider, GenerationResult, create_provider_instance
-from .tools.models import ToolExecutionResult, ToolIntentOutput
+from .provider import LiteLLMProvider
+from .tools.catalog import InMemoryToolCatalog
+from .tools.models import (
+    GenerationResult,
+    StreamChunk,
+    ToolExecutionResult,
+    ToolIntentOutput,
+)
+from .tools.session import ToolSession
 from .tools.tool_factory import ToolFactory
 
-module_logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """
-    High-level client for interacting with different LLM providers.
-    Manages provider instantiation, tool registration, and generation calls.
-    Supports filtering tools used in specific generation calls.
+    """High-level client for interacting with LLM providers via LiteLLM.
+
+    Manages tool registration, context injection, and generation calls
+    across 100+ providers using a single model string.
+
+    Parameters
+    ----------
+    model:
+        LiteLLM model identifier.  Uses the ``provider/model`` convention
+        (e.g. ``"openai/gpt-4o-mini"``, ``"anthropic/claude-sonnet-4"``,
+        ``"gemini/gemini-2.5-flash"``).  Well-known OpenAI models work
+        without a prefix (e.g. ``"gpt-4o"``).
+    api_key:
+        Explicit API key.  When ``None`` the provider's standard
+        environment variable is used (``OPENAI_API_KEY``,
+        ``ANTHROPIC_API_KEY``, etc.).
+    tool_factory:
+        An existing :class:`ToolFactory` instance.  If ``None`` a new one
+        is created internally.
+    timeout:
+        HTTP request timeout in seconds.
+    core_tools:
+        Tool names that should always be visible to the agent.  Only used
+        when ``dynamic_tool_loading=True``.  These tools are loaded into
+        every auto-created :class:`ToolSession` alongside the meta-tools
+        ``browse_toolkit`` and ``load_tools``.
+    dynamic_tool_loading:
+        When ``True``, the client automatically builds an
+        :class:`InMemoryToolCatalog` from the factory, registers the
+        ``browse_toolkit`` / ``load_tools`` meta-tools, and creates a
+        fresh :class:`ToolSession` on every ``generate()`` call.  This
+        lets the agent start with only ``core_tools`` and discover/load
+        additional tools on demand, reducing context bloat.  Requires an
+        explicit ``tool_factory`` with registered tools.
+    **kwargs:
+        Extra keyword arguments forwarded to every ``litellm.acompletion``
+        call (e.g. ``api_base``, ``drop_params``, ``num_retries``).
+
+    Examples
+    --------
+    Basic usage::
+
+        client = LLMClient(model="openai/gpt-4o-mini")
+        result = await client.generate(
+            input=[{"role": "user", "content": "Hello!"}],
+        )
+
+    With tools::
+
+        factory = ToolFactory()
+        factory.register_tool(function=my_func, name="my_func", ...)
+        client = LLMClient(model="openai/gpt-4o-mini", tool_factory=factory)
+        result = await client.generate(
+            input=[{"role": "user", "content": "Use my_func"}],
+        )
+
+    Dynamic tool loading (many tools, agent discovers on demand)::
+
+        client = LLMClient(
+            model="openai/gpt-4.1-mini",
+            tool_factory=factory,          # has 20+ registered tools
+            core_tools=["call_human"],     # always visible
+            dynamic_tool_loading=True,     # auto catalog + meta-tools
+        )
+        result = await client.generate(input=messages)
     """
 
     def __init__(
         self,
-        provider_type: str,
+        model: str = "openai/gpt-4o-mini",
         api_key: Optional[str] = None,
         tool_factory: Optional[ToolFactory] = None,
-        # Pass provider-specific args via kwargs, e.g., model='gpt-4-turbo'
-        **provider_kwargs: Any,
+        timeout: float = 180.0,
+        core_tools: Optional[List[str]] = None,
+        dynamic_tool_loading: bool = False,
+        compact_tools: bool = False,
+        **kwargs: Any,
     ) -> None:
-        """
-        Initializes the LLMClient.
+        logger.info("Initialising LLMClient for model: %s", model)
 
-        Args:
-            provider_type (str): The identifier of the LLM provider to use (e.g., 'openai').
-            api_key (str, optional): The API key for the provider or path to a key file.
-                                     Can also be loaded from environment variables by the provider.
-            tool_factory (ToolFactory, optional): An existing ToolFactory instance. If None,
-                                                  a new one will be created internally.
-            **provider_kwargs: Additional keyword arguments specific to the chosen provider's
-                               constructor (e.g., model, timeout, base_url).
-        """
-        module_logger.info(f"Initializing LLMClient for provider: {provider_type}")
-
-        self.provider_type = provider_type
+        self.model = model
+        self.compact_tools = compact_tools
         self.tool_factory = tool_factory or ToolFactory()
 
-        try:
-            self.provider: BaseProvider = create_provider_instance(
-                provider_type=provider_type,
-                api_key=api_key,
-                tool_factory=self.tool_factory,  # Pass the tool factory instance
-                **provider_kwargs,  # Pass through other args like 'model'
-            )
-            module_logger.info(
-                f"Successfully created provider instance: {type(self.provider).__name__}"
-            )
-        except (ConfigurationError, ImportError, LLMToolkitError) as e:
-            module_logger.error(f"Failed to initialize LLMClient: {e}", exc_info=True)
-            raise
+        self.provider = LiteLLMProvider(
+            model=model,
+            tool_factory=self.tool_factory,
+            api_key=api_key,
+            timeout=timeout,
+            **kwargs,
+        )
+
+        # Dynamic tool loading setup
+        self.core_tools = core_tools or []
+        self.dynamic_tool_loading = dynamic_tool_loading
+
+        if self.dynamic_tool_loading:
+            if tool_factory is None:
+                raise ConfigurationError(
+                    "dynamic_tool_loading=True requires an explicit tool_factory "
+                    "with registered tools."
+                )
+            if self.tool_factory.get_catalog() is None:
+                catalog = InMemoryToolCatalog(self.tool_factory)
+                self.tool_factory.set_catalog(catalog)
+            if "browse_toolkit" not in self.tool_factory.available_tool_names:
+                self.tool_factory.register_meta_tools()
+            invalid = [
+                t for t in self.core_tools
+                if t not in self.tool_factory.available_tool_names
+            ]
+            if invalid:
+                raise ConfigurationError(
+                    f"core_tools contain unregistered tool names: {invalid}"
+                )
+
+    # ------------------------------------------------------------------
+    # Dynamic tool loading
+    # ------------------------------------------------------------------
+
+    def _build_dynamic_session(self) -> ToolSession:
+        """Create a fresh :class:`ToolSession` with core + meta tools loaded."""
+        session = ToolSession()
+        meta = ["browse_toolkit", "load_tools", "unload_tools"]
+        initial = list(dict.fromkeys(self.core_tools + meta))
+        session.load(initial)
+        return session
+
+    # ------------------------------------------------------------------
+    # Tool registration helpers
+    # ------------------------------------------------------------------
 
     def register_tool(
         self,
@@ -72,15 +180,18 @@ class LLMClient:
         name: Optional[str] = None,
         description: Optional[str] = None,
         parameters: Optional[Dict[str, Any]] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ) -> None:
-        """
-        Registers a Python function as a tool for the LLM with the internal ToolFactory.
+        """Register a Python function as a tool for the LLM.
 
         Args:
-            function (Callable): The Python function to register.
-            name (str, optional): The name for the tool. Defaults to the function's __name__.
-            description (str, optional): Description of the tool. Defaults to the function's docstring.
-            parameters (Dict[str, Any], optional): JSON schema description of the function's parameters.
+            function: The function to expose as a tool.
+            name: Tool name.  Defaults to ``function.__name__``.
+            description: Tool description.  Defaults to the docstring.
+            parameters: JSON Schema for the function's parameters.
+            category: Category for catalog discovery.
+            tags: Tags for catalog search.
         """
         if name is None:
             name = function.__name__
@@ -88,17 +199,24 @@ class LLMClient:
             docstring = function.__doc__ or ""
             description = docstring.strip() or f"Executes the {name} function."
             if not function.__doc__:
-                module_logger.warning(
-                    f"Tool function '{name}' has no docstring. Using generic description."
+                logger.warning(
+                    "Tool function '%s' has no docstring. Using generic description.",
+                    name,
                 )
 
-        if parameters is None:
-            pass  # Allow no parameters
-
         self.tool_factory.register_tool(
-            function=function, name=name, description=description, parameters=parameters
+            function=function,
+            name=name,
+            description=description,
+            parameters=parameters,
+            category=category,
+            tags=tags,
         )
-        module_logger.info(f"Tool '{name}' registered with LLMClient's ToolFactory.")
+        logger.info("Tool '%s' registered.", name)
+
+    # ------------------------------------------------------------------
+    # Generation
+    # ------------------------------------------------------------------
 
     async def generate(
         self,
@@ -106,77 +224,168 @@ class LLMClient:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
+        max_tool_iterations: int = 25,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[List[str]] = [],
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
         merge_history: bool = False,
+        stream: bool = False,
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tool_session: Optional[ToolSession] = None,
+        compact_tools: Optional[bool] = None,
         **kwargs: Any,
-    ) -> GenerationResult:
-        """
-        Generates a response from the configured LLM provider based on the message history,
-        potentially handling tool calls and returning deferred action payloads.
+    ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
+        """Generate a response from the configured LLM.
+
+        Sends the conversation to the model and runs an **agentic tool loop**:
+        if the model requests tool calls, this method dispatches them via the
+        :class:`ToolFactory`, feeds results back, and repeats — up to
+        ``max_tool_iterations`` (default 25) — until the model produces a
+        final text response.
 
         Args:
-            input (List[Dict[str, Any]]): The conversation history.
-            model (str, optional): Override the default model for this request.
-            temperature (float, optional): Sampling temperature.
-            max_output_tokens (int, optional): Max tokens to generate.
-            response_format (Dict | Type[BaseModel], optional): Desired response format (e.g., JSON).
-                                                                Accepts dict or Pydantic model.
-            use_tools (Optional[List[str]]): A list of tool names to make available for this
-                                             specific call. Defaults to `[]`, which exposes all
-                                             registered tools. Passing ``None`` disables tool
-                                             usage entirely. Providing a non-empty list restricts
-                                             the available tools to those names.
-            mock_tools (bool): If True, executes tools in mock mode and returns
-                stubbed responses without triggering real side effects.
-            parallel_tools (bool): If True, instructs the provider to dispatch
-                multiple tool calls concurrently. Defaults to ``False``.
-            merge_history (bool): If True, sequential ``user`` and ``assistant``
-                messages are merged together prior to dispatching the request.
-                This may help accommodate providers that expect consolidated
-                turns, but can cause unexpected model behaviour in some
-                scenarios. Tool call messages are never merged.
-            web_search (bool | Dict[str, Any]): When truthy exposes the
-                provider's built-in web search capability (if supported)
-                alongside any registered tools, regardless of ``use_tools``
-                filters. Provide a dictionary such as
-                ``{"citations": False}`` to opt out of provider supplied
-                citations while keeping search enabled, supply search
-                ``filters`` (for example ``{"allowed_domains": [...]}``), or
-                set an approximate ``user_location`` for geographically-aware
-                queries.
-            file_search (bool | Dict[str, Any] | List[str] | Tuple[str, ...]):
-                When truthy exposes the provider's file search tool. Provide a
-                list/tuple of vector store identifiers or a configuration
-                dictionary (for example ``{"vector_store_ids": ["vs_123"]}``)
-                to control retrieval behaviour.
-            **kwargs: Additional arguments passed directly to the provider's generate method
-                      (e.g., tool_choice, max_tool_iterations).
+            input: Conversation history as a list of message dicts.  Each dict
+                must have ``"role"`` (``"system"``, ``"user"``, or
+                ``"assistant"``) and ``"content"`` keys::
+
+                    [
+                        {"role": "system", "content": "You are helpful."},
+                        {"role": "user", "content": "Hello!"},
+                    ]
+
+            model: Override the client's default model for this request.
+            temperature: Sampling temperature (0.0 – 2.0).
+            max_output_tokens: Maximum tokens the model may generate.
+            max_tool_iterations: Maximum number of tool-call round-trips
+                before the loop stops and returns whatever content the model
+                has produced.  Default ``25``.
+            response_format: Request structured output.  Pass
+                ``{"type": "json_object"}`` for free-form JSON, or a
+                Pydantic ``BaseModel`` subclass for validated, typed output.
+                When a Pydantic model is used, ``result.content`` is a
+                parsed instance of that model.
+            use_tools: Which registered tools the model may call.
+
+                * ``[]`` (default): **all** registered tools are available.
+                * ``["tool_a", "tool_b"]``: only these tools are visible.
+                * ``None``: **no** tools; pure text generation.
+
+                When ``dynamic_tool_loading=True``, this is overridden by the
+                active tools in the auto-created :class:`ToolSession`.
+            tool_execution_context: A dict of server-side values injected
+                into tool functions by matching parameter names.  The LLM
+                never sees these values.  Example::
+
+                    tool_execution_context={
+                        "user_id": "usr_123",
+                        "db": my_connection,
+                    }
+
+            mock_tools: When ``True``, tools return stubs instead of executing
+                real logic.  Useful for testing tool flows without side effects.
+            parallel_tools: Dispatch multiple tool calls concurrently within
+                a single iteration (when the model requests several at once).
+            merge_history: Merge consecutive same-role messages before sending.
+            stream: When ``True``, returns an ``AsyncGenerator[StreamChunk]``
+                for real-time token-by-token output instead of waiting for
+                the full response.  Tool calls during streaming are handled
+                transparently.
+            web_search: Enable the provider's web search capability.
+                ``True`` for defaults, or a dict for options::
+
+                    web_search={"search_context_size": "high"}
+
+            file_search: Enable OpenAI file search over vector stores.
+                Pass vector store IDs as a list or a config dict.
+                **OpenAI models only** — raises ``UnsupportedFeatureError``
+                on other providers::
+
+                    file_search={"vector_store_ids": ["vs_abc"], "max_num_results": 5}
+
+            tool_session: An explicit :class:`ToolSession` for dynamic tool
+                loading.  When provided, the model sees **only** the tools
+                in the session's active set (recomputed each loop iteration).
+                If ``dynamic_tool_loading=True`` and no ``tool_session`` is
+                passed, a fresh session with ``core_tools`` + meta-tools is
+                created automatically.
+            **kwargs: Forwarded to the underlying provider (e.g.
+                ``reasoning_effort``, ``thinking``, ``top_p``).
 
         Returns:
-            GenerationResult: Structured response data containing the assistant
-            reply, deferred tool payloads, tool output messages, and the
-            provider's message transcript. The object can still be unpacked into
-            ``(content, payloads)`` for backwards compatibility.
+            :class:`GenerationResult` — with attributes:
+
+            * ``content``: Final text (or parsed Pydantic model).
+            * ``payloads``: List of deferred tool payloads for the app.
+            * ``tool_messages``: Tool result messages to persist for
+              multi-turn conversations.
+            * ``messages``: Full transcript snapshot.
+
+            Supports tuple unpacking::
+
+                content, payloads = await client.generate(input=messages)
+
+            When ``stream=True``, returns ``AsyncGenerator[StreamChunk]``
+            instead.  Each chunk has ``content``, ``done``, and ``usage``.
 
         Raises:
-            ProviderError: If the provider encounters an API error.
-            ToolError: If a registered tool fails during execution.
-            UnsupportedFeatureError: If tools are needed but not supported/configured.
-            LLMToolkitError: For other library-specific errors.
+            ConfigurationError: Missing API key, dependency, or invalid setup.
+            ProviderError: LLM API error (auth, rate limit, bad request).
+            ToolError: Tool dispatch failure.
+            UnsupportedFeatureError: Feature not available for the provider.
+
+        Examples
+        --------
+        Simple generation::
+
+            result = await client.generate(
+                input=[{"role": "user", "content": "What is 2+2?"}],
+            )
+            print(result.content)
+
+        With tools and context injection::
+
+            result = await client.generate(
+                input=[{"role": "user", "content": "Process order #123"}],
+                use_tools=["process_order"],
+                tool_execution_context={"user_id": "usr_abc", "db": conn},
+            )
+
+        Structured output::
+
+            from pydantic import BaseModel
+
+            class Answer(BaseModel):
+                city: str
+                temperature: float
+
+            result = await client.generate(
+                input=[{"role": "user", "content": "Weather in Paris?"}],
+                response_format=Answer,
+            )
+            print(result.content.city)  # "Paris"
+
+        Streaming::
+
+            stream = await client.generate(
+                input=[{"role": "user", "content": "Tell me a story"}],
+                stream=True,
+            )
+            async for chunk in stream:
+                print(chunk.content, end="")
         """
-        module_logger.debug(
-            "Client calling provider.generate. Model override: %s, Use tools: %s, Context provided: %s",
-            model,
-            use_tools,
-            tool_execution_context is not None,
-            mock_tools,
-        )
+        if self.dynamic_tool_loading and tool_session is None:
+            tool_session = self._build_dynamic_session()
+
+        # Inject core_tools into context so unload_tools can protect them
+        if self.dynamic_tool_loading and self.core_tools:
+            tool_execution_context = dict(tool_execution_context or {})
+            tool_execution_context["core_tools"] = list(self.core_tools)
+
+        # Resolve compact_tools: per-call override > constructor default
+        effective_compact = compact_tools if compact_tools is not None else self.compact_tools
 
         processed_input = (
             self._merge_conversation_history(input)
@@ -184,58 +393,213 @@ class LLMClient:
             else copy.deepcopy(input)
         )
 
-        provider_args = {
+        common_kwargs: Dict[str, Any] = {
             "input": processed_input,
             "model": model,
             "temperature": temperature,
             "max_output_tokens": max_output_tokens,
+            "max_tool_iterations": max_tool_iterations,
             "response_format": response_format,
             "use_tools": use_tools,
             "tool_execution_context": tool_execution_context,
             "mock_tools": mock_tools,
             "parallel_tools": parallel_tools,
             "web_search": web_search,
-            "file_search": file_search,
-            **kwargs,  # Pass through other args like 'max_tool_iterations', 'tool_choice'
+            "tool_session": tool_session,
+            "compact_tools": effective_compact,
+            **kwargs,
         }
-        # Filter out None values to avoid overriding provider defaults unintentionally,
-        # but keep 'use_tools' and 'tool_execution_context' as their specific values (None, []) are meaningful.
-        provider_args = {
+        # Filter None values but keep meaningful None/empty (use_tools,
+        # tool_execution_context, parallel_tools, file_search, tool_session)
+        common_kwargs = {
             k: v
-            for k, v in provider_args.items()
+            for k, v in common_kwargs.items()
             if v is not None
             or k
-            in [
-                "use_tools",
-                "tool_execution_context",
-                "parallel_tools",
-                "file_search",
-            ]
+            in {"use_tools", "tool_execution_context", "parallel_tools", "tool_session"}
         }
 
         try:
-            # Delegate to the provider, which now returns a tuple
-            return await self.provider.generate(**provider_args)
-        except (
-            ProviderError,
-            ToolError,
-            ConfigurationError,
-            UnsupportedFeatureError,
-        ) as e:
-            module_logger.error(f"Error during generation: {e}", exc_info=False)
+            if stream:
+                return self.provider.generate_stream(
+                    **common_kwargs, file_search=file_search
+                )
+
+            return await self.provider.generate(
+                **common_kwargs,
+                file_search=file_search,
+            )
+        except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError):
             raise
         except Exception as e:
-            module_logger.error(
-                f"An unexpected error occurred during generation: {e}", exc_info=True
-            )
+            logger.error("Unexpected error during generation: %s", e, exc_info=True)
             raise LLMToolkitError(f"Unexpected generation error: {e}") from e
+
+    # ------------------------------------------------------------------
+    # Tool intent planning / execution
+    # ------------------------------------------------------------------
+
+    async def generate_tool_intent(
+        self,
+        input: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        use_tools: Optional[List[str]] = [],
+        web_search: bool | Dict[str, Any] = False,
+        **kwargs: Any,
+    ) -> ToolIntentOutput:
+        """Plan tool calls without executing them.
+
+        Returns a :class:`ToolIntentOutput` whose ``tool_calls`` can be
+        inspected and later executed via :meth:`execute_tool_intents`.
+        """
+        provider_args: Dict[str, Any] = {
+            "input": input,
+            "model": model,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "response_format": response_format,
+            "use_tools": use_tools,
+            "web_search": web_search,
+            **kwargs,
+        }
+        provider_args = {
+            k: v
+            for k, v in provider_args.items()
+            if v is not None or k in {"use_tools"}
+        }
+
+        try:
+            return await self.provider.generate_tool_intent(**provider_args)
+        except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError):
+            raise
+        except Exception as e:
+            logger.error(
+                "Unexpected error during tool intent generation: %s",
+                e,
+                exc_info=True,
+            )
+            raise LLMToolkitError(
+                f"Unexpected tool intent generation error: {e}"
+            ) from e
+
+    async def execute_tool_intents(
+        self,
+        intent_output: ToolIntentOutput,
+        tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Execute previously planned tool calls.
+
+        Returns a list of tool result dicts (``role: "tool"``) ready to be
+        appended to the conversation history for a follow-up LLM call.
+        """
+        tool_result_messages: List[Dict[str, Any]] = []
+        if not self.tool_factory:
+            raise ConfigurationError(
+                "LLMClient has no ToolFactory configured, "
+                "cannot execute tool intents."
+            )
+        if not intent_output.tool_calls:
+            logger.info("No tool calls to execute.")
+            return tool_result_messages
+
+        for tool_call in intent_output.tool_calls:
+            tool_name = tool_call.name
+            tool_call_id = tool_call.id
+
+            if tool_call.arguments_parsing_error:
+                logger.error(
+                    "Skipping tool '%s' (ID: %s) - parse error: %s",
+                    tool_name,
+                    tool_call_id,
+                    tool_call.arguments_parsing_error,
+                )
+                tool_result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": json.dumps(
+                            {
+                                "error": f"Tool '{tool_name}' skipped due to "
+                                "argument parsing error.",
+                                "details": tool_call.arguments_parsing_error,
+                            }
+                        ),
+                    }
+                )
+                continue
+
+            args_to_dump = (
+                tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+            )
+            try:
+                tool_args_str = json.dumps(args_to_dump)
+            except TypeError as e:
+                logger.error("Failed to serialise args for tool '%s': %s", tool_name, e)
+                tool_result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": json.dumps(
+                            {"error": f"Failed to serialise arguments: {e}"}
+                        ),
+                    }
+                )
+                continue
+
+            try:
+                result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
+                    tool_name,
+                    tool_args_str,
+                    tool_execution_context=tool_execution_context,
+                    use_mock=mock_tools,
+                )
+                tool_result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": result.content,
+                    }
+                )
+            except Exception as e:
+                logger.error(
+                    "Error executing tool '%s' (ID: %s): %s",
+                    tool_name,
+                    tool_call_id,
+                    e,
+                    exc_info=True,
+                )
+                tool_result_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": json.dumps(
+                            {
+                                "error": f"Unexpected error executing '{tool_name}'.",
+                                "details": str(e),
+                            }
+                        ),
+                    }
+                )
+
+        return tool_result_messages
+
+    # ------------------------------------------------------------------
+    # Message merging helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _merge_conversation_history(
         messages: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Merge sequential user or assistant messages into single turns."""
-
         merged: List[Dict[str, Any]] = []
         for message in messages:
             role = message.get("role")
@@ -271,7 +635,6 @@ class LLMClient:
     @staticmethod
     def _merge_message_content(first: Any, second: Any) -> Any:
         """Merge message content values depending on their type."""
-
         if first is None:
             return copy.deepcopy(second)
         if second is None:
@@ -296,254 +659,3 @@ class LLMClient:
             return copy.deepcopy(first)
 
         return [copy.deepcopy(first), copy.deepcopy(second)]
-
-    async def generate_tool_intent(
-        self,
-        input: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        use_tools: Optional[List[str]] = [],
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        **kwargs: Any,
-    ) -> ToolIntentOutput:
-        """
-        Requests the LLM to generate a response, specifically to identify potential tool calls,
-        but does not execute them.
-
-        Args:
-            input: The conversation history.
-            model: Override the default model for this request.
-            temperature: Sampling temperature.
-            max_output_tokens: Max tokens to generate.
-            response_format: Desired response format if the LLM replies directly.
-            use_tools: List of tool names to make available. Defaults to ``[]``
-                       which exposes all registered tools. Pass ``None`` to
-                       disable tool usage or provide a non-empty list of names
-                       to restrict the available tools.
-            web_search: When truthy exposes the provider's built-in web search
-                capability (if supported) for the intent planning call. Provide
-                a dictionary (for example ``{"citations": False}``) to
-                customise provider behaviour such as disabling citations,
-                constraining search ``filters``, or configuring
-                ``user_location`` details for regional context.
-            file_search: When truthy exposes the provider's file search tool
-                during intent planning. Provide a list/tuple of vector store
-                identifiers or a configuration dictionary containing
-                ``vector_store_ids`` and optional retrieval controls.
-            **kwargs: Additional arguments passed to the provider's generate_tool_intent method.
-
-        Returns:
-            ToolIntentOutput: Object containing text content (if any), a list of
-                              parsed tool call intents, and the raw assistant message.
-
-        Raises:
-            ProviderError, LLMToolkitError, etc.
-        """
-        module_logger.debug(
-            f"Client calling provider.generate_tool_intent. Model: {model}, Use tools: {use_tools}"
-        )
-
-        provider_args = {
-            "input": input,
-            "model": model,
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-            "response_format": response_format,
-            "use_tools": use_tools,
-            "tool_choice": "required",
-            "web_search": web_search,
-            "file_search": file_search,
-            **kwargs,
-        }
-        # Filter out None values to avoid overriding provider defaults unintentionally,
-        # but keep 'use_tools' as its specific values (None, []) are meaningful.
-        provider_args = {
-            k: v
-            for k, v in provider_args.items()
-            if v is not None or k in {"use_tools", "file_search"}
-        }
-
-        try:
-            return await self.provider.generate_tool_intent(**provider_args)
-        except (
-            ProviderError,
-            ToolError,
-            ConfigurationError,
-            UnsupportedFeatureError,
-        ) as e:
-            module_logger.error(
-                f"Error during tool intent generation: {e}", exc_info=False
-            )
-            raise
-        except Exception as e:
-            module_logger.error(
-                f"An unexpected error occurred during tool intent generation: {e}",
-                exc_info=True,
-            )
-            raise LLMToolkitError(
-                f"Unexpected tool intent generation error: {e}"
-            ) from e
-
-    async def execute_tool_intents(
-        self,
-        intent_output: ToolIntentOutput,
-        tool_execution_context: Optional[Dict[str, Any]] = None,
-        mock_tools: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """
-        Executes a list of tool call intents using the client's ToolFactory
-        and returns a list of formatted tool result items suitable for the
-        OpenAI Responses API. Each executed tool produces an item of type
-        ``function_call_output`` that the caller can append to the conversation
-        history before making a follow-up LLM call. This coroutine performs
-        immediate execution and does not handle deferred payloads.
-
-        Args:
-            intent_output: The ToolIntentOutput containing tool_calls from the planner.
-            mock_tools: If True, executes each tool in mock mode and returns
-                stubbed results instead of invoking the real implementation.
-
-        Returns:
-            A list of tool result items (each a ``dict`` with ``type`` set to
-            ``function_call_output``) ready to be appended to the conversation
-            history for subsequent LLM calls.
-
-        Raises:
-            ConfigurationError: If the client does not have a ToolFactory configured.
-        """
-        tool_result_messages: List[Dict[str, Any]] = []
-        if not self.tool_factory:
-            raise ConfigurationError(
-                "LLMClient has no ToolFactory configured, cannot execute tool intents."
-            )
-        if not intent_output.tool_calls:
-            module_logger.info("No tool calls to execute.")
-            return tool_result_messages
-
-        for tool_call in intent_output.tool_calls:
-            tool_name = tool_call.name
-            tool_call_id = tool_call.id
-
-            if tool_call.arguments_parsing_error:
-                module_logger.error(
-                    "Skipping execution of tool '%s' (ID: %s) due to previous argument parsing error: %s. Raw Args: %s",
-                    tool_name,
-                    tool_call_id,
-                    tool_call.arguments_parsing_error,
-                    tool_call.arguments,
-                )
-                tool_result_messages.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_call_id,
-                        "output": json.dumps(
-                            {
-                                "error": f"Tool '{tool_name}' skipped due to argument parsing error during planning.",
-                                "details": tool_call.arguments_parsing_error,
-                                "received_arguments": (
-                                    tool_call.arguments
-                                    if isinstance(tool_call.arguments, str)
-                                    else json.dumps(tool_call.arguments)
-                                ),
-                            }
-                        ),
-                    }
-                )
-                continue
-
-            args_to_dump = (
-                tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-            )
-            try:
-                tool_args_str = json.dumps(args_to_dump)
-            except TypeError as e:
-                module_logger.error(
-                    "Failed to serialize arguments for tool '%s' (ID: %s): %s. Arguments: %s",
-                    tool_name,
-                    tool_call_id,
-                    e,
-                    args_to_dump,
-                    exc_info=True,
-                )
-                tool_result_messages.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_call_id,
-                        "output": json.dumps(
-                            {
-                                "error": (
-                                    "Internal error: Failed to serialize arguments for tool '%s'."
-                                    % tool_name
-                                )
-                            }
-                        ),
-                    }
-                )
-                continue
-
-            module_logger.debug(
-                "Client executing tool: %s (ID: %s), args: %s, Context provided: %s",
-                tool_name,
-                tool_call_id,
-                tool_args_str,
-                tool_execution_context is not None,
-                mock_tools,
-            )
-
-            try:
-                tool_exec_result: ToolExecutionResult = (
-                    await self.tool_factory.dispatch_tool(
-                        tool_name,
-                        tool_args_str,
-                        tool_execution_context=tool_execution_context,
-                        use_mock=mock_tools,
-                    )
-                )
-
-                result_content_for_llm = tool_exec_result.content
-                if tool_exec_result.error:
-                    module_logger.error(
-                        "Tool '%s' (ID: %s) reported an error during execution: %s. LLM content: %s",
-                        tool_name,
-                        tool_call_id,
-                        tool_exec_result.error,
-                        result_content_for_llm,
-                    )
-                else:
-                    module_logger.debug(
-                        "Tool %s (ID: %s) executed. LLM content: %s",
-                        tool_name,
-                        tool_call_id,
-                        result_content_for_llm,
-                    )
-                tool_result_messages.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_call_id,
-                        "output": result_content_for_llm,
-                    }
-                )
-            except Exception as e:
-                module_logger.error(
-                    "Unexpected client-side error during dispatch/handling for tool %s (ID: %s): %s",
-                    tool_name,
-                    tool_call_id,
-                    e,
-                    exc_info=True,
-                )
-                tool_result_messages.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_call_id,
-                        "output": json.dumps(
-                            {
-                                "error": f"Unexpected client-side error executing tool '{tool_name}'.",
-                                "details": str(e),
-                            }
-                        ),
-                    }
-                )
-        return tool_result_messages

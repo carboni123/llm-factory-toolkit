@@ -1,0 +1,17 @@
+P0 — Core
+- Tool framework: register tools at startup, agent uses them freely during generation
+- Agentic loop: iterate tool calls until the model has nothing left to call, then return final response
+- Dynamic tool loading: agent discovers and loads tools mid-conversation from a catalog
+  - Agentic search (preferred): agent uses shell primitives (find, rg, fd, xargs) to locate tools — outperforms semantic search in recent literature
+  - Semantic search (alternative): vector similarity over tool descriptions
+
+P1 — Unified access
+- Multi-provider routing: swap between 100+ LLMs without changing application code
+- Context injection: pass runtime data (user_id, db, etc.) to tools without exposing it to the model
+- Content/payload separation: tool results split into LLM-facing content and app-facing payload
+- Structured output: Pydantic model validation on model responses
+
+P2 — Developer experience
+- Streaming: async generator of chunks for real-time UIs
+- Mock mode: test tool flows without hitting real APIs
+- Nested tool calls: tools can invoke other tools via ToolRuntime

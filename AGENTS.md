@@ -9,13 +9,21 @@
 ```
 llm_factory_toolkit/
 ├── llm_factory_toolkit/
-│   ├── providers/    # Provider implementations (e.g., base.py, openai_adapter.py)
-│   ├── tools/        # Tool-related modules (e.g., tool_factory.py, models.py)
+│   ├── tools/
+│   │   ├── tool_factory.py  # Registration (category/tags), dispatch, context injection, mock mode
+│   │   ├── models.py        # GenerationResult, StreamChunk, ParsedToolCall, ToolExecutionResult
+│   │   ├── base_tool.py     # BaseTool ABC (CATEGORY, TAGS class attrs)
+│   │   ├── runtime.py       # ToolRuntime for nested tool calls
+│   │   ├── builtins.py      # safe_math_evaluator, read_local_file
+│   │   ├── catalog.py       # ToolCatalog ABC, InMemoryToolCatalog, ToolCatalogEntry
+│   │   ├── session.py       # ToolSession for per-conversation tool visibility
+│   │   └── meta_tools.py    # browse_toolkit, load_tools, unload_tools (dynamic discovery)
 │   ├── __init__.py   # Package init with exports and utilities
-│   ├── client.py     # Main LLMClient class
+│   ├── client.py     # LLMClient (core_tools, dynamic_tool_loading, tool registration)
+│   ├── provider.py   # LiteLLMProvider (dual routing to 100+ LLM providers)
 │   └── exceptions.py # Custom exceptions
 ├── examples/         # Usage examples (e.g., custom_tool_example.py)
-├── tests/            # Pytest suites (e.g., test_llmcall*.py)
+├── tests/            # Pytest suites (29 files: 15 unit + 14 integration)
 ├── .github/          # Workflows and issue templates
 ├── pyproject.toml    # Build config and metadata (source of truth for deps)
 ├── requirements.txt  # Pinned dependencies (generated)
@@ -79,9 +87,9 @@ raise ProviderError("API request failed: details")
 
 ### 3.6. Provider and Tool Patterns
 
-*   Providers subclass `BaseProvider` in `providers/base.py`; keep them pluggable and async.
+*   Provider routing is handled by `LiteLLMProvider` in `provider.py`, backed by LiteLLM. Do not add custom provider adapters.
 *   Tools use `ToolFactory` for registration; encourage class-based tools with embedded metadata.
-*   Core logic (e.g., generation loops) must be in providers; client is a thin wrapper.
+*   Core logic (e.g., generation loops, tool dispatch) lives in `provider.py`; `client.py` is a thin wrapper.
 *   Keep components framework-agnostic where possible (e.g., no direct deps in tools).
 
 ### 3.7. Configuration
@@ -128,6 +136,6 @@ The CI/CD pipeline (via `.github/workflows/ci.yml`) will block any PR that fails
 A PR cannot be merged unless all of the following are true:
 
 1.  ✅ All public API changes are documented in docstrings and examples.
-2.  ✅ All quality gates (`pytest`, `flake8`, `mypy`) pass.
+2.  ✅ All quality gates (`pytest`, `ruff`, `mypy`) pass.
 3.  ✅ Tests are added/updated for new features or fixes.
 4.  ✅ The commit message uses a conventional prefix (`feat:`, `fix:`, `chore:`, etc.).
