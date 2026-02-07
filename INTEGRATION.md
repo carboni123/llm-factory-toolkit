@@ -660,7 +660,7 @@ client = LLMClient(
     model="openai/gpt-4.1-mini",
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
-    dynamic_tool_loading=True,       # Enables browse_toolkit + load_tools
+    dynamic_tool_loading=True,       # Enables browse_toolkit, load_tools, unload_tools
 )
 
 result = await client.generate(
@@ -670,7 +670,7 @@ result = await client.generate(
 
 With `dynamic_tool_loading=True`, the client automatically:
 1. Builds a searchable `InMemoryToolCatalog` from the factory (if no catalog already exists)
-2. Registers `browse_toolkit` and `load_tools` meta-tools (if not already registered)
+2. Registers `browse_toolkit`, `load_tools`, and `unload_tools` meta-tools (if not already registered)
 3. Validates that all `core_tools` are registered in the factory
 4. Creates a fresh `ToolSession` per `generate()` call with `core_tools` + meta-tools loaded
 
@@ -690,12 +690,12 @@ factory = ToolFactory()
 catalog = InMemoryToolCatalog(factory)
 factory.set_catalog(catalog)
 
-# Register browse_toolkit and load_tools meta-tools
+# Register browse_toolkit, load_tools, and unload_tools meta-tools
 factory.register_meta_tools()
 
 # Create a session with initial tools
 session = ToolSession()
-session.load(["call_human", "browse_toolkit", "load_tools"])
+session.load(["call_human", "browse_toolkit", "load_tools", "unload_tools"])
 
 client = LLMClient(model="openai/gpt-4.1-mini", tool_factory=factory)
 result = await client.generate(input=messages, tool_session=session)
@@ -703,14 +703,15 @@ result = await client.generate(input=messages, tool_session=session)
 
 ### How It Works
 
-The agent starts a conversation seeing only the tools in its session (e.g., `call_human`, `browse_toolkit`, `load_tools`). When it needs a capability it doesn't have:
+The agent starts a conversation seeing only the tools in its session (e.g., `call_human`, `browse_toolkit`, `load_tools`, `unload_tools`). When it needs a capability it doesn't have:
 
 1. **Browse**: The agent calls `browse_toolkit(query="email")` to search the catalog by keyword, category, or tags
 2. **Discover**: The catalog returns matching tools with their names, descriptions, and active/inactive status
 3. **Load**: The agent calls `load_tools(tool_names=["send_email"])` to activate the tool in its session
 4. **Use**: On the next loop iteration, the newly loaded tool appears in the LLM's tool definitions
+5. **Unload**: When done, the agent can call `unload_tools(tool_names=["send_email"])` to free context tokens
 
-This loop repeats as needed. The agentic execution loop recomputes visible tools from the session each iteration, so tools loaded mid-conversation are immediately available.
+This loop repeats as needed. The agentic execution loop recomputes visible tools from the session each iteration, so tools loaded mid-conversation are immediately available, and unloaded tools are immediately removed. Core tools and meta-tools cannot be unloaded.
 
 ### Tool Catalog
 

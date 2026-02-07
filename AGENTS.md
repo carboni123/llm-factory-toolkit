@@ -17,7 +17,7 @@ llm_factory_toolkit/
 │   │   ├── builtins.py      # safe_math_evaluator, read_local_file
 │   │   ├── catalog.py       # ToolCatalog ABC, InMemoryToolCatalog, ToolCatalogEntry
 │   │   ├── session.py       # ToolSession for per-conversation tool visibility
-│   │   └── meta_tools.py    # browse_toolkit, load_tools (dynamic discovery)
+│   │   └── meta_tools.py    # browse_toolkit, load_tools, unload_tools (dynamic discovery)
 │   ├── __init__.py   # Package init with exports and utilities
 │   ├── client.py     # LLMClient (core_tools, dynamic_tool_loading, tool registration)
 │   ├── provider.py   # LiteLLMProvider (dual routing to 100+ LLM providers)

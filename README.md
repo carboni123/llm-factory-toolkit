@@ -215,7 +215,7 @@ client = LLMClient(
     model="openai/gpt-4.1-mini",
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
-    dynamic_tool_loading=True,       # Enables browse_toolkit + load_tools
+    dynamic_tool_loading=True,       # Enables browse_toolkit, load_tools, unload_tools
 )
 
 result = await client.generate(
@@ -225,10 +225,10 @@ result = await client.generate(
 
 With `dynamic_tool_loading=True`, the client automatically:
 1. Builds a searchable `InMemoryToolCatalog` from the factory
-2. Registers `browse_toolkit` and `load_tools` meta-tools
+2. Registers `browse_toolkit`, `load_tools`, and `unload_tools` meta-tools
 3. Creates a fresh `ToolSession` per `generate()` call with your `core_tools` + meta-tools loaded
 
-The agent uses `browse_toolkit` to search for relevant tools by keyword or category, then `load_tools` to activate them mid-conversation.
+The agent uses `browse_toolkit` to search for relevant tools by keyword or category, `load_tools` to activate them mid-conversation, and `unload_tools` to free context tokens by removing tools it no longer needs.
 
 ### Manual Setup
 
@@ -245,7 +245,7 @@ factory.set_catalog(catalog)
 factory.register_meta_tools()
 
 session = ToolSession()
-session.load(["call_human", "browse_toolkit", "load_tools"])
+session.load(["call_human", "browse_toolkit", "load_tools", "unload_tools"])
 
 result = await client.generate(input=messages, tool_session=session)
 ```

@@ -47,7 +47,7 @@ Detection happens in `_is_openai_model()` at the top of `generate()`, `generate_
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` (category `"utility"`) | ~60 |
 | `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `ToolCatalogEntry` -- auto-builds from factory registrations | ~150 |
 | `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation | ~95 |
-| `tools/meta_tools.py` | `browse_toolkit`, `load_tools` -- meta-tools for dynamic discovery (category `"system"`) | ~160 |
+| `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `unload_tools` -- meta-tools for dynamic discovery (category `"system"`) | ~275 |
 | `__init__.py` | Public exports, `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~75 |
 
 ### Data Flow
@@ -97,7 +97,7 @@ Two modes of operation:
 1. **Simplified** (`LLMClient` constructor): Set `dynamic_tool_loading=True` and `core_tools=[...]`. The client auto-builds the catalog, registers meta-tools, and creates a fresh `ToolSession` per `generate()` call.
 2. **Manual**: Build catalog, register meta-tools, create session yourself, pass `tool_session` to `generate()`.
 
-When a `tool_session` is active, the agentic loop recomputes visible tools each iteration from `session.list_active()`. Meta-tools (`browse_toolkit`, `load_tools`) modify the session mid-loop so newly loaded tools appear in the next LLM call.
+When a `tool_session` is active, the agentic loop recomputes visible tools each iteration from `session.list_active()`. Meta-tools (`browse_toolkit`, `load_tools`, `unload_tools`) modify the session mid-loop so newly loaded tools appear in the next LLM call, and unloaded tools are removed.
 
 Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Context injection passes `tool_session` and `tool_catalog` to meta-tools without LLM visibility.
 
@@ -111,12 +111,12 @@ In `provider.py`, both the LiteLLM path (where `_build_call_kwargs` is inside th
 
 ## Testing
 
-### Unit Tests (no API keys, 113 tests)
+### Unit Tests (no API keys, 126 tests)
 - `test_builtin_tools.py` -- built-in tool functions + category metadata
 - `test_client_unit.py` -- LLMClient generate/intent/error wrapping
 - `test_dynamic_loading_unit.py` -- `core_tools`/`dynamic_tool_loading` constructor feature
 - `test_merge_history.py` -- message merging logic
-- `test_meta_tools.py` -- browse_toolkit, load_tools, register_meta_tools, system category
+- `test_meta_tools.py` -- browse_toolkit, load_tools, unload_tools, register_meta_tools, system category
 - `test_mock_tools.py` -- mock mode behavior
 - `test_provider_openai_paths_unit.py` -- OpenAI structured output, tool calls, streaming (mocked)
 - `test_provider_unit.py` -- model detection, request building, message conversion

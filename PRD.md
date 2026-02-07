@@ -336,7 +336,7 @@ llm_factory_toolkit/
         base_tool.py     # BaseTool ABC
         builtins.py      # safe_math_evaluator, read_local_file
         catalog.py       # ToolCatalog ABC, InMemoryToolCatalog, ToolCatalogEntry
-        meta_tools.py    # browse_toolkit, load_tools (dynamic loading)
+        meta_tools.py    # browse_toolkit, load_tools, unload_tools (dynamic loading)
         models.py        # GenerationResult, StreamChunk, ParsedToolCall, etc.
         runtime.py       # ToolRuntime for nested tool calls
         session.py       # ToolSession for per-conversation tool visibility
