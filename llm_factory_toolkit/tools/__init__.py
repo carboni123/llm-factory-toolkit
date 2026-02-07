@@ -2,6 +2,7 @@ from . import builtins
 from .base_tool import BaseTool
 from .catalog import (
     InMemoryToolCatalog,
+    LazyCatalogEntry,
     ToolCatalog,
     ToolCatalogEntry,
     estimate_token_count,
@@ -20,6 +21,7 @@ __all__ = [
     "ToolRuntime",
     "ToolCatalog",
     "InMemoryToolCatalog",
+    "LazyCatalogEntry",
     "ToolCatalogEntry",
     "estimate_token_count",
     "ToolSession",

@@ -6,7 +6,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
     from .tool_factory import ToolFactory
@@ -83,18 +83,18 @@ class ToolCatalogEntry:
         return True
 
     def relevance_score(self, query: str) -> float:
-        """Compute a 0.0–1.0 relevance score against *query*.
+        """Compute a 0.0-1.0 relevance score against *query*.
 
         Scoring uses weighted field matching:
 
-        - **name** (weight 3): exact match → 1.0 instantly; substring match
-          contributes ``3 × (len(token) / len(name))``.
+        - **name** (weight 3): exact match -> 1.0 instantly; substring match
+          contributes ``3 * (len(token) / len(name))``.
         - **tags** (weight 2): each token matched against each tag.
         - **description** (weight 1): substring presence.
         - **category** (weight 1): substring presence.
 
         The raw weighted sum is normalised to ``[0.0, 1.0]`` by dividing by
-        the theoretical maximum (``tokens × (3 + 2 + 1 + 1)``).
+        the theoretical maximum (``tokens * (3 + 2 + 1 + 1)``).
 
         An empty *query* always returns ``0.0``.
         """
@@ -103,7 +103,7 @@ class ToolCatalogEntry:
 
         query_lower = query.lower().strip()
 
-        # Exact name match → instant 1.0
+        # Exact name match -> instant 1.0
         if query_lower == self.name.lower():
             return 1.0
 
@@ -153,6 +153,68 @@ class ToolCatalogEntry:
         return min(1.0, total / max_possible)
 
 
+# ---------------------------------------------------------------------------
+# Lazy catalog entry
+# ---------------------------------------------------------------------------
+
+
+class LazyCatalogEntry(ToolCatalogEntry):
+    """A catalog entry that defers ``parameters`` loading until accessed.
+
+    During catalog construction the full ``parameters`` dict is *not*
+    copied.  Instead a resolver callable is stored and invoked on
+    first access to :attr:`parameters`, reducing memory for large
+    catalogs (200+ tools).
+
+    Once resolved the value is cached so subsequent reads are free.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        tags: Optional[List[str]] = None,
+        category: Optional[str] = None,
+        group: Optional[str] = None,
+        token_count: int = 0,
+        resolver: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+    ) -> None:
+        super().__init__(
+            name=name,
+            description=description,
+            parameters=None,  # deferred
+            tags=tags if tags is not None else [],
+            category=category,
+            group=group,
+            token_count=token_count,
+        )
+        object.__setattr__(self, "_resolver", resolver)
+        object.__setattr__(self, "_resolved", False)
+
+    # Override attribute access so ``entry.parameters`` triggers lazy
+    # resolution on first read.
+    def __getattribute__(self, name: str) -> Any:
+        if name == "parameters":
+            if not object.__getattribute__(self, "_resolved"):
+                resolver = object.__getattribute__(self, "_resolver")
+                if resolver is not None:
+                    params = resolver()
+                    object.__setattr__(self, "parameters", params)
+                object.__setattr__(self, "_resolved", True)
+        return object.__getattribute__(self, name)
+
+    @property
+    def is_resolved(self) -> bool:
+        """Return ``True`` if parameters have been lazily loaded."""
+        return bool(object.__getattribute__(self, "_resolved"))
+
+
+# ---------------------------------------------------------------------------
+# Abstract base class
+# ---------------------------------------------------------------------------
+
+
 class ToolCatalog(ABC):
     """Abstract base class for searchable tool catalogs.
 
@@ -170,6 +232,7 @@ class ToolCatalog(ABC):
         group: Optional[str] = None,
         limit: int = 10,
         min_score: float = 0.0,
+        include_params: bool = False,
     ) -> List[ToolCatalogEntry]:
         """Search the catalog and return matching entries.
 
@@ -180,11 +243,19 @@ class ToolCatalog(ABC):
         When *group* is given, only entries whose ``group`` starts with the
         provided prefix are returned (e.g. ``group="crm"`` matches both
         ``"crm.contacts"`` and ``"crm.pipeline"``).
+
+        When *include_params* is ``True``, the returned entries have their
+        ``parameters`` field populated.  The default (``False``) returns
+        lightweight entries without parameter schemas to save memory.
         """
 
     @abstractmethod
     def get_entry(self, tool_name: str) -> Optional[ToolCatalogEntry]:
-        """Return the catalog entry for *tool_name*, or ``None``."""
+        """Return the catalog entry for *tool_name*, or ``None``.
+
+        For :class:`InMemoryToolCatalog` this lazily resolves the
+        ``parameters`` dict from the factory on first access.
+        """
 
     @abstractmethod
     def list_categories(self) -> List[str]:
@@ -220,15 +291,25 @@ class ToolCatalog(ABC):
         raise NotImplementedError  # pragma: no cover
 
 
+# ---------------------------------------------------------------------------
+# In-memory implementation
+# ---------------------------------------------------------------------------
+
+
 class InMemoryToolCatalog(ToolCatalog):
     """In-memory catalog built from a :class:`ToolFactory` registry.
 
     On construction, every tool already registered in the factory gets a
-    catalog entry with its name, description, and parameters.  Use
-    :meth:`add_metadata` to enrich entries with categories and tags.
+    lightweight catalog entry with its name, description, category, tags,
+    and token count.  The full ``parameters`` dict is **not** copied
+    eagerly; instead a :class:`LazyCatalogEntry` is created that defers
+    parameter loading until the entry is actually accessed (via
+    :meth:`get_entry` or ``search(include_params=True)``).
+
+    Use :meth:`add_metadata` to enrich entries with categories and tags.
     """
 
-    def __init__(self, tool_factory: "ToolFactory") -> None:
+    def __init__(self, tool_factory: ToolFactory) -> None:
         self._factory = tool_factory
         self._entries: Dict[str, ToolCatalogEntry] = {}
         self._build_from_factory()
@@ -238,19 +319,42 @@ class InMemoryToolCatalog(ToolCatalog):
     # ------------------------------------------------------------------
 
     def _build_from_factory(self) -> None:
-        """Create catalog entries from every tool in the factory."""
+        """Create lazy catalog entries from every tool in the factory.
+
+        Parameters are *not* copied during construction -- they are
+        resolved on demand from the factory's :attr:`registrations`
+        when accessed via the :class:`LazyCatalogEntry` property.
+        """
         for name, reg in self._factory.registrations.items():
             func = reg.definition.get("function", {})
-            self._entries[name] = ToolCatalogEntry(
+            self._entries[name] = LazyCatalogEntry(
                 name=name,
                 description=func.get("description", ""),
-                parameters=func.get("parameters"),
                 category=reg.category,
                 group=reg.group,
                 tags=list(reg.tags),
                 token_count=estimate_token_count(reg.definition),
+                resolver=self._make_resolver(name),
             )
-        logger.info("InMemoryToolCatalog built with %d entries.", len(self._entries))
+        logger.info(
+            "InMemoryToolCatalog built with %d lazy entries.", len(self._entries)
+        )
+
+    def _make_resolver(
+        self, tool_name: str
+    ) -> Callable[[], Optional[Dict[str, Any]]]:
+        """Return a closure that fetches parameters from the factory."""
+
+        def _resolve() -> Optional[Dict[str, Any]]:
+            reg = self._factory.registrations.get(tool_name)
+            if reg is None:
+                return None
+            params: Optional[Dict[str, Any]] = reg.definition.get(
+                "function", {}
+            ).get("parameters")
+            return params
+
+        return _resolve
 
     def add_metadata(
         self,
@@ -291,6 +395,7 @@ class InMemoryToolCatalog(ToolCatalog):
         group: Optional[str] = None,
         limit: int = 10,
         min_score: float = 0.0,
+        include_params: bool = False,
     ) -> List[ToolCatalogEntry]:
         results: List[ToolCatalogEntry] = []
         tag_set = set(t.lower() for t in tags) if tags else None
@@ -302,10 +407,15 @@ class InMemoryToolCatalog(ToolCatalog):
                 continue
             if group_prefix and (
                 not entry.group
-                or (entry.group != group and not entry.group.startswith(group_prefix))
+                or (
+                    entry.group != group
+                    and not entry.group.startswith(group_prefix)
+                )
             ):
                 continue
-            if tag_set and not tag_set.intersection(t.lower() for t in entry.tags):
+            if tag_set and not tag_set.intersection(
+                t.lower() for t in entry.tags
+            ):
                 continue
             if query and not entry.matches_query(query):
                 continue
@@ -322,10 +432,21 @@ class InMemoryToolCatalog(ToolCatalog):
             scored.sort(key=lambda pair: pair[1], reverse=True)
             results = [e for e, _ in scored]
 
-        return results[:limit]
+        results = results[:limit]
+
+        # Trigger lazy resolution only when the caller needs parameters.
+        if include_params:
+            for entry in results:
+                _ = entry.parameters  # forces LazyCatalogEntry resolution
+
+        return results
 
     def get_entry(self, tool_name: str) -> Optional[ToolCatalogEntry]:
-        return self._entries.get(tool_name)
+        entry = self._entries.get(tool_name)
+        if entry is not None:
+            # Force lazy resolution so callers always see parameters.
+            _ = entry.parameters
+        return entry
 
     def list_categories(self) -> List[str]:
         cats = {e.category for e in self._entries.values() if e.category}
