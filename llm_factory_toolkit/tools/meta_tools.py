@@ -24,6 +24,7 @@ from .session import ToolSession
 def browse_toolkit(
     query: Optional[str] = None,
     category: Optional[str] = None,
+    group: Optional[str] = None,
     limit: int = 10,
     *,
     tool_catalog: Optional[ToolCatalog] = None,
@@ -34,6 +35,7 @@ def browse_toolkit(
     Args:
         query: Search keywords (searches name, description, tags).
         category: Filter by category.
+        group: Filter by group prefix (e.g. ``"crm"`` matches ``"crm.contacts"``).
         limit: Maximum results to return.
         tool_catalog: Injected -- the catalog to search.
         tool_session: Injected -- current session (for active status).
@@ -47,6 +49,7 @@ def browse_toolkit(
     entries = tool_catalog.search(
         query=query,
         category=category,
+        group=group,
         limit=limit,
     )
 
@@ -59,6 +62,7 @@ def browse_toolkit(
             "name": entry.name,
             "description": entry.description,
             "category": entry.category,
+            "group": entry.group,
             "tags": entry.tags,
             "active": is_active,
             "status": "loaded" if is_active else "available - call load_tools to activate",
@@ -68,16 +72,20 @@ def browse_toolkit(
         results.append(result_item)
 
     categories = tool_catalog.list_categories()
+    groups = tool_catalog.list_groups()
 
     body: Dict[str, Any] = {
         "results": results,
         "total_found": len(results),
         "available_categories": categories,
+        "available_groups": groups,
     }
     if query:
         body["query"] = query
     if category:
         body["category_filter"] = category
+    if group:
+        body["group_filter"] = group
 
     # Include budget snapshot when available
     if tool_session is not None and tool_session.token_budget is not None:
@@ -86,7 +94,7 @@ def browse_toolkit(
     return ToolExecutionResult(
         content=json.dumps(body, indent=2),
         payload=results,
-        metadata={"query": query, "category": category},
+        metadata={"query": query, "category": category, "group": group},
     )
 
 
@@ -237,6 +245,10 @@ BROWSE_TOOLKIT_PARAMETERS: Dict[str, Any] = {
         "category": {
             "type": ["string", "null"],
             "description": "Filter results by exact category name. Pass null to skip category filtering.",
+        },
+        "group": {
+            "type": ["string", "null"],
+            "description": "Filter results by group prefix (e.g. 'crm' matches 'crm.contacts' and 'crm.pipeline'). Pass null to skip group filtering.",
         },
         "limit": {
             "type": "integer",

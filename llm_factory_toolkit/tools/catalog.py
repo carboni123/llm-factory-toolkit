@@ -53,6 +53,7 @@ class ToolCatalogEntry:
     parameters: Optional[Dict[str, Any]] = None
     tags: List[str] = field(default_factory=list)
     category: Optional[str] = None
+    group: Optional[str] = None
     token_count: int = 0
 
     def matches_query(self, query: str) -> bool:
@@ -96,9 +97,15 @@ class ToolCatalog(ABC):
         query: Optional[str] = None,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        group: Optional[str] = None,
         limit: int = 10,
     ) -> List[ToolCatalogEntry]:
-        """Search the catalog and return matching entries."""
+        """Search the catalog and return matching entries.
+
+        When *group* is given, only entries whose ``group`` starts with the
+        provided prefix are returned (e.g. ``group="crm"`` matches both
+        ``"crm.contacts"`` and ``"crm.pipeline"``).
+        """
 
     @abstractmethod
     def get_entry(self, tool_name: str) -> Optional[ToolCatalogEntry]:
@@ -107,6 +114,10 @@ class ToolCatalog(ABC):
     @abstractmethod
     def list_categories(self) -> List[str]:
         """Return all available categories."""
+
+    @abstractmethod
+    def list_groups(self) -> List[str]:
+        """Return all available groups, sorted."""
 
     @abstractmethod
     def list_all(self) -> List[ToolCatalogEntry]:
@@ -144,6 +155,7 @@ class InMemoryToolCatalog(ToolCatalog):
                 description=func.get("description", ""),
                 parameters=func.get("parameters"),
                 category=reg.category,
+                group=reg.group,
                 tags=list(reg.tags),
                 token_count=estimate_token_count(reg.definition),
             )
@@ -155,8 +167,9 @@ class InMemoryToolCatalog(ToolCatalog):
         *,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        group: Optional[str] = None,
     ) -> None:
-        """Enrich an existing entry with a category and/or tags.
+        """Enrich an existing entry with a category, tags, and/or group.
 
         If *name* is not yet in the catalog a bare entry is created.
         """
@@ -168,6 +181,8 @@ class InMemoryToolCatalog(ToolCatalog):
             entry.category = category
         if tags is not None:
             entry.tags = tags
+        if group is not None:
+            entry.group = group
 
     def add_entry(self, entry: ToolCatalogEntry) -> None:
         """Add or overwrite a catalog entry directly."""
@@ -182,13 +197,21 @@ class InMemoryToolCatalog(ToolCatalog):
         query: Optional[str] = None,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        group: Optional[str] = None,
         limit: int = 10,
     ) -> List[ToolCatalogEntry]:
         results: List[ToolCatalogEntry] = []
         tag_set = set(t.lower() for t in tags) if tags else None
+        # Normalise group prefix for "startswith" matching.
+        group_prefix = (group + ".") if group else None
 
         for entry in self._entries.values():
             if category and entry.category != category:
+                continue
+            if group_prefix and (
+                not entry.group
+                or (entry.group != group and not entry.group.startswith(group_prefix))
+            ):
                 continue
             if tag_set and not tag_set.intersection(t.lower() for t in entry.tags):
                 continue
@@ -206,6 +229,10 @@ class InMemoryToolCatalog(ToolCatalog):
     def list_categories(self) -> List[str]:
         cats = {e.category for e in self._entries.values() if e.category}
         return sorted(cats)
+
+    def list_groups(self) -> List[str]:
+        groups = {e.group for e in self._entries.values() if e.group}
+        return sorted(groups)
 
     def list_all(self) -> List[ToolCatalogEntry]:
         return list(self._entries.values())

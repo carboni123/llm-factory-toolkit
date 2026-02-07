@@ -30,6 +30,7 @@ class ToolRegistration:
     definition: Dict[str, Any]
     category: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    group: Optional[str] = None
 
 
 BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
@@ -142,6 +143,7 @@ class ToolFactory:
         mock_function: Optional[ToolHandler] = None,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        group: Optional[str] = None,
     ) -> None:
         """Register a callable tool the LLM can invoke during generation.
 
@@ -165,6 +167,8 @@ class ToolFactory:
                 ``"crm"``) for catalog discovery.
             tags: Optional list of tag strings (e.g. ``["email", "notify"]``)
                 for catalog search.
+            group: Optional dotted namespace (e.g. ``"crm.contacts"``,
+                ``"sales.pipeline"``) for group-based filtering.
 
         Example::
 
@@ -198,6 +202,7 @@ class ToolFactory:
             definition=definition,
             category=category,
             tags=tags if tags is not None else [],
+            group=group,
         )
         self.tool_usage_counts[name] = 0
         module_logger.info("Registered tool: %s", name)
@@ -211,6 +216,7 @@ class ToolFactory:
         parameters_override: Optional[Dict[str, Any]] = None,
         category_override: Optional[str] = None,
         tags_override: Optional[List[str]] = None,
+        group_override: Optional[str] = None,
     ) -> None:
         """Register a :class:`BaseTool` subclass by wiring wrappers for execution."""
 
@@ -224,6 +230,7 @@ class ToolFactory:
         parameters = parameters_override or getattr(tool_class, "PARAMETERS", None)
         category = category_override or getattr(tool_class, "CATEGORY", None)
         tags = tags_override or getattr(tool_class, "TAGS", None)
+        group = group_override or getattr(tool_class, "GROUP", None)
 
         if not name or not description:
             raise ToolError(
@@ -251,6 +258,7 @@ class ToolFactory:
             mock_function=mock_wrapper,
             category=category,
             tags=tags,
+            group=group,
         )
         module_logger.info(
             "Registered tool class: %s as '%s'", tool_class.__name__, name
