@@ -310,6 +310,7 @@ tool_factory.register_tool(
     parameters={...},
     category="data",
     tags=["weather", "api"],
+    group="api.weather",  # Optional: hierarchical namespace for filtering
 )
 
 # Class-based tools define them as class attributes
@@ -641,18 +642,21 @@ factory.register_tool(
     description="Escalate to a human operator.",
     parameters={...},
     category="communication", tags=["human", "escalation"],
+    group="support.escalation",
 )
 factory.register_tool(
     function=send_email, name="send_email",
     description="Send an email to a recipient.",
     parameters={...},
     category="communication", tags=["email"],
+    group="communication.email",
 )
 factory.register_tool(
     function=search_crm, name="search_crm",
     description="Search the CRM database.",
     parameters={...},
     category="crm", tags=["search", "customer"],
+    group="crm.search",
 )
 # ... register many more tools ...
 
@@ -670,7 +674,7 @@ result = await client.generate(
 
 With `dynamic_tool_loading=True`, the client automatically:
 1. Builds a searchable `InMemoryToolCatalog` from the factory (if no catalog already exists)
-2. Registers `browse_toolkit`, `load_tools`, and `unload_tools` meta-tools (if not already registered)
+2. Registers `browse_toolkit`, `load_tools`, `load_tool_group`, and `unload_tools` meta-tools (if not already registered)
 3. Validates that all `core_tools` are registered in the factory
 4. Creates a fresh `ToolSession` per `generate()` call with `core_tools` + meta-tools loaded
 
@@ -690,12 +694,12 @@ factory = ToolFactory()
 catalog = InMemoryToolCatalog(factory)
 factory.set_catalog(catalog)
 
-# Register browse_toolkit, load_tools, and unload_tools meta-tools
+# Register browse_toolkit, load_tools, load_tool_group, and unload_tools meta-tools
 factory.register_meta_tools()
 
 # Create a session with initial tools
 session = ToolSession()
-session.load(["call_human", "browse_toolkit", "load_tools", "unload_tools"])
+session.load(["call_human", "browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
 
 client = LLMClient(model="openai/gpt-4.1-mini", tool_factory=factory)
 result = await client.generate(input=messages, tool_session=session)
@@ -703,12 +707,14 @@ result = await client.generate(input=messages, tool_session=session)
 
 ### How It Works
 
-The agent starts a conversation seeing only the tools in its session (e.g., `call_human`, `browse_toolkit`, `load_tools`, `unload_tools`). When it needs a capability it doesn't have:
+The agent starts a conversation seeing only the tools in its session (e.g., `call_human`, `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools`). When it needs a capability it doesn't have:
 
-1. **Browse**: The agent calls `browse_toolkit(query="email")` to search the catalog by keyword, category, or tags
-2. **Discover**: The catalog returns matching tools with their names, descriptions, and active/inactive status
-3. **Load**: The agent calls `load_tools(tool_names=["send_email"])` to activate the tool in its session
-4. **Use**: On the next loop iteration, the newly loaded tool appears in the LLM's tool definitions
+1. **Browse**: The agent calls `browse_toolkit(query="email")` to search the catalog by keyword, category, tags, or group
+2. **Discover**: The catalog returns matching tools with their names, descriptions, groups, and active/inactive status
+3. **Load**: The agent can either:
+   - Call `load_tools(tool_names=["send_email"])` to activate individual tools, or
+   - Call `load_tool_group(group="communication.email")` to load an entire group at once
+4. **Use**: On the next loop iteration, the newly loaded tool(s) appear in the LLM's tool definitions
 5. **Unload**: When done, the agent can call `unload_tools(tool_names=["send_email"])` to free context tokens
 
 This loop repeats as needed. The agentic execution loop recomputes visible tools from the session each iteration, so tools loaded mid-conversation are immediately available, and unloaded tools are immediately removed. Core tools and meta-tools cannot be unloaded.
@@ -731,14 +737,19 @@ results = catalog.search(category="communication")
 # Search by tags
 results = catalog.search(tags=["search", "customer"])
 
-# Combined filters
-results = catalog.search(query="search", category="crm", limit=5)
+# Search by group (hierarchical namespace filtering)
+results = catalog.search(group="crm")  # Returns "crm.contacts", "crm.pipeline", etc.
+results = catalog.search(group="crm.contacts")  # Returns exact group match only
 
-# List all categories
+# Combined filters
+results = catalog.search(query="search", category="crm", group="crm.contacts", limit=5)
+
+# List all categories and groups
 categories = catalog.list_categories()
+groups = catalog.list_groups()  # Returns sorted list of unique groups
 
 # Override metadata after build
-catalog.add_metadata("my_tool", category="custom", tags=["new"])
+catalog.add_metadata("my_tool", category="custom", tags=["new"], group="custom.tools")
 ```
 
 ### Tool Session
@@ -789,10 +800,10 @@ The catalog uses **agentic search** (substring-based keyword matching) rather th
 
 1. **Use Categories Strategically**
    ```python
-   # Organize tools by functional domain
-   factory.register_tool(..., category="crm", tags=["customer", "search"])
-   factory.register_tool(..., category="sales", tags=["pipeline", "forecast"])
-   factory.register_tool(..., category="communication", tags=["email", "sms"])
+   # Organize tools by functional domain with hierarchical groups
+   factory.register_tool(..., category="crm", tags=["customer", "search"], group="crm.contacts")
+   factory.register_tool(..., category="sales", tags=["pipeline", "forecast"], group="sales.pipeline")
+   factory.register_tool(..., category="communication", tags=["email", "sms"], group="communication.email")
    ```
 
 2. **Set Reasonable Session Limits**

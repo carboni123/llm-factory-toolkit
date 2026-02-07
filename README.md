@@ -129,8 +129,9 @@ tool_factory.register_tool(
         },
         "required": ["location"],
     },
-    category="data",         # Optional: for catalog discovery
-    tags=["weather", "api"], # Optional: for catalog search
+    category="data",           # Optional: for catalog discovery
+    tags=["weather", "api"],   # Optional: for catalog search
+    group="api.weather",       # Optional: group namespace for hierarchical filtering
 )
 
 client = LLMClient(model="openai/gpt-4o-mini", tool_factory=tool_factory)
@@ -225,10 +226,10 @@ result = await client.generate(
 
 With `dynamic_tool_loading=True`, the client automatically:
 1. Builds a searchable `InMemoryToolCatalog` from the factory
-2. Registers `browse_toolkit`, `load_tools`, and `unload_tools` meta-tools
+2. Registers `browse_toolkit`, `load_tools`, `load_tool_group`, and `unload_tools` meta-tools
 3. Creates a fresh `ToolSession` per `generate()` call with your `core_tools` + meta-tools loaded
 
-The agent uses `browse_toolkit` to search for relevant tools by keyword or category, `load_tools` to activate them mid-conversation, and `unload_tools` to free context tokens by removing tools it no longer needs.
+The agent uses `browse_toolkit` to search for relevant tools by keyword, category, or group, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs.
 
 ### Manual Setup
 
