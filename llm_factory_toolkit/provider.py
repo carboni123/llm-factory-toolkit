@@ -72,6 +72,15 @@ def _is_gpt5_model(model: str) -> bool:
     return bare.startswith(_GPT5_PREFIXES)
 
 
+_REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+
+
+def _supports_reasoning_effort(model: str) -> bool:
+    """Return True if *model* is a reasoning model that accepts ``reasoning_effort``."""
+    bare = model.lower().split("/", 1)[-1] if "/" in model.lower() else model.lower()
+    return bare.startswith(_REASONING_MODEL_PREFIXES)
+
+
 def _strip_urls(text: str) -> str:
     """Strip markdown hyperlinks and bare URLs from *text*."""
     if not text:
@@ -721,12 +730,23 @@ class LiteLLMProvider:
         **extra: Any,
     ) -> Dict[str, Any]:
         """Build keyword arguments for ``litellm.acompletion``."""
+        # Strip reasoning_effort for models that don't support it
+        filtered_extra = dict(extra)
+        if "reasoning_effort" in filtered_extra and not _supports_reasoning_effort(
+            model
+        ):
+            filtered_extra.pop("reasoning_effort")
+            logger.debug(
+                "reasoning_effort ignored for model %s (not a reasoning model)",
+                model,
+            )
+
         kw: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "timeout": self.timeout,
             **self._litellm_kwargs,
-            **extra,
+            **filtered_extra,
         }
 
         if self.api_key:
@@ -1277,9 +1297,16 @@ class LiteLLMProvider:
         if max_output_tokens is not None:
             payload["max_output_tokens"] = max_output_tokens
 
-        # reasoning_effort → Responses API format
+        # reasoning_effort → Responses API format (only for reasoning models)
         if "reasoning_effort" in kwargs:
-            payload["reasoning"] = {"effort": kwargs.pop("reasoning_effort")}
+            effort = kwargs.pop("reasoning_effort")
+            if _supports_reasoning_effort(model):
+                payload["reasoning"] = {"effort": effort}
+            else:
+                logger.debug(
+                    "reasoning_effort ignored for model %s (not a reasoning model)",
+                    model,
+                )
 
         # Structured output via text_format
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):

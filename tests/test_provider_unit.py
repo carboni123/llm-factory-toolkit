@@ -10,7 +10,12 @@ import pytest
 from pydantic import BaseModel
 
 from llm_factory_toolkit.exceptions import ConfigurationError, UnsupportedFeatureError
-from llm_factory_toolkit.provider import LiteLLMProvider, _is_gpt5_model, _is_openai_model
+from llm_factory_toolkit.provider import (
+    LiteLLMProvider,
+    _is_gpt5_model,
+    _is_openai_model,
+    _supports_reasoning_effort,
+)
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.session import ToolSession
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
@@ -49,6 +54,66 @@ def test_gpt5_detection() -> None:
     assert not _is_gpt5_model("gpt-4o-mini")
 
 
+def test_reasoning_effort_detection() -> None:
+    # Reasoning models support reasoning_effort
+    assert _supports_reasoning_effort("o1")
+    assert _supports_reasoning_effort("o1-mini")
+    assert _supports_reasoning_effort("o1-preview")
+    assert _supports_reasoning_effort("o3")
+    assert _supports_reasoning_effort("o3-mini")
+    assert _supports_reasoning_effort("o4-mini")
+    assert _supports_reasoning_effort("openai/o3-mini")
+    assert _supports_reasoning_effort("gpt-5")
+    assert _supports_reasoning_effort("gpt-5-mini")
+    assert _supports_reasoning_effort("openai/gpt-5")
+    # Non-reasoning models do NOT support reasoning_effort
+    assert not _supports_reasoning_effort("gpt-4o")
+    assert not _supports_reasoning_effort("gpt-4o-mini")
+    assert not _supports_reasoning_effort("gpt-4.1")
+    assert not _supports_reasoning_effort("gpt-4.1-mini")
+    assert not _supports_reasoning_effort("chatgpt-4o-latest")
+    assert not _supports_reasoning_effort("openai/gpt-4o-mini")
+
+
+def test_build_openai_request_ignores_reasoning_effort_for_non_reasoning_model() -> None:
+    """reasoning_effort is silently dropped for models that don't support it."""
+    provider = LiteLLMProvider(model="openai/gpt-4o-mini")
+
+    payload = provider._build_openai_request(  # noqa: SLF001
+        model="openai/gpt-4o-mini",
+        input=[],
+        reasoning_effort="high",
+    )
+
+    assert "reasoning" not in payload
+
+
+def test_build_openai_request_keeps_reasoning_effort_for_reasoning_model() -> None:
+    """reasoning_effort is forwarded for o-series reasoning models."""
+    provider = LiteLLMProvider(model="openai/o3-mini")
+
+    payload = provider._build_openai_request(  # noqa: SLF001
+        model="openai/o3-mini",
+        input=[],
+        reasoning_effort="low",
+    )
+
+    assert payload["reasoning"] == {"effort": "low"}
+
+
+def test_build_call_kwargs_strips_reasoning_effort_for_non_reasoning_model() -> None:
+    """LiteLLM path also strips reasoning_effort for non-reasoning models."""
+    provider = LiteLLMProvider(model="gemini/gemini-2.5-flash")
+
+    kw = provider._build_call_kwargs(  # noqa: SLF001
+        model="gemini/gemini-2.5-flash",
+        messages=[],
+        reasoning_effort="medium",
+    )
+
+    assert "reasoning_effort" not in kw
+
+
 def test_build_openai_request_omits_temperature_for_gpt5() -> None:
     provider = LiteLLMProvider(model="openai/gpt-5-mini")
 
@@ -62,10 +127,10 @@ def test_build_openai_request_omits_temperature_for_gpt5() -> None:
 
 
 def test_build_openai_request_sets_reasoning_and_text_formats() -> None:
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini")
+    provider = LiteLLMProvider(model="openai/o3-mini")
 
     payload = provider._build_openai_request(  # noqa: SLF001 - testing helper path
-        model="openai/gpt-4o-mini",
+        model="openai/o3-mini",
         input=[],
         temperature=0.2,
         response_format=_StructuredResponse,
