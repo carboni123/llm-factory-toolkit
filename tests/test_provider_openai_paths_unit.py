@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List
+from unittest.mock import AsyncMock, MagicMock
 
-import litellm
 import pytest
-from litellm.exceptions import RateLimitError
 from pydantic import BaseModel
 
 from llm_factory_toolkit.exceptions import ProviderError
-from llm_factory_toolkit.provider import LiteLLMProvider
+from llm_factory_toolkit.providers._base import ProviderResponse, ProviderToolCall
+from llm_factory_toolkit.providers.openai import OpenAIAdapter
+from llm_factory_toolkit.providers.gemini import GeminiAdapter
 from llm_factory_toolkit.tools.models import StreamChunk, ToolExecutionResult
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
@@ -75,16 +76,18 @@ def _openai_client(fake_responses: _FakeResponsesClient) -> SimpleNamespace:
 async def test_openai_generate_structured_output_no_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini")
+    adapter = OpenAIAdapter(api_key="test-key")
     completion = SimpleNamespace(
         output_text='{"value":"ok"}',
         output=[_FakeOutputItem(type="text", text='{"value":"ok"}')],
+        usage=None,
     )
     fake_responses = _FakeResponsesClient(parse_results=[completion])
-    monkeypatch.setattr(provider, "_get_openai_client", lambda: _openai_client(fake_responses))
+    monkeypatch.setattr(adapter, "_get_client", lambda: _openai_client(fake_responses))
 
-    result = await provider.generate(
+    result = await adapter.generate(
         input=[{"role": "user", "content": "return json"}],
+        model="gpt-4o-mini",
         response_format=_StructuredOutput,
     )
 
@@ -112,7 +115,7 @@ async def test_openai_generate_executes_tool_calls_and_collects_payloads(
             "required": ["query"],
         },
     )
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini", tool_factory=factory)
+    adapter = OpenAIAdapter(api_key="test-key", tool_factory=factory)
 
     first = SimpleNamespace(
         output_text="",
@@ -126,16 +129,19 @@ async def test_openai_generate_executes_tool_calls_and_collects_payloads(
                 status="completed",
             )
         ],
+        usage=None,
     )
     second = SimpleNamespace(
         output_text="all done",
         output=[_FakeOutputItem(type="text", text="all done")],
+        usage=None,
     )
     fake_responses = _FakeResponsesClient(parse_results=[first, second])
-    monkeypatch.setattr(provider, "_get_openai_client", lambda: _openai_client(fake_responses))
+    monkeypatch.setattr(adapter, "_get_client", lambda: _openai_client(fake_responses))
 
-    result = await provider.generate(
+    result = await adapter.generate(
         input=[{"role": "user", "content": "lookup alpha"}],
+        model="gpt-4o-mini",
         use_tools=["lookup"],
     )
 
@@ -150,7 +156,7 @@ async def test_openai_generate_executes_tool_calls_and_collects_payloads(
 async def test_openai_generate_tool_intent_parses_bad_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini")
+    adapter = OpenAIAdapter(api_key="test-key")
     completion = SimpleNamespace(
         output_text="",
         output=[
@@ -163,12 +169,14 @@ async def test_openai_generate_tool_intent_parses_bad_arguments(
                 status="completed",
             )
         ],
+        usage=None,
     )
     fake_responses = _FakeResponsesClient(parse_results=[completion])
-    monkeypatch.setattr(provider, "_get_openai_client", lambda: _openai_client(fake_responses))
+    monkeypatch.setattr(adapter, "_get_client", lambda: _openai_client(fake_responses))
 
-    intent = await provider.generate_tool_intent(
-        input=[{"role": "user", "content": "plan lookup"}]
+    intent = await adapter.generate_tool_intent(
+        input=[{"role": "user", "content": "plan lookup"}],
+        model="gpt-4o-mini",
     )
 
     assert intent.tool_calls is not None
@@ -180,7 +188,7 @@ async def test_openai_generate_tool_intent_parses_bad_arguments(
 async def test_openai_generate_stream_returns_usage_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini")
+    adapter = OpenAIAdapter(api_key="test-key")
 
     completed_response = SimpleNamespace(
         output=[_FakeOutputItem(type="text", text="Hello")],
@@ -193,9 +201,12 @@ async def test_openai_generate_stream_returns_usage_metadata(
     ]
     fake_stream = _FakeAsyncStream(events)
     fake_responses = _FakeResponsesClient(stream_results=[fake_stream])
-    monkeypatch.setattr(provider, "_get_openai_client", lambda: _openai_client(fake_responses))
+    monkeypatch.setattr(adapter, "_get_client", lambda: _openai_client(fake_responses))
 
-    stream = provider.generate_stream(input=[{"role": "user", "content": "hello"}])
+    stream = adapter.generate_stream(
+        input=[{"role": "user", "content": "hello"}],
+        model="gpt-4o-mini",
+    )
     chunks = [chunk async for chunk in stream]
 
     assert isinstance(chunks[0], StreamChunk)
@@ -209,32 +220,48 @@ async def test_openai_generate_stream_returns_usage_metadata(
 
 
 @pytest.mark.asyncio
-async def test_non_openai_generate_stream_uses_litellm_builder(
+async def test_gemini_generate_stream_returns_usage_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = LiteLLMProvider(model="gemini/gemini-2.5-flash")
+    """Non-OpenAI (Gemini) streaming produces correct StreamChunks and usage."""
+    adapter = GeminiAdapter(api_key="test-key")
 
-    fake_chunks = _FakeAsyncStream(
-        [
-            SimpleNamespace(
-                choices=[SimpleNamespace(delta=SimpleNamespace(content="Hi"))]
-            )
-        ]
+    # Build a fake Gemini streaming response
+    # Each chunk has candidates[0].content.parts with text, plus usage_metadata
+    fake_part = SimpleNamespace(text="Hi", function_call=None)
+    fake_content = SimpleNamespace(parts=[fake_part])
+    fake_candidate = SimpleNamespace(content=fake_content)
+    fake_chunk = SimpleNamespace(
+        candidates=[fake_candidate],
+        usage_metadata=SimpleNamespace(prompt_token_count=1, candidates_token_count=1),
     )
 
-    async def fake_call_litellm(_: Dict[str, Any]) -> Any:
-        return fake_chunks
+    fake_stream = _FakeAsyncStream([fake_chunk])
 
-    def fake_stream_chunk_builder(_: List[Any], messages: List[Dict[str, Any]]) -> Any:
-        del messages
-        message = SimpleNamespace(role="assistant", content="Hi", tool_calls=None)
-        usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+    # Mock _get_client to return a fake client with aio.models.generate_content_stream
+    fake_client = SimpleNamespace(
+        aio=SimpleNamespace(
+            models=SimpleNamespace(
+                generate_content_stream=AsyncMock(return_value=fake_stream),
+            )
+        )
+    )
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
-    monkeypatch.setattr(provider, "_call_litellm", fake_call_litellm)
-    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+    # Mock _build_native_tools and _build_config to avoid importing google.genai
+    monkeypatch.setattr(adapter, "_build_native_tools", lambda tools, web_search=False: None)
+    monkeypatch.setattr(
+        adapter,
+        "_build_config",
+        lambda **kw: SimpleNamespace(),
+    )
+    # Mock _convert_messages to avoid importing google.genai.types
+    monkeypatch.setattr(adapter, "_convert_messages", staticmethod(lambda msgs: msgs))
 
-    stream = provider.generate_stream(input=[{"role": "user", "content": "hi"}])
+    stream = adapter.generate_stream(
+        input=[{"role": "user", "content": "hi"}],
+        model="gemini-2.5-flash",
+    )
     chunks = [chunk async for chunk in stream]
 
     assert "".join(c.content for c in chunks if c.content) == "Hi"
@@ -247,34 +274,46 @@ async def test_non_openai_generate_stream_uses_litellm_builder(
 
 
 @pytest.mark.asyncio
-async def test_non_openai_generate_tool_intent_parses_tool_calls(
+async def test_gemini_generate_tool_intent_parses_tool_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = LiteLLMProvider(model="gemini/gemini-2.5-flash")
-    response = SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(
-                    role="assistant",
-                    content="",
-                    tool_calls=[
-                        SimpleNamespace(
-                            id="c1",
-                            function=SimpleNamespace(name="lookup", arguments="{bad-json"),
-                        )
-                    ],
-                )
+    """Non-OpenAI (Gemini) tool intent parsing handles bad JSON arguments."""
+    adapter = GeminiAdapter(api_key="test-key")
+
+    # The Gemini adapter's _call_api returns a ProviderResponse.
+    # Mock it directly to avoid needing the google-genai SDK.
+    fake_response = ProviderResponse(
+        content="",
+        tool_calls=[
+            ProviderToolCall(
+                call_id="c1",
+                name="lookup",
+                arguments="{bad-json",
             )
-        ]
+        ],
+        raw_messages=[
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{bad-json"},
+                    }
+                ],
+            }
+        ],
     )
 
-    async def fake_call_litellm(_: Dict[str, Any]) -> Any:
-        return response
+    async def fake_call_api(*args: Any, **kwargs: Any) -> ProviderResponse:
+        return fake_response
 
-    monkeypatch.setattr(provider, "_call_litellm", fake_call_litellm)
+    monkeypatch.setattr(adapter, "_call_api", fake_call_api)
 
-    intent = await provider.generate_tool_intent(
-        input=[{"role": "user", "content": "plan"}]
+    intent = await adapter.generate_tool_intent(
+        input=[{"role": "user", "content": "plan"}],
+        model="gemini-2.5-flash",
     )
 
     assert intent.tool_calls is not None
@@ -283,15 +322,23 @@ async def test_non_openai_generate_tool_intent_parses_tool_calls(
 
 
 @pytest.mark.asyncio
-async def test_call_litellm_maps_rate_limit_error(
+async def test_openai_call_api_maps_sdk_error_to_provider_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = LiteLLMProvider(model="gemini/gemini-2.5-flash")
+    """OpenAI adapter wraps SDK exceptions in ProviderError."""
+    adapter = OpenAIAdapter(api_key="test-key")
 
-    async def raise_rate_limit(**_: Any) -> Any:
-        raise RateLimitError("quota", "gemini", "gemini-2.5-flash")
+    fake_responses = SimpleNamespace()
 
-    monkeypatch.setattr(litellm, "acompletion", raise_rate_limit)
+    async def raise_error(**_: Any) -> Any:
+        raise RuntimeError("rate limit exceeded")
 
-    with pytest.raises(ProviderError, match="Rate limit exceeded"):
-        await provider._call_litellm({"model": "gemini/gemini-2.5-flash"})  # noqa: SLF001
+    fake_responses.parse = raise_error
+    fake_client = SimpleNamespace(responses=fake_responses)
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
+
+    with pytest.raises(ProviderError, match="OpenAI Responses API error"):
+        await adapter._call_api(  # noqa: SLF001
+            "gpt-4o-mini",
+            [{"role": "user", "content": "hello"}],
+        )

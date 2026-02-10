@@ -27,7 +27,7 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
-from .provider import LiteLLMProvider
+from .providers import ProviderRouter
 from .tools.catalog import InMemoryToolCatalog
 from .tools.models import (
     GenerationResult,
@@ -42,10 +42,11 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """High-level client for interacting with LLM providers via LiteLLM.
+    """High-level client for interacting with LLM providers.
 
     Manages tool registration, context injection, and generation calls
-    across 100+ providers using a single model string.
+    across the Big 4 providers (OpenAI, Anthropic, Gemini, xAI) using a
+    single model string.
 
     Parameters
     ----------
@@ -83,8 +84,7 @@ class LLMClient:
         always retain full definitions.  Can be overridden per-call
         via ``generate(compact_tools=...)``.  Default ``False``.
     **kwargs:
-        Extra keyword arguments forwarded to every ``litellm.acompletion``
-        call (e.g. ``api_base``, ``drop_params``, ``num_retries``).
+        Extra keyword arguments forwarded to provider adapters.
 
     Examples
     --------
@@ -132,7 +132,7 @@ class LLMClient:
         self.compact_tools = compact_tools
         self.tool_factory = tool_factory or ToolFactory()
 
-        self.provider = LiteLLMProvider(
+        self.provider = ProviderRouter(
             model=model,
             tool_factory=self.tool_factory,
             api_key=api_key,

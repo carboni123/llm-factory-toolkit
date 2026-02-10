@@ -1,6 +1,6 @@
 # llm_factory_toolkit/llm_factory_toolkit/__init__.py
-"""LLM Factory Toolkit — unified async interface for 100+ LLM providers with
-an agentic tool framework.
+"""LLM Factory Toolkit — unified async interface for the Big 4 LLM providers
+(OpenAI, Anthropic, Google Gemini, xAI) with an agentic tool framework.
 
 Quick start
 -----------

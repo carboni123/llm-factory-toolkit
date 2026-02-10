@@ -1,21 +1,30 @@
 """Integration tests for compact_tools wiring through provider loop.
 
 Tests that generate(compact_tools=True) sends compact definitions,
-core tools keep full definitions, both LiteLLM and OpenAI paths support
-compact mode, and tool dispatch still works (no regression).
+core tools keep full definitions, tool dispatch still works (no regression),
+_resolve_tool_definitions returns correct structure, LLMClient wires
+compact_tools through, and compact definitions are measurably smaller.
+
+Rewritten to use the new BaseProvider / _MockAdapter architecture
+(replacing the old LiteLLMProvider-based tests).
 """
 
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Type, Union
+from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 
-from llm_factory_toolkit.provider import LiteLLMProvider
 from llm_factory_toolkit.client import LLMClient
-from llm_factory_toolkit.tools.models import ToolExecutionResult
+from llm_factory_toolkit.providers._base import (
+    BaseProvider,
+    ProviderResponse,
+    ProviderToolCall,
+)
+from llm_factory_toolkit.tools.models import StreamChunk, ToolExecutionResult
 from llm_factory_toolkit.tools.session import ToolSession
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
@@ -83,62 +92,129 @@ def _make_factory(
     return factory
 
 
-def _tool_call(
+# ---------------------------------------------------------------------------
+# Mock adapter
+# ---------------------------------------------------------------------------
+
+
+class _MockAdapter(BaseProvider):
+    """Test double: captures tools sent to _call_api, returns scripted responses."""
+
+    def __init__(
+        self,
+        responses: Optional[List[ProviderResponse]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.captured_tools: List[Optional[List[Dict[str, Any]]]] = []
+        self._responses = list(responses or [])
+        self._call_count = 0
+
+    def set_responses(self, *responses: ProviderResponse) -> None:
+        self._responses = list(responses)
+        self._call_count = 0
+
+    def _build_tool_definitions(
+        self, definitions: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        # Identity: pass through unchanged so assertions can inspect standard format
+        return definitions
+
+    async def _call_api(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        *,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        web_search: bool | Dict[str, Any] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        **kwargs: Any,
+    ) -> ProviderResponse:
+        self.captured_tools.append(tools)
+        if self._call_count < len(self._responses):
+            resp = self._responses[self._call_count]
+            self._call_count += 1
+            return resp
+        return ProviderResponse(content="done")
+
+    async def _call_api_stream(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
+        yield StreamChunk(done=True)  # pragma: no cover
+
+
+# ---------------------------------------------------------------------------
+# Response factories
+# ---------------------------------------------------------------------------
+
+
+def _text_response(text: str = "done") -> ProviderResponse:
+    return ProviderResponse(
+        content=text,
+        tool_calls=[],
+        raw_messages=[{"role": "assistant", "content": text}],
+    )
+
+
+def _tool_call_response(
     name: str, arguments: str = "{}", call_id: str = "call-1"
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=call_id,
-        function=SimpleNamespace(name=name, arguments=arguments),
+) -> ProviderResponse:
+    return ProviderResponse(
+        content="",
+        tool_calls=[
+            ProviderToolCall(call_id=call_id, name=name, arguments=arguments)
+        ],
+        raw_messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": arguments},
+                    }
+                ],
+            }
+        ],
     )
 
 
-def _completion_response(
-    *, content: str = "", tool_calls: Any = None
-) -> SimpleNamespace:
-    message = SimpleNamespace(
-        role="assistant", content=content, tool_calls=tool_calls
-    )
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
-
-
 # ===================================================================
-# 1. generate(compact_tools=True) sends compact definitions (LiteLLM)
+# 1. generate(compact_tools=True) sends compact definitions
 # ===================================================================
 
 
-class TestLiteLLMCompactMode:
-    """LiteLLM path: _prepare_tools returns compact defs when flag is set."""
+class TestCompactMode:
+    """BaseProvider loop: compact tools have nested descriptions stripped."""
 
     @pytest.mark.asyncio
-    async def test_compact_tools_strips_descriptions(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_compact_tools_strips_descriptions(self) -> None:
         """Non-core tools should have nested descriptions stripped."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
-        captured_tools: List[List[Dict[str, Any]]] = []
-
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            captured_tools.append(kw.get("tools", []))
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
+        adapter = _MockAdapter(tool_factory=factory)
+        adapter.set_responses(_text_response("done"))
 
         session = ToolSession()
         session.load(["core_tool", "search", "analytics"])
 
-        result = await provider.generate(
+        result = await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
             compact_tools=True,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
 
         assert result.content == "done"
-        assert len(captured_tools) == 1
-        tools = captured_tools[0]
+        assert len(adapter.captured_tools) == 1
+        tools = adapter.captured_tools[0]
+        assert tools is not None
         assert len(tools) == 3
 
         # Find tools by name
@@ -156,61 +232,45 @@ class TestLiteLLMCompactMode:
         assert "default" not in search_props.get("phone", {})
 
     @pytest.mark.asyncio
-    async def test_compact_false_keeps_all_descriptions(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_compact_false_keeps_all_descriptions(self) -> None:
         """compact_tools=False should leave all descriptions intact."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
-        captured_tools: List[List[Dict[str, Any]]] = []
-
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            captured_tools.append(kw.get("tools", []))
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
+        adapter = _MockAdapter(tool_factory=factory)
+        adapter.set_responses(_text_response("done"))
 
         session = ToolSession()
         session.load(["core_tool", "search"])
 
-        await provider.generate(
+        await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
             compact_tools=False,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
 
-        tools = captured_tools[0]
+        tools = adapter.captured_tools[0]
+        assert tools is not None
         for t in tools:
             props = t["function"]["parameters"]["properties"]
             assert "description" in props["first_name"]
 
     @pytest.mark.asyncio
-    async def test_no_session_compact_all_tools(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_no_session_compact_all_tools(self) -> None:
         """compact_tools=True without core_tools should compact everything."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
-        captured_tools: List[List[Dict[str, Any]]] = []
+        adapter = _MockAdapter(tool_factory=factory)
+        adapter.set_responses(_text_response("done"))
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            captured_tools.append(kw.get("tools", []))
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        # No session, no core_tools — compact should compact all tools
-        await provider.generate(
+        # No session, no core_tools -- compact should compact all tools
+        await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             compact_tools=True,
         )
 
-        tools = captured_tools[0]
+        tools = adapter.captured_tools[0]
+        assert tools is not None
         for t in tools:
             props = t["function"]["parameters"]["properties"]
             # All descriptions should be stripped
@@ -225,31 +285,25 @@ class TestLiteLLMCompactMode:
 class TestCoreToolsFullDefinitions:
     @pytest.mark.asyncio
     async def test_core_tool_retains_descriptions_while_others_stripped(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
     ) -> None:
         factory = _make_factory(extra_names=["tool_a", "tool_b", "tool_c"])
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
-        captured_tools: List[List[Dict[str, Any]]] = []
-
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            captured_tools.append(kw.get("tools", []))
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
+        adapter = _MockAdapter(tool_factory=factory)
+        adapter.set_responses(_text_response("done"))
 
         session = ToolSession()
         session.load(["core_tool", "tool_a", "tool_b", "tool_c"])
 
-        await provider.generate(
+        await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
             compact_tools=True,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
 
-        tools = captured_tools[0]
+        tools = adapter.captured_tools[0]
+        assert tools is not None
         by_name = {t["function"]["name"]: t for t in tools}
 
         # Core keeps descriptions
@@ -264,49 +318,45 @@ class TestCoreToolsFullDefinitions:
 
 
 # ===================================================================
-# 3. OpenAI path supports compact mode
+# 3. _resolve_tool_definitions supports compact mode
 # ===================================================================
 
 
-class TestOpenAICompactMode:
-    def test_build_openai_tools_compact(self) -> None:
-        """_build_openai_tools with compact_tools=True strips non-core descriptions."""
+class TestResolveToolDefinitionsCompact:
+    def test_resolve_compact_strips_non_core(self) -> None:
+        """_resolve_tool_definitions with compact=True strips non-core descriptions."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="openai/gpt-4o-mini", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
-        tools = provider._build_openai_tools(  # noqa: SLF001
+        tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=["core_tool", "search", "analytics"],
-            compact_tools=True,
+            compact=True,
             core_tool_names={"core_tool"},
         )
 
-        by_name = {t["name"]: t for t in tools if t.get("type") == "function"}
+        by_name = {t["function"]["name"]: t for t in tools}
 
         # Core tool: full descriptions preserved
-        core_params = by_name["core_tool"]["parameters"]["properties"]
+        core_params = by_name["core_tool"]["function"]["parameters"]["properties"]
         assert "description" in core_params["first_name"]
 
         # Non-core: descriptions stripped
-        search_params = by_name["search"]["parameters"]["properties"]
+        search_params = by_name["search"]["function"]["parameters"]["properties"]
         assert "description" not in search_params["first_name"]
 
-    def test_build_openai_tools_no_compact(self) -> None:
-        """_build_openai_tools with compact_tools=False keeps all descriptions."""
+    def test_resolve_no_compact_keeps_all(self) -> None:
+        """_resolve_tool_definitions with compact=False keeps all descriptions."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="openai/gpt-4o-mini", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
-        tools = provider._build_openai_tools(  # noqa: SLF001
+        tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=["core_tool", "search"],
-            compact_tools=False,
+            compact=False,
         )
 
-        by_name = {t["name"]: t for t in tools if t.get("type") == "function"}
+        by_name = {t["function"]["name"]: t for t in tools}
         for name in ["core_tool", "search"]:
-            props = by_name[name]["parameters"]["properties"]
+            props = by_name[name]["function"]["parameters"]["properties"]
             assert "description" in props["first_name"]
 
 
@@ -317,9 +367,7 @@ class TestOpenAICompactMode:
 
 class TestToolDispatchWithCompact:
     @pytest.mark.asyncio
-    async def test_tool_call_dispatches_correctly_with_compact(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_tool_call_dispatches_correctly_with_compact(self) -> None:
         """Tool calls should still dispatch even when compact defs are sent."""
         dispatch_log: List[str] = []
 
@@ -335,32 +383,18 @@ class TestToolDispatchWithCompact:
             parameters=_RICH_PARAMS,
         )
 
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
+        adapter = _MockAdapter(tool_factory=factory)
+        adapter.set_responses(
+            _tool_call_response(
+                "create_contact",
+                json.dumps({"first_name": "Jane", "email": "jane@x.com"}),
+            ),
+            _text_response("Contact created!"),
         )
 
-        call_count = 0
-
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[
-                        _tool_call(
-                            "create_contact",
-                            json.dumps(
-                                {"first_name": "Jane", "email": "jane@x.com"}
-                            ),
-                        )
-                    ]
-                )
-            return _completion_response(content="Contact created!")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        result = await provider.generate(
+        result = await adapter.generate(
             input=[{"role": "user", "content": "create Jane"}],
+            model="test-model",
             compact_tools=True,
         )
 
@@ -383,9 +417,7 @@ class TestLLMClientCompactTools:
         assert client.compact_tools is True
 
     @pytest.mark.asyncio
-    async def test_generate_passes_compact_through(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_generate_passes_compact_through(self) -> None:
         """compact_tools kwarg flows through to the provider."""
         factory = _make_factory()
         client = LLMClient(
@@ -396,29 +428,21 @@ class TestLLMClientCompactTools:
 
         captured_compact: List[bool] = []
 
-        original_generate = client.provider.generate
-
-        async def spy_generate(**kw: Any) -> Any:
+        async def mock_generate(**kw: Any) -> Any:
             captured_compact.append(kw.get("compact_tools", False))
-            return await original_generate(**kw)
+            from llm_factory_toolkit.tools.models import GenerationResult
 
-        monkeypatch.setattr(client.provider, "generate", spy_generate)
+            return GenerationResult(content="ok")
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            return _completion_response(content="ok")
-
-        monkeypatch.setattr(client.provider, "_call_litellm", fake_call)
-
-        await client.generate(
-            input=[{"role": "user", "content": "test"}],
-        )
+        with patch.object(client.provider, "generate", side_effect=mock_generate):
+            await client.generate(
+                input=[{"role": "user", "content": "test"}],
+            )
 
         assert captured_compact == [True]
 
     @pytest.mark.asyncio
-    async def test_per_call_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_per_call_override(self) -> None:
         """Per-call compact_tools=False overrides constructor True."""
         factory = _make_factory()
         client = LLMClient(
@@ -429,42 +453,34 @@ class TestLLMClientCompactTools:
 
         captured_compact: List[bool] = []
 
-        original_generate = client.provider.generate
-
-        async def spy_generate(**kw: Any) -> Any:
+        async def mock_generate(**kw: Any) -> Any:
             captured_compact.append(kw.get("compact_tools", False))
-            return await original_generate(**kw)
+            from llm_factory_toolkit.tools.models import GenerationResult
 
-        monkeypatch.setattr(client.provider, "generate", spy_generate)
+            return GenerationResult(content="ok")
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            return _completion_response(content="ok")
-
-        monkeypatch.setattr(client.provider, "_call_litellm", fake_call)
-
-        # Override to False for this call
-        await client.generate(
-            input=[{"role": "user", "content": "test"}],
-            compact_tools=False,
-        )
+        with patch.object(client.provider, "generate", side_effect=mock_generate):
+            # Override to False for this call
+            await client.generate(
+                input=[{"role": "user", "content": "test"}],
+                compact_tools=False,
+            )
 
         assert captured_compact == [False]
 
 
 # ===================================================================
-# 6. _prepare_tools returns correct structure
+# 6. _resolve_tool_definitions returns correct structure
 # ===================================================================
 
 
-class TestPrepareToolsCompact:
-    def test_prepare_tools_compact_with_core(self) -> None:
-        """_prepare_tools with compact splits core vs non-core."""
+class TestResolveToolDefinitionsStructure:
+    def test_resolve_compact_with_core(self) -> None:
+        """_resolve_tool_definitions with compact splits core vs non-core."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
-        tools, choice = provider._prepare_tools(  # noqa: SLF001
+        tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=["core_tool", "search", "analytics"],
             compact=True,
             core_tool_names={"core_tool"},
@@ -474,19 +490,32 @@ class TestPrepareToolsCompact:
         by_name = {t["function"]["name"]: t for t in tools}
 
         # Core: full
-        assert "description" in by_name["core_tool"]["function"]["parameters"]["properties"]["first_name"]
+        assert (
+            "description"
+            in by_name["core_tool"]["function"]["parameters"]["properties"][
+                "first_name"
+            ]
+        )
         # Non-core: compact
-        assert "description" not in by_name["search"]["function"]["parameters"]["properties"]["first_name"]
-        assert "description" not in by_name["analytics"]["function"]["parameters"]["properties"]["first_name"]
-
-    def test_prepare_tools_compact_no_core(self) -> None:
-        """_prepare_tools compact with empty core compacts all."""
-        factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
+        assert (
+            "description"
+            not in by_name["search"]["function"]["parameters"]["properties"][
+                "first_name"
+            ]
+        )
+        assert (
+            "description"
+            not in by_name["analytics"]["function"]["parameters"]["properties"][
+                "first_name"
+            ]
         )
 
-        tools, _ = provider._prepare_tools(  # noqa: SLF001
+    def test_resolve_compact_no_core(self) -> None:
+        """_resolve_tool_definitions compact with empty core compacts all."""
+        factory = _make_factory()
+        adapter = _MockAdapter(tool_factory=factory)
+
+        tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=["core_tool", "search"],
             compact=True,
             core_tool_names=set(),
@@ -497,14 +526,12 @@ class TestPrepareToolsCompact:
             props = t["function"]["parameters"]["properties"]
             assert "description" not in props["first_name"]
 
-    def test_prepare_tools_no_compact(self) -> None:
-        """Standard _prepare_tools without compact keeps descriptions."""
+    def test_resolve_no_compact(self) -> None:
+        """Standard _resolve_tool_definitions without compact keeps descriptions."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
-        tools, _ = provider._prepare_tools(  # noqa: SLF001
+        tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=["core_tool", "search"],
             compact=False,
         )
@@ -514,14 +541,12 @@ class TestPrepareToolsCompact:
             props = t["function"]["parameters"]["properties"]
             assert "description" in props["first_name"]
 
-    def test_prepare_tools_compact_all_tools_when_use_tools_empty(self) -> None:
+    def test_resolve_compact_all_tools_when_use_tools_empty(self) -> None:
         """compact with use_tools=[] (meaning 'all') compacts all non-core."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
-        tools, _ = provider._prepare_tools(  # noqa: SLF001
+        tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=[],
             compact=True,
             core_tool_names={"core_tool"},
@@ -531,13 +556,23 @@ class TestPrepareToolsCompact:
         by_name = {t["function"]["name"]: t for t in tools}
 
         # Core keeps descriptions
-        assert "description" in by_name["core_tool"]["function"]["parameters"]["properties"]["first_name"]
+        assert (
+            "description"
+            in by_name["core_tool"]["function"]["parameters"]["properties"][
+                "first_name"
+            ]
+        )
         # Others stripped
-        assert "description" not in by_name["search"]["function"]["parameters"]["properties"]["first_name"]
+        assert (
+            "description"
+            not in by_name["search"]["function"]["parameters"]["properties"][
+                "first_name"
+            ]
+        )
 
 
 # ===================================================================
-# 7. Token savings verification — compact defs are measurably smaller
+# 7. Token savings verification -- compact defs are measurably smaller
 # ===================================================================
 
 
@@ -545,15 +580,13 @@ class TestCompactTokenSavings:
     def test_compact_defs_have_fewer_chars_than_full(self) -> None:
         """Compact definitions should serialize to fewer chars (proxy for tokens)."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
-        full_tools, _ = provider._prepare_tools(  # noqa: SLF001
+        full_tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=["search"],
             compact=False,
         )
-        compact_tools, _ = provider._prepare_tools(  # noqa: SLF001
+        compact_tools = adapter._resolve_tool_definitions(  # noqa: SLF001
             use_tools=["search"],
             compact=True,
             core_tool_names=set(),

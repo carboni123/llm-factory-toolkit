@@ -16,8 +16,8 @@ pytestmark = pytest.mark.asyncio
 
 
 def _make_client() -> LLMClient:
-    """Create an LLMClient with a mocked LiteLLMProvider.generate."""
-    with patch("llm_factory_toolkit.client.LiteLLMProvider") as MockProvider:
+    """Create an LLMClient with a mocked ProviderRouter.generate."""
+    with patch("llm_factory_toolkit.client.ProviderRouter") as MockProvider:
         instance = MockProvider.return_value
         instance.model = "openai/gpt-4o-mini"
         instance.generate = AsyncMock(return_value=GenerationResult(content=None))

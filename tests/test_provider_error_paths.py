@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from llm_factory_toolkit.provider import _strip_urls
+from llm_factory_toolkit.providers._util import strip_urls as _strip_urls
 
 
 # =============================================================================

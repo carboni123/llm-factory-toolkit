@@ -16,6 +16,8 @@ load_dotenv()
 _DEFAULT_SUPPORTED_MODEL = "openai/gpt-4.1-mini"
 _DEFAULT_UNSUPPORTED_MODEL = "openai/gpt-5-mini"
 _DEFAULT_GOOGLE_MODEL = "gemini/gemini-2.5-flash"
+_DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-sonnet-4-20250514"
+_DEFAULT_XAI_MODEL = "xai/grok-3-mini"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -46,6 +48,20 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Model identifier to use for Google GenAI integration tests. "
             "Can also be provided through the GOOGLE_TEST_MODEL environment variable."
         ),
+    )
+    parser.addoption(
+        "--anthropic-test-model",
+        action="store",
+        default=os.environ.get("ANTHROPIC_TEST_MODEL", _DEFAULT_ANTHROPIC_MODEL),
+        dest="anthropic_test_model",
+        help="Model identifier for Anthropic integration tests.",
+    )
+    parser.addoption(
+        "--xai-test-model",
+        action="store",
+        default=os.environ.get("XAI_TEST_MODEL", _DEFAULT_XAI_MODEL),
+        dest="xai_test_model",
+        help="Model identifier for xAI integration tests.",
     )
 
 
@@ -82,3 +98,15 @@ def openai_test_model(pytestconfig: pytest.Config) -> str:
 def google_test_model(pytestconfig: pytest.Config) -> str:
     """Return the model identifier used for Google GenAI integration tests."""
     return pytestconfig.getoption("google_test_model")
+
+
+@pytest.fixture(scope="session")
+def anthropic_test_model(pytestconfig: pytest.Config) -> str:
+    """Return the model identifier used for Anthropic integration tests."""
+    return pytestconfig.getoption("anthropic_test_model")
+
+
+@pytest.fixture(scope="session")
+def xai_test_model(pytestconfig: pytest.Config) -> str:
+    """Return the model identifier used for xAI integration tests."""
+    return pytestconfig.getoption("xai_test_model")

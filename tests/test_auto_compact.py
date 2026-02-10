@@ -1,4 +1,4 @@
-"""Tests for auto-compact on budget pressure (Task 7).
+"""Tests for auto-compact on budget pressure.
 
 Covers:
 - Provider detects warning=True and enables compact mode for subsequent iterations
@@ -13,22 +13,27 @@ from __future__ import annotations
 
 import json
 import logging
-from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Type, Union
 
 import pytest
 
-from llm_factory_toolkit.provider import LiteLLMProvider
+from llm_factory_toolkit.providers._base import (
+    BaseProvider,
+    ProviderResponse,
+    ProviderToolCall,
+    ToolResultMessage,
+)
 from llm_factory_toolkit.tools.meta_tools import (
     browse_toolkit,
     load_tools,
     load_tool_group,
     unload_tools,
 )
-from llm_factory_toolkit.tools.models import ToolExecutionResult
+from llm_factory_toolkit.tools.models import StreamChunk, ToolExecutionResult
 from llm_factory_toolkit.tools.session import ToolSession
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 from llm_factory_toolkit.tools.catalog import InMemoryToolCatalog
+from pydantic import BaseModel
 
 
 # ---------------------------------------------------------------------------
@@ -83,22 +88,98 @@ def _make_factory(n_extra: int = 3) -> ToolFactory:
     return factory
 
 
-def _tool_call(
+class _MockAdapter(BaseProvider):
+    """Minimal concrete adapter for testing the base provider loop.
+
+    Tool definitions pass through without transformation so tests can
+    inspect them in standard Chat Completions format.
+    """
+
+    def __init__(self, tool_factory: Optional[ToolFactory] = None) -> None:
+        super().__init__(tool_factory=tool_factory)
+        self.call_count = 0
+        self.captured_tools: List[Optional[List[Dict[str, Any]]]] = []
+        self.responses: List[ProviderResponse] = []
+
+    def set_responses(self, *responses: ProviderResponse) -> None:
+        self.responses = list(responses)
+
+    async def _call_api(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        *,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        web_search: bool | Dict[str, Any] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        **kwargs: Any,
+    ) -> ProviderResponse:
+        self.captured_tools.append(tools)
+        resp = self.responses[self.call_count]
+        self.call_count += 1
+        return resp
+
+    async def _call_api_stream(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
+        yield StreamChunk(done=True)  # pragma: no cover
+
+    def _build_tool_definitions(
+        self, definitions: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        # Pass through unchanged for easy inspection
+        return definitions
+
+
+def _tool_call_response(
     name: str, arguments: str = "{}", call_id: str = "call-1"
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=call_id,
-        function=SimpleNamespace(name=name, arguments=arguments),
+) -> ProviderResponse:
+    return ProviderResponse(
+        content="",
+        tool_calls=[ProviderToolCall(call_id=call_id, name=name, arguments=arguments)],
+        raw_messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": arguments},
+                    }
+                ],
+            }
+        ],
     )
 
 
-def _completion_response(
-    *, content: str = "", tool_calls: Any = None
-) -> SimpleNamespace:
-    message = SimpleNamespace(
-        role="assistant", content=content, tool_calls=tool_calls
+def _text_response(text: str = "done") -> ProviderResponse:
+    return ProviderResponse(
+        content=text,
+        tool_calls=[],
+        raw_messages=[{"role": "assistant", "content": text}],
     )
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+def _has_description(tool_def: Dict[str, Any]) -> bool:
+    """Check if a tool definition has nested property descriptions."""
+    func = tool_def.get("function", {})
+    props = func.get("parameters", {}).get("properties", {})
+    return any("description" in v for v in props.values())
+
+
+def _get_tool_by_name(
+    tools: List[Dict[str, Any]], name: str
+) -> Optional[Dict[str, Any]]:
+    for t in tools:
+        if t.get("function", {}).get("name") == name:
+            return t
+    return None
 
 
 # ==================================================================
@@ -137,190 +218,148 @@ class TestToolSessionAutoCompact:
 
 
 # ==================================================================
-# 2. Provider detects warning=True → enables compact mode (LiteLLM)
+# 2. Provider detects warning=True → enables compact mode
 # ==================================================================
 
 
-class TestAutoCompactLiteLLM:
+class TestAutoCompactProvider:
     @pytest.mark.asyncio
-    async def test_warning_triggers_compact_on_next_iteration(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_warning_triggers_compact_on_next_iteration(self) -> None:
         """When budget warning fires after tool exec, next iteration uses compact."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
         # Session at 80% utilisation → warning=True
         session = ToolSession(token_budget=1000, auto_compact=True)
-        session.load(["core_tool", "dynamic_0"], token_counts={"core_tool": 400, "dynamic_0": 400})
+        session.load(
+            ["core_tool", "dynamic_0"],
+            token_counts={"core_tool": 400, "dynamic_0": 400},
+        )
 
-        captured_tools: List[List[Dict[str, Any]]] = []
-        call_count = 0
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
+        )
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            captured_tools.append(kw.get("tools", []))
-            if call_count == 1:
-                # First call: model requests a tool call
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            # Second call: model responds with text
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        result = await provider.generate(
+        result = await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
-            compact_tools=False,  # Start non-compact
+            compact_tools=False,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
 
         assert result.content == "done"
-        assert len(captured_tools) == 2
+        assert len(adapter.captured_tools) == 2
 
         # First iteration: non-compact (all descriptions present)
-        first_tools = captured_tools[0]
+        first_tools = adapter.captured_tools[0]
         for t in first_tools:
-            props = t["function"]["parameters"]["properties"]
-            assert "description" in props["first_name"]
+            assert _has_description(t)
 
         # Second iteration: compact kicked in (non-core stripped)
-        second_tools = captured_tools[1]
-        by_name = {t["function"]["name"]: t for t in second_tools}
-        # Core tool keeps descriptions
-        core_props = by_name["core_tool"]["function"]["parameters"]["properties"]
-        assert "description" in core_props["first_name"]
-        # Non-core should be compact (stripped)
-        dyn_props = by_name["dynamic_0"]["function"]["parameters"]["properties"]
-        assert "description" not in dyn_props["first_name"]
+        second_tools = adapter.captured_tools[1]
+        core_t = _get_tool_by_name(second_tools, "core_tool")
+        dyn_t = _get_tool_by_name(second_tools, "dynamic_0")
+        assert core_t is not None and _has_description(core_t)
+        assert dyn_t is not None and not _has_description(dyn_t)
 
     @pytest.mark.asyncio
-    async def test_auto_compact_false_does_not_trigger(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_auto_compact_false_does_not_trigger(self) -> None:
         """auto_compact=False should prevent compact mode activation."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
+        adapter = _MockAdapter(tool_factory=factory)
+
+        session = ToolSession(token_budget=1000, auto_compact=False)
+        session.load(
+            ["core_tool", "dynamic_0"],
+            token_counts={"core_tool": 400, "dynamic_0": 400},
         )
 
-        # Session at 80% utilisation but auto_compact disabled
-        session = ToolSession(token_budget=1000, auto_compact=False)
-        session.load(["core_tool", "dynamic_0"], token_counts={"core_tool": 400, "dynamic_0": 400})
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
+        )
 
-        captured_tools: List[List[Dict[str, Any]]] = []
-        call_count = 0
-
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            captured_tools.append(kw.get("tools", []))
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        result = await provider.generate(
+        result = await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
             compact_tools=False,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
 
         assert result.content == "done"
-        assert len(captured_tools) == 2
+        assert len(adapter.captured_tools) == 2
 
-        # Both iterations should use full descriptions (compact NOT triggered)
-        for tools in captured_tools:
+        # Both iterations should use full descriptions
+        for tools in adapter.captured_tools:
             for t in tools:
-                props = t["function"]["parameters"]["properties"]
-                assert "description" in props["first_name"]
+                assert _has_description(t)
 
     @pytest.mark.asyncio
-    async def test_no_trigger_below_warning_threshold(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_no_trigger_below_warning_threshold(self) -> None:
         """Budget below 75% should NOT trigger auto-compact."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
+        adapter = _MockAdapter(tool_factory=factory)
+
+        session = ToolSession(token_budget=1000, auto_compact=True)
+        session.load(
+            ["core_tool", "dynamic_0"],
+            token_counts={"core_tool": 250, "dynamic_0": 250},
         )
 
-        # Session at 50% utilisation → warning=False
-        session = ToolSession(token_budget=1000, auto_compact=True)
-        session.load(["core_tool", "dynamic_0"], token_counts={"core_tool": 250, "dynamic_0": 250})
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
+        )
 
-        captured_tools: List[List[Dict[str, Any]]] = []
-        call_count = 0
-
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            captured_tools.append(kw.get("tools", []))
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        await provider.generate(
+        await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
             compact_tools=False,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
 
-        # Both iterations should use full descriptions
-        assert len(captured_tools) == 2
-        for tools in captured_tools:
+        assert len(adapter.captured_tools) == 2
+        for tools in adapter.captured_tools:
             for t in tools:
-                props = t["function"]["parameters"]["properties"]
-                assert "description" in props["first_name"]
+                assert _has_description(t)
 
     @pytest.mark.asyncio
-    async def test_already_compact_does_not_re_trigger(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_already_compact_does_not_re_trigger(self) -> None:
         """If compact_tools=True already, auto-compact should not re-log."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
         session = ToolSession(token_budget=1000, auto_compact=True)
-        session.load(["core_tool", "dynamic_0"], token_counts={"core_tool": 400, "dynamic_0": 400})
+        session.load(
+            ["core_tool", "dynamic_0"],
+            token_counts={"core_tool": 400, "dynamic_0": 400},
+        )
 
-        call_count = 0
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
+        )
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        # Already compact — no transition should happen
-        await provider.generate(
+        await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
             compact_tools=True,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
-        # Test passes if no error — auto-compact check skipped when already compact
+        # Test passes if no error
 
 
 # ==================================================================
@@ -331,41 +370,36 @@ class TestAutoCompactLiteLLM:
 class TestAutoCompactLogging:
     @pytest.mark.asyncio
     async def test_info_log_on_auto_compact_transition(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Transition to compact mode should be logged at INFO."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
         session = ToolSession(token_budget=1000, auto_compact=True)
-        session.load(["core_tool", "dynamic_0"], token_counts={"core_tool": 400, "dynamic_0": 400})
+        session.load(
+            ["core_tool", "dynamic_0"],
+            token_counts={"core_tool": 400, "dynamic_0": 400},
+        )
 
-        call_count = 0
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
+        )
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.provider"):
-            await provider.generate(
+        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.providers._base"):
+            await adapter.generate(
                 input=[{"role": "user", "content": "test"}],
+                model="test-model",
                 tool_session=session,
                 compact_tools=False,
                 tool_execution_context={"core_tools": ["core_tool"]},
             )
 
         auto_compact_logs = [
-            r for r in caplog.records
-            if "Auto-compact enabled" in r.message
+            r for r in caplog.records if "Auto-compact enabled" in r.message
         ]
         assert len(auto_compact_logs) == 1
         assert auto_compact_logs[0].levelno == logging.INFO
@@ -373,41 +407,36 @@ class TestAutoCompactLogging:
 
     @pytest.mark.asyncio
     async def test_no_log_when_auto_compact_disabled(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """No auto-compact log when auto_compact=False."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
         session = ToolSession(token_budget=1000, auto_compact=False)
-        session.load(["core_tool", "dynamic_0"], token_counts={"core_tool": 400, "dynamic_0": 400})
+        session.load(
+            ["core_tool", "dynamic_0"],
+            token_counts={"core_tool": 400, "dynamic_0": 400},
+        )
 
-        call_count = 0
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
+        )
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.provider"):
-            await provider.generate(
+        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.providers._base"):
+            await adapter.generate(
                 input=[{"role": "user", "content": "test"}],
+                model="test-model",
                 tool_session=session,
                 compact_tools=False,
                 tool_execution_context={"core_tools": ["core_tool"]},
             )
 
         auto_compact_logs = [
-            r for r in caplog.records
-            if "Auto-compact enabled" in r.message
+            r for r in caplog.records if "Auto-compact enabled" in r.message
         ]
         assert len(auto_compact_logs) == 0
 
@@ -419,54 +448,50 @@ class TestAutoCompactLogging:
 
 class TestBudgetRecalculation:
     @pytest.mark.asyncio
-    async def test_budget_checked_each_iteration(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_budget_checked_each_iteration(self) -> None:
         """Auto-compact only triggers once, but budget is checked each iteration."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
         session = ToolSession(token_budget=1000, auto_compact=True)
-        session.load(["core_tool", "dynamic_0"], token_counts={"core_tool": 400, "dynamic_0": 400})
+        session.load(
+            ["core_tool", "dynamic_0"],
+            token_counts={"core_tool": 400, "dynamic_0": 400},
+        )
 
-        captured_tools: List[List[Dict[str, Any]]] = []
-        call_count = 0
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool",
+                '{"first_name":"A","email":"a@b.com"}',
+                "call-1",
+            ),
+            _tool_call_response(
+                "core_tool",
+                '{"first_name":"A","email":"a@b.com"}',
+                "call-2",
+            ),
+            _text_response("done"),
+        )
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            captured_tools.append(kw.get("tools", []))
-            if call_count <= 2:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}', f"call-{call_count}")]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        result = await provider.generate(
+        result = await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             tool_session=session,
             compact_tools=False,
             tool_execution_context={"core_tools": ["core_tool"]},
         )
 
         assert result.content == "done"
-        assert len(captured_tools) == 3
+        assert len(adapter.captured_tools) == 3
 
         # First iteration: non-compact
-        for t in captured_tools[0]:
-            props = t["function"]["parameters"]["properties"]
-            assert "description" in props["first_name"]
+        for t in adapter.captured_tools[0]:
+            assert _has_description(t)
 
-        # Second + third iterations: compact (auto-compact triggered after first)
-        for iteration_tools in captured_tools[1:]:
-            by_name = {t["function"]["name"]: t for t in iteration_tools}
-            # Non-core stripped
-            dyn_props = by_name["dynamic_0"]["function"]["parameters"]["properties"]
-            assert "description" not in dyn_props["first_name"]
+        # Second + third iterations: compact
+        for iteration_tools in adapter.captured_tools[1:]:
+            dyn_t = _get_tool_by_name(iteration_tools, "dynamic_0")
+            assert dyn_t is not None and not _has_description(dyn_t)
 
     def test_budget_usage_reflects_current_state(self) -> None:
         """Budget usage should reflect real-time state after loads/unloads."""
@@ -477,7 +502,6 @@ class TestBudgetRecalculation:
         assert usage["warning"] is True
         assert usage["utilisation"] == 0.8
 
-        # Unload to bring below threshold
         session.unload(["a"])
         session.load(["b"], token_counts={"b": 200})
 
@@ -529,7 +553,7 @@ class TestMetaToolCompactModeField:
     def test_browse_toolkit_no_compact_mode_without_budget(self) -> None:
         factory = _make_factory(n_extra=2)
         catalog = InMemoryToolCatalog(factory)
-        session = ToolSession()  # no budget
+        session = ToolSession()
         result = browse_toolkit(tool_catalog=catalog, tool_session=session)
         body = json.loads(result.content)
         assert "compact_mode" not in body
@@ -590,14 +614,16 @@ class TestMetaToolCompactModeField:
 
     def test_unload_tools_compact_mode(self) -> None:
         session = ToolSession(token_budget=1000, auto_compact=True)
-        session.load(["tool_a", "tool_b"], token_counts={"tool_a": 400, "tool_b": 400})
+        session.load(
+            ["tool_a", "tool_b"],
+            token_counts={"tool_a": 400, "tool_b": 400},
+        )
 
         result = unload_tools(
             tool_names=["tool_a"],
             tool_session=session,
         )
         body = json.loads(result.content)
-        # After unloading: 400/1000 = 40%, below threshold
         assert "compact_mode" in body
         assert body["compact_mode"] is False
 
@@ -610,41 +636,33 @@ class TestMetaToolCompactModeField:
 class TestNoBudgetNoAutoCompact:
     @pytest.mark.asyncio
     async def test_no_budget_skips_auto_compact(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Without token_budget, auto-compact should never trigger."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
-        )
+        adapter = _MockAdapter(tool_factory=factory)
 
-        session = ToolSession(auto_compact=True)  # no budget
+        session = ToolSession(auto_compact=True)
         session.load(["core_tool", "dynamic_0"])
 
-        call_count = 0
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
+        )
 
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.provider"):
-            await provider.generate(
+        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.providers._base"):
+            await adapter.generate(
                 input=[{"role": "user", "content": "test"}],
+                model="test-model",
                 tool_session=session,
                 compact_tools=False,
                 tool_execution_context={"core_tools": ["core_tool"]},
             )
 
         auto_compact_logs = [
-            r for r in caplog.records
-            if "Auto-compact enabled" in r.message
+            r for r in caplog.records if "Auto-compact enabled" in r.message
         ]
         assert len(auto_compact_logs) == 0
 
@@ -656,37 +674,26 @@ class TestNoBudgetNoAutoCompact:
 
 class TestNoSessionNoAutoCompact:
     @pytest.mark.asyncio
-    async def test_no_session_skips_auto_compact(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_no_session_skips_auto_compact(self) -> None:
         """Without tool_session, auto-compact should never trigger."""
         factory = _make_factory()
-        provider = LiteLLMProvider(
-            model="gemini/gemini-2.5-flash", tool_factory=factory
+        adapter = _MockAdapter(tool_factory=factory)
+
+        adapter.set_responses(
+            _tool_call_response(
+                "core_tool", '{"first_name":"A","email":"a@b.com"}'
+            ),
+            _text_response("done"),
         )
 
-        captured_tools: List[List[Dict[str, Any]]] = []
-        call_count = 0
-
-        async def fake_call(kw: Dict[str, Any]) -> Any:
-            nonlocal call_count
-            call_count += 1
-            captured_tools.append(kw.get("tools", []))
-            if call_count == 1:
-                return _completion_response(
-                    tool_calls=[_tool_call("core_tool", '{"first_name":"A","email":"a@b.com"}')]
-                )
-            return _completion_response(content="done")
-
-        monkeypatch.setattr(provider, "_call_litellm", fake_call)
-
-        await provider.generate(
+        await adapter.generate(
             input=[{"role": "user", "content": "test"}],
+            model="test-model",
             compact_tools=False,
         )
 
         # Both iterations should stay non-compact
-        for tools in captured_tools:
-            for t in tools:
-                props = t["function"]["parameters"]["properties"]
-                assert "description" in props["first_name"]
+        for tools in adapter.captured_tools:
+            if tools:
+                for t in tools:
+                    assert _has_description(t)

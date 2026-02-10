@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
 from pydantic import BaseModel
 
 from llm_factory_toolkit.exceptions import ConfigurationError, UnsupportedFeatureError
-from llm_factory_toolkit.provider import (
-    LiteLLMProvider,
-    _is_gpt5_model,
-    _is_openai_model,
-    _supports_reasoning_effort,
-)
+from llm_factory_toolkit.providers import BaseProvider, ProviderResponse, ProviderToolCall
+from llm_factory_toolkit.providers._registry import resolve_provider_key
+from llm_factory_toolkit.providers.openai import OpenAIAdapter
+from llm_factory_toolkit.providers.gemini import GeminiAdapter
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.session import ToolSession
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
@@ -25,113 +22,112 @@ class _StructuredResponse(BaseModel):
     value: str
 
 
-def _tool_call(
-    name: str, arguments: str = "{}", call_id: str = "call-1"
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=call_id,
-        function=SimpleNamespace(name=name, arguments=arguments),
-    )
+def _make_adapter(cls: type = OpenAIAdapter, **kwargs: Any) -> Any:
+    """Create an adapter instance without triggering API client creation."""
+    return cls(api_key="fake-key", **kwargs)
 
 
-def _completion_response(
-    *, content: str = "", tool_calls: List[SimpleNamespace] | None = None
-) -> SimpleNamespace:
-    message = SimpleNamespace(role="assistant", content=content, tool_calls=tool_calls)
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+def test_provider_key_resolution() -> None:
+    """resolve_provider_key routes models to the correct provider key."""
+    assert resolve_provider_key("openai/gpt-4o-mini") == "openai"
+    assert resolve_provider_key("gpt-4o-mini") == "openai"
+    assert resolve_provider_key("chatgpt-4o-latest") == "openai"
+    assert resolve_provider_key("gemini/gemini-2.5-flash") == "gemini"
+    assert resolve_provider_key("anthropic/claude-3-opus") == "anthropic"
+    assert resolve_provider_key("xai/grok-2") == "xai"
+
+    with pytest.raises(ConfigurationError):
+        resolve_provider_key("unknown-model-name")
 
 
-def test_openai_model_detection() -> None:
-    assert _is_openai_model("openai/gpt-4o-mini")
-    assert _is_openai_model("gpt-4o-mini")
-    assert _is_openai_model("chatgpt-4o-latest")
-    assert not _is_openai_model("gemini/gemini-2.5-flash")
-
-
-def test_gpt5_detection() -> None:
-    assert _is_gpt5_model("openai/gpt-5-mini")
-    assert _is_gpt5_model("gpt-5")
-    assert not _is_gpt5_model("gpt-4o-mini")
+def test_gpt5_temperature_omission() -> None:
+    """OpenAIAdapter._should_omit_temperature detects GPT-5 models."""
+    adapter = _make_adapter()
+    # Adapter receives bare model names (prefix stripped by ProviderRouter)
+    assert adapter._should_omit_temperature("gpt-5-mini")  # noqa: SLF001
+    assert adapter._should_omit_temperature("gpt-5")  # noqa: SLF001
+    assert not adapter._should_omit_temperature("gpt-4o-mini")  # noqa: SLF001
 
 
 def test_reasoning_effort_detection() -> None:
+    """OpenAIAdapter._supports_reasoning_effort detects reasoning models."""
+    adapter = _make_adapter()
+    # Adapter receives bare model names (prefix stripped by ProviderRouter)
     # Reasoning models support reasoning_effort
-    assert _supports_reasoning_effort("o1")
-    assert _supports_reasoning_effort("o1-mini")
-    assert _supports_reasoning_effort("o1-preview")
-    assert _supports_reasoning_effort("o3")
-    assert _supports_reasoning_effort("o3-mini")
-    assert _supports_reasoning_effort("o4-mini")
-    assert _supports_reasoning_effort("openai/o3-mini")
-    assert _supports_reasoning_effort("gpt-5")
-    assert _supports_reasoning_effort("gpt-5-mini")
-    assert _supports_reasoning_effort("openai/gpt-5")
+    assert adapter._supports_reasoning_effort("o1")  # noqa: SLF001
+    assert adapter._supports_reasoning_effort("o1-mini")  # noqa: SLF001
+    assert adapter._supports_reasoning_effort("o1-preview")  # noqa: SLF001
+    assert adapter._supports_reasoning_effort("o3")  # noqa: SLF001
+    assert adapter._supports_reasoning_effort("o3-mini")  # noqa: SLF001
+    assert adapter._supports_reasoning_effort("o4-mini")  # noqa: SLF001
+    assert adapter._supports_reasoning_effort("gpt-5")  # noqa: SLF001
+    assert adapter._supports_reasoning_effort("gpt-5-mini")  # noqa: SLF001
     # Non-reasoning models do NOT support reasoning_effort
-    assert not _supports_reasoning_effort("gpt-4o")
-    assert not _supports_reasoning_effort("gpt-4o-mini")
-    assert not _supports_reasoning_effort("gpt-4.1")
-    assert not _supports_reasoning_effort("gpt-4.1-mini")
-    assert not _supports_reasoning_effort("chatgpt-4o-latest")
-    assert not _supports_reasoning_effort("openai/gpt-4o-mini")
+    assert not adapter._supports_reasoning_effort("gpt-4o")  # noqa: SLF001
+    assert not adapter._supports_reasoning_effort("gpt-4o-mini")  # noqa: SLF001
+    assert not adapter._supports_reasoning_effort("gpt-4.1")  # noqa: SLF001
+    assert not adapter._supports_reasoning_effort("gpt-4.1-mini")  # noqa: SLF001
+    assert not adapter._supports_reasoning_effort("chatgpt-4o-latest")  # noqa: SLF001
 
 
-def test_build_openai_request_ignores_reasoning_effort_for_non_reasoning_model() -> None:
+def test_build_request_ignores_reasoning_effort_for_non_reasoning_model() -> None:
     """reasoning_effort is silently dropped for models that don't support it."""
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini")
+    adapter = _make_adapter()
 
-    payload = provider._build_openai_request(  # noqa: SLF001
-        model="openai/gpt-4o-mini",
-        input=[],
+    payload = adapter._build_request(  # noqa: SLF001
+        model="gpt-4o-mini",
+        input_messages=[],
         reasoning_effort="high",
     )
 
     assert "reasoning" not in payload
 
 
-def test_build_openai_request_keeps_reasoning_effort_for_reasoning_model() -> None:
+def test_build_request_keeps_reasoning_effort_for_reasoning_model() -> None:
     """reasoning_effort is forwarded for o-series reasoning models."""
-    provider = LiteLLMProvider(model="openai/o3-mini")
+    adapter = _make_adapter()
 
-    payload = provider._build_openai_request(  # noqa: SLF001
-        model="openai/o3-mini",
-        input=[],
+    payload = adapter._build_request(  # noqa: SLF001
+        model="o3-mini",
+        input_messages=[],
         reasoning_effort="low",
     )
 
     assert payload["reasoning"] == {"effort": "low"}
 
 
-def test_build_call_kwargs_strips_reasoning_effort_for_non_reasoning_model() -> None:
-    """LiteLLM path also strips reasoning_effort for non-reasoning models."""
-    provider = LiteLLMProvider(model="gemini/gemini-2.5-flash")
+def test_non_openai_adapter_does_not_support_reasoning_effort() -> None:
+    """Non-OpenAI adapters do not support reasoning_effort."""
+    adapter = _make_adapter(cls=GeminiAdapter)
 
-    kw = provider._build_call_kwargs(  # noqa: SLF001
-        model="gemini/gemini-2.5-flash",
-        messages=[],
-        reasoning_effort="medium",
+    # BaseProvider default returns False for all models
+    assert not adapter._supports_reasoning_effort("gemini-2.5-flash")  # noqa: SLF001
+    assert not adapter._supports_reasoning_effort("gemini-2.5-pro")  # noqa: SLF001
+
+
+def test_build_request_omits_temperature_for_gpt5() -> None:
+    adapter = _make_adapter()
+
+    # Note: temperature omission is handled by the generate() loop, not _build_request.
+    # _build_request receives temperature=None when the loop decides to omit it.
+    # We test _should_omit_temperature instead for the detection logic.
+    assert adapter._should_omit_temperature("gpt-5-mini")  # noqa: SLF001
+
+    # Verify _build_request does NOT add temperature when None is passed
+    payload = adapter._build_request(  # noqa: SLF001 - testing helper path
+        model="gpt-5-mini",
+        input_messages=[],
+        temperature=None,
     )
-
-    assert "reasoning_effort" not in kw
-
-
-def test_build_openai_request_omits_temperature_for_gpt5() -> None:
-    provider = LiteLLMProvider(model="openai/gpt-5-mini")
-
-    payload = provider._build_openai_request(  # noqa: SLF001 - testing helper path
-        model="openai/gpt-5-mini",
-        input=[],
-        temperature=0.3,
-    )
-
     assert "temperature" not in payload
 
 
-def test_build_openai_request_sets_reasoning_and_text_formats() -> None:
-    provider = LiteLLMProvider(model="openai/o3-mini")
+def test_build_request_sets_reasoning_and_text_formats() -> None:
+    adapter = _make_adapter()
 
-    payload = provider._build_openai_request(  # noqa: SLF001 - testing helper path
-        model="openai/o3-mini",
-        input=[],
+    payload = adapter._build_request(  # noqa: SLF001 - testing helper path
+        model="o3-mini",
+        input_messages=[],
         temperature=0.2,
         response_format=_StructuredResponse,
         reasoning_effort="high",
@@ -142,19 +138,19 @@ def test_build_openai_request_sets_reasoning_and_text_formats() -> None:
     assert payload["text_format"] is _StructuredResponse
 
 
-def test_build_openai_request_supports_json_object_mode() -> None:
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini")
+def test_build_request_supports_json_object_mode() -> None:
+    adapter = _make_adapter()
 
-    payload = provider._build_openai_request(  # noqa: SLF001 - testing helper path
-        model="openai/gpt-4o-mini",
-        input=[],
+    payload = adapter._build_request(  # noqa: SLF001 - testing helper path
+        model="gpt-4o-mini",
+        input_messages=[],
         response_format={"type": "json_object"},
     )
 
     assert payload["text"]["format"]["type"] == "json_object"
 
 
-def test_build_openai_tools_forwards_web_search_options() -> None:
+def test_prepare_native_tools_forwards_web_search_options() -> None:
     factory = ToolFactory()
 
     def echo(query: str) -> ToolExecutionResult:
@@ -170,9 +166,9 @@ def test_build_openai_tools_forwards_web_search_options() -> None:
             "required": ["query"],
         },
     )
-    provider = LiteLLMProvider(model="openai/gpt-4o-mini", tool_factory=factory)
+    adapter = _make_adapter(tool_factory=factory)
 
-    tools = provider._build_openai_tools(  # noqa: SLF001 - testing helper path
+    tools = adapter._prepare_native_tools(  # noqa: SLF001 - testing helper path
         use_tools=["echo"],
         web_search={
             "citations": False,
@@ -192,33 +188,42 @@ def test_build_openai_tools_forwards_web_search_options() -> None:
     assert function_tool["parameters"]["required"] == ["query"]
 
 
-def test_normalize_web_search_defaults() -> None:
-    assert LiteLLMProvider._normalize_web_search(True) == {  # noqa: SLF001
-        "search_context_size": "medium"
-    }
-    assert LiteLLMProvider._normalize_web_search(False) is None  # noqa: SLF001
-    assert LiteLLMProvider._normalize_web_search({}) == {  # noqa: SLF001
-        "search_context_size": "medium"
-    }
+def test_openai_web_search_tool_generation() -> None:
+    """OpenAIAdapter._prepare_native_tools generates web_search_preview entries."""
+    adapter = _make_adapter()
+
+    # web_search=True adds a bare web_search_preview tool
+    tools = adapter._prepare_native_tools(None, web_search=True)  # noqa: SLF001
+    assert tools is not None
+    ws = next(t for t in tools if t["type"] == "web_search_preview")
+    assert ws["type"] == "web_search_preview"
+
+    # web_search=False produces no tools (use_tools=None disables function tools)
+    tools = adapter._prepare_native_tools(None, web_search=False)  # noqa: SLF001
+    assert tools is None
+
+    # web_search={} is falsy — no web_search_preview tool generated
+    tools = adapter._prepare_native_tools(None, web_search={})  # noqa: SLF001
+    assert tools is None
 
 
 def test_normalize_file_search_configs() -> None:
-    assert LiteLLMProvider._normalize_file_search(  # noqa: SLF001
+    assert OpenAIAdapter._normalize_file_search(  # noqa: SLF001
         {"vector_store_ids": ["vs_1"], "max_num_results": 5}
     ) == {
         "type": "file_search",
         "vector_store_ids": ["vs_1"],
         "max_num_results": 5,
     }
-    assert LiteLLMProvider._normalize_file_search(["vs_1", "vs_2"]) == {  # noqa: SLF001
+    assert OpenAIAdapter._normalize_file_search(["vs_1", "vs_2"]) == {  # noqa: SLF001
         "type": "file_search",
         "vector_store_ids": ["vs_1", "vs_2"],
     }
 
     with pytest.raises(ConfigurationError):
-        LiteLLMProvider._normalize_file_search(True)  # noqa: SLF001
+        OpenAIAdapter._normalize_file_search(True)  # noqa: SLF001
     with pytest.raises(ConfigurationError):
-        LiteLLMProvider._normalize_file_search([])  # noqa: SLF001
+        OpenAIAdapter._normalize_file_search([])  # noqa: SLF001
 
 
 def test_responses_to_chat_messages_conversion() -> None:
@@ -229,7 +234,7 @@ def test_responses_to_chat_messages_conversion() -> None:
         {"type": "function_call_output", "call_id": "c1", "output": "{\"ok\":true}"},
     ]
 
-    messages = LiteLLMProvider._responses_to_chat_messages(items)  # noqa: SLF001
+    messages = OpenAIAdapter._responses_to_chat_messages(items)  # noqa: SLF001
 
     assert messages[0]["role"] == "assistant"
     assert messages[0]["content"] == "Hello"
@@ -254,7 +259,7 @@ def test_convert_messages_for_responses_api_conversion() -> None:
         {"role": "tool", "tool_call_id": "c1", "content": "{\"ok\":true}"},
     ]
 
-    converted = LiteLLMProvider._convert_messages_for_responses_api(messages)  # noqa: SLF001
+    converted = OpenAIAdapter._convert_to_responses_api(messages)  # noqa: SLF001
     assert converted[0] == {"role": "assistant", "content": "Planning"}
     assert converted[1]["type"] == "function_call"
     assert converted[2]["type"] == "function_call_output"
@@ -267,9 +272,9 @@ def test_aggregate_final_content_variants() -> None:
     ]
     only_tools = [{"role": "tool", "content": "{}"}]
 
-    assistant_msg = LiteLLMProvider._aggregate_final_content(with_assistant, 5)  # noqa: SLF001
-    tool_msg = LiteLLMProvider._aggregate_final_content(only_tools, 5)  # noqa: SLF001
-    none_msg = LiteLLMProvider._aggregate_final_content([], 5)  # noqa: SLF001
+    assistant_msg = BaseProvider._aggregate_final_content(with_assistant, 5)  # noqa: SLF001
+    tool_msg = BaseProvider._aggregate_final_content(only_tools, 5)  # noqa: SLF001
+    none_msg = BaseProvider._aggregate_final_content([], 5)  # noqa: SLF001
 
     assert assistant_msg and "Partial answer" in assistant_msg
     assert tool_msg and "Tool executions completed" in tool_msg
@@ -302,25 +307,59 @@ async def test_generate_recomputes_visible_tools_from_tool_session(
         parameters={"type": "object", "properties": {}, "required": []},
     )
 
-    provider = LiteLLMProvider(model="gemini/gemini-2.5-flash", tool_factory=factory)
+    adapter = _make_adapter(tool_factory=factory)
     seen_tool_names: List[List[str]] = []
     responses = [
-        _completion_response(tool_calls=[_tool_call("activate")]),
-        _completion_response(content="done", tool_calls=None),
+        # First call: LLM wants to call "activate"
+        ProviderResponse(
+            content="",
+            tool_calls=[ProviderToolCall(call_id="call-1", name="activate", arguments="{}")],
+            raw_messages=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "activate", "arguments": "{}"},
+                        }
+                    ],
+                }
+            ],
+        ),
+        # Second call: LLM returns final content
+        ProviderResponse(
+            content="done",
+            tool_calls=[],
+            raw_messages=[{"role": "assistant", "content": "done"}],
+        ),
     ]
 
-    async def fake_call_litellm(call_kwargs: Dict[str, Any]) -> Any:
-        defs = call_kwargs.get("tools", [])
-        seen_tool_names.append([d["function"]["name"] for d in defs])
+    async def fake_call_api(
+        model: str,
+        messages: List[Dict[str, Any]],
+        *,
+        tools: Any = None,
+        **kwargs: Any,
+    ) -> ProviderResponse:
+        # Extract tool names from OpenAI-format native tools
+        names = []
+        if tools:
+            for t in tools:
+                if t.get("type") == "function":
+                    names.append(t["name"])
+        seen_tool_names.append(names)
         return responses.pop(0)
 
-    monkeypatch.setattr(provider, "_call_litellm", fake_call_litellm)
+    monkeypatch.setattr(adapter, "_call_api", fake_call_api)
 
     session = ToolSession()
     session.load(["activate"])
 
-    result = await provider.generate(
+    result = await adapter.generate(
         input=[{"role": "user", "content": "activate worker"}],
+        model="gpt-4o-mini",
         use_tools=[],
         tool_session=session,
     )
@@ -333,11 +372,12 @@ async def test_generate_recomputes_visible_tools_from_tool_session(
 
 
 @pytest.mark.asyncio
-async def test_generate_rejects_file_search_on_non_openai_models() -> None:
-    provider = LiteLLMProvider(model="gemini/gemini-2.5-flash")
+async def test_generate_rejects_file_search_on_non_openai_adapters() -> None:
+    adapter = _make_adapter(cls=GeminiAdapter)
 
     with pytest.raises(UnsupportedFeatureError):
-        await provider.generate(
+        await adapter.generate(
             input=[{"role": "user", "content": "hi"}],
+            model="gemini-2.5-flash",
             file_search={"vector_store_ids": ["vs_1"]},
         )
