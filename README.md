@@ -373,8 +373,11 @@ client = LLMClient(model="anthropic/claude-sonnet-4")  # NEW!
 
 ```bash
 pip install -e ".[dev]"
+pytest -m "not integration" tests/
+
+# Integration tests are manual-only:
 export OPENAI_API_KEY="your_key"
-pytest tests/
+pytest -m integration --run-integration tests/
 ```
 
 ## License

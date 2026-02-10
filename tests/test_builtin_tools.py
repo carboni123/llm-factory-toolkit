@@ -10,6 +10,9 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_safe_math_evaluator():
+    if builtin_tools.sympify is None:
+        pytest.skip("sympy not installed; safe_math_evaluator is an optional builtin")
+
     factory = ToolFactory()
     factory.register_builtins(["safe_math_evaluator"])
 
