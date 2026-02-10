@@ -33,7 +33,9 @@ class AnthropicAdapter(BaseProvider):
     """Provider adapter for Anthropic using the Messages API."""
 
     API_ENV_VAR = "ANTHROPIC_API_KEY"
-    _EXTRA_PARAMS: frozenset[str] = frozenset({"top_k", "top_p", "stop_sequences", "metadata"})
+    _EXTRA_PARAMS: frozenset[str] = frozenset(
+        {"top_k", "top_p", "stop_sequences", "metadata"}
+    )
 
     def __init__(
         self,

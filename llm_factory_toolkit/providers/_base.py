@@ -210,6 +210,26 @@ class BaseProvider(abc.ABC):
         """
         return None
 
+    @staticmethod
+    def _unwrap_provider_error(error: ProviderError) -> Exception:
+        """Return the deepest exception wrapped by ``ProviderError``.
+
+        Adapters usually raise ``ProviderError(... ) from sdk_error`` in
+        ``_call_api``.  Retry checks need the underlying SDK error type.
+        """
+        candidate: Exception = error
+        seen: set[int] = set()
+        while isinstance(candidate, ProviderError):
+            marker = id(candidate)
+            if marker in seen:
+                break
+            seen.add(marker)
+            cause = candidate.__cause__ or candidate.__context__
+            if not isinstance(cause, Exception):
+                break
+            candidate = cause
+        return candidate
+
     async def _call_api_with_retry(
         self,
         model: str,
@@ -221,13 +241,32 @@ class BaseProvider(abc.ABC):
         for attempt in range(1 + self.max_retries):
             try:
                 return await self._call_api(model, messages, **kwargs)
-            except ProviderError:
-                raise
+            except ProviderError as e:
+                last_error = e
+                retry_error = self._unwrap_provider_error(e)
+                if retry_error is e:
+                    raise
+                if attempt == self.max_retries or not self._is_retryable_error(
+                    retry_error
+                ):
+                    raise
+                wait = self.retry_min_wait * (2**attempt)
+                retry_after = self._extract_retry_after(retry_error)
+                if retry_after is not None:
+                    wait = max(wait, retry_after)
+                logger.warning(
+                    "Retryable provider error (attempt %d/%d), waiting %.1fs: %s",
+                    attempt + 1,
+                    self.max_retries,
+                    wait,
+                    e,
+                )
+                await asyncio.sleep(wait)
             except Exception as e:
                 last_error = e
                 if attempt == self.max_retries or not self._is_retryable_error(e):
                     raise ProviderError(str(e)) from e
-                wait = self.retry_min_wait * (2 ** attempt)
+                wait = self.retry_min_wait * (2**attempt)
                 retry_after = self._extract_retry_after(e)
                 if retry_after is not None:
                     wait = max(wait, retry_after)

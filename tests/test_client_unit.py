@@ -15,6 +15,7 @@ from llm_factory_toolkit.tools.models import (
     ToolExecutionResult,
     ToolIntentOutput,
 )
+from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
 
 def test_register_tool_uses_default_description_when_docstring_missing() -> None:
@@ -70,7 +71,9 @@ async def test_generate_passes_expected_kwargs_and_handles_stream(
 
 
 @pytest.mark.asyncio
-async def test_generate_wraps_unexpected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_generate_wraps_unexpected_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = LLMClient(model="gemini/gemini-2.5-flash")
 
     async def raise_unexpected(**_: Any) -> GenerationResult:

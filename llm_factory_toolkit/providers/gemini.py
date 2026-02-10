@@ -92,8 +92,7 @@ class GeminiAdapter(BaseProvider):
         # Connection / timeout errors
         err_name = type(error).__name__
         if any(
-            kw in err_name.lower()
-            for kw in ("timeout", "connection", "unavailable")
+            kw in err_name.lower() for kw in ("timeout", "connection", "unavailable")
         ):
             return True
         return False

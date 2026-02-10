@@ -36,6 +36,14 @@ class _TransientError(Exception):
     """Non-ProviderError exception used to simulate SDK-level failures."""
 
 
+def _wrap_provider_error(cause: Exception) -> ProviderError:
+    """Create a ProviderError chained from *cause*."""
+    try:
+        raise ProviderError("wrapped provider error") from cause
+    except ProviderError as wrapped:
+        return wrapped
+
+
 class _MockAdapter(BaseProvider):
     """Minimal concrete adapter for testing retry behaviour."""
 
@@ -44,12 +52,14 @@ class _MockAdapter(BaseProvider):
         *,
         responses: list[ProviderResponse | Exception] | None = None,
         retryable: bool = False,
+        retryable_error_type: type[Exception] | None = None,
         retry_after: float | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._responses: list[ProviderResponse | Exception] = list(responses or [])
         self._retryable = retryable
+        self._retryable_error_type = retryable_error_type
         self._retry_after = retry_after
         self._call_count = 0
 
@@ -82,6 +92,8 @@ class _MockAdapter(BaseProvider):
         return definitions
 
     def _is_retryable_error(self, error: Exception) -> bool:
+        if self._retryable_error_type is not None:
+            return isinstance(error, self._retryable_error_type)
         return self._retryable
 
     def _extract_retry_after(self, error: Exception) -> Optional[float]:
@@ -167,6 +179,25 @@ async def test_provider_error_not_retried(mock_sleep: AsyncMock) -> None:
     assert exc_info.value is original
     assert adapter._call_count == 1
     mock_sleep.assert_not_called()
+
+
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_wrapped_provider_error_retries_on_underlying_error(
+    mock_sleep: AsyncMock,
+) -> None:
+    """Wrapped ProviderError retries when its underlying cause is retryable."""
+    wrapped = _wrap_provider_error(_TransientError("rate-limited"))
+    adapter = _MockAdapter(
+        responses=[wrapped, _OK_RESPONSE],
+        retryable_error_type=_TransientError,
+        max_retries=3,
+    )
+
+    result = await adapter._call_api_with_retry("m", [])
+
+    assert result.content == "ok"
+    assert adapter._call_count == 2
+    mock_sleep.assert_awaited_once()
 
 
 @patch("asyncio.sleep", new_callable=AsyncMock)

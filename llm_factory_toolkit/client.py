@@ -64,6 +64,11 @@ class LLMClient:
         is created internally.
     timeout:
         HTTP request timeout in seconds.
+    max_retries:
+        Number of retry attempts for retryable provider failures.
+        Total attempts are ``1 + max_retries``.
+    retry_min_wait:
+        Base delay (seconds) for exponential backoff retries.
     core_tools:
         Tool names that should always be visible to the agent.  Only used
         when ``dynamic_tool_loading=True``.  These tools are loaded into

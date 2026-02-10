@@ -185,6 +185,32 @@ async def test_openai_generate_tool_intent_parses_bad_arguments(
 
 
 @pytest.mark.asyncio
+async def test_openai_call_api_forwards_passthrough_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI adapter forwards documented passthrough kwargs like top_p."""
+    adapter = OpenAIAdapter(api_key="test-key")
+    completion = SimpleNamespace(
+        output_text="ok",
+        output=[_FakeOutputItem(type="text", text="ok")],
+        usage=None,
+    )
+    fake_responses = _FakeResponsesClient(parse_results=[completion])
+    monkeypatch.setattr(adapter, "_get_client", lambda: _openai_client(fake_responses))
+
+    await adapter._call_api(  # noqa: SLF001
+        "gpt-4o-mini",
+        [{"role": "user", "content": "hello"}],
+        top_p=0.9,
+        presence_penalty=0.1,
+    )
+
+    request = fake_responses.parse_calls[0]
+    assert request["top_p"] == 0.9
+    assert request["presence_penalty"] == 0.1
+
+
+@pytest.mark.asyncio
 async def test_openai_generate_stream_returns_usage_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -249,7 +275,9 @@ async def test_gemini_generate_stream_returns_usage_metadata(
     monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
     # Mock _build_native_tools and _build_config to avoid importing google.genai
-    monkeypatch.setattr(adapter, "_build_native_tools", lambda tools, web_search=False: None)
+    monkeypatch.setattr(
+        adapter, "_build_native_tools", lambda tools, web_search=False: None
+    )
     monkeypatch.setattr(
         adapter,
         "_build_config",
