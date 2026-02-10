@@ -516,8 +516,7 @@ class LLMClient:
         tool_result_messages: List[Dict[str, Any]] = []
         if not self.tool_factory:
             raise ConfigurationError(
-                "LLMClient has no ToolFactory configured, "
-                "cannot execute tool intents."
+                "LLMClient has no ToolFactory configured, cannot execute tool intents."
             )
         if not intent_output.tool_calls:
             logger.info("No tool calls to execute.")

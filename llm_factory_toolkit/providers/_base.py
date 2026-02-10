@@ -22,8 +22,6 @@ from typing import (
 from pydantic import BaseModel
 
 from ..exceptions import (
-    ConfigurationError,
-    ProviderError,
     ToolError,
     UnsupportedFeatureError,
 )
@@ -292,8 +290,7 @@ class BaseProvider(abc.ABC):
             content = m.get("content")
             if m.get("role") == "assistant" and isinstance(content, str):
                 return (
-                    content
-                    + f"\n\n[Warning: Max tool iterations ({max_iterations}) "
+                    content + f"\n\n[Warning: Max tool iterations ({max_iterations}) "
                     "reached. Result might be incomplete.]"
                 )
         tool_output_detected = any(m.get("role") == "tool" for m in messages)
@@ -334,9 +331,7 @@ class BaseProvider(abc.ABC):
                 factory.increment_tool_usage(tc.name)
 
             if not tc.name or not tc.call_id:
-                logger.error(
-                    "Malformed tool call: ID=%s, Name=%s", tc.call_id, tc.name
-                )
+                logger.error("Malformed tool call: ID=%s, Name=%s", tc.call_id, tc.name)
                 return ToolResultMessage(
                     call_id=tc.call_id or "unknown",
                     name=tc.name or "unknown",
@@ -364,9 +359,7 @@ class BaseProvider(abc.ABC):
                 ), payload
 
             except ToolError as e:
-                logger.error(
-                    "Tool error for %s (%s): %s", tc.name, tc.call_id, e
-                )
+                logger.error("Tool error for %s (%s): %s", tc.name, tc.call_id, e)
                 return ToolResultMessage(
                     call_id=tc.call_id,
                     name=tc.name,
@@ -523,7 +516,7 @@ class BaseProvider(abc.ABC):
         # Feature gate: file_search
         if file_search and not self._supports_file_search():
             raise UnsupportedFeatureError(
-                f"file_search is not supported by this provider."
+                "file_search is not supported by this provider."
             )
 
         # Dynamic tool loading: inject session and catalog into context
@@ -683,7 +676,7 @@ class BaseProvider(abc.ABC):
         """Stream a response, handling tool calls transparently."""
         if file_search and not self._supports_file_search():
             raise UnsupportedFeatureError(
-                f"file_search is not supported by this provider."
+                "file_search is not supported by this provider."
             )
 
         tool_execution_context = self._inject_dynamic_tool_context(

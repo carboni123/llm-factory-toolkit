@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from ..exceptions import ConfigurationError, ProviderError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
-from ._base import BaseProvider, ProviderResponse, ProviderToolCall, ToolResultMessage
+from ._base import BaseProvider, ProviderResponse, ProviderToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +70,7 @@ class AnthropicAdapter(BaseProvider):
                 f"set the {self.API_ENV_VAR} environment variable."
             )
 
-        self._async_client = anthropic.AsyncAnthropic(
-            api_key=key, timeout=self.timeout
-        )
+        self._async_client = anthropic.AsyncAnthropic(api_key=key, timeout=self.timeout)
         return self._async_client
 
     # ------------------------------------------------------------------
@@ -316,9 +314,7 @@ class AnthropicAdapter(BaseProvider):
 
         # Structured output: force a tool call to a "json_output" tool
         structured_tool_name: Optional[str] = None
-        if isinstance(response_format, type) and issubclass(
-            response_format, BaseModel
-        ):
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             schema = response_format.model_json_schema()
             structured_tool_name = "__json_output__"
             output_tool = {

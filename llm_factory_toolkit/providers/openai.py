@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import (
     Any,
@@ -21,7 +20,6 @@ from ..exceptions import ConfigurationError, ProviderError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
 from ._base import BaseProvider, ProviderResponse, ProviderToolCall, ToolResultMessage
-from ._util import bare_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -360,9 +358,7 @@ class OpenAIAdapter(BaseProvider):
             payload.update(kwargs)
 
         # Structured output via text_format
-        if isinstance(response_format, type) and issubclass(
-            response_format, BaseModel
-        ):
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             payload["text_format"] = response_format
         elif isinstance(response_format, dict):
             payload["text"] = {"format": dict(response_format)}

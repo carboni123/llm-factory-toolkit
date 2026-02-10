@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from ..exceptions import ConfigurationError, ProviderError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
-from ._base import BaseProvider, ProviderResponse, ProviderToolCall, ToolResultMessage
+from ._base import BaseProvider, ProviderResponse, ProviderToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -451,9 +451,7 @@ class GeminiAdapter(BaseProvider):
                         accumulated_text += part.text
                         yield StreamChunk(content=part.text)
                     if part.function_call:
-                        call_id = (
-                            f"call_{part.function_call.name}_{uuid4().hex[:8]}"
-                        )
+                        call_id = f"call_{part.function_call.name}_{uuid4().hex[:8]}"
                         all_tool_calls.append(
                             ProviderToolCall(
                                 call_id=call_id,
