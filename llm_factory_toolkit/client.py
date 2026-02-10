@@ -121,6 +121,8 @@ class LLMClient:
         api_key: Optional[str] = None,
         tool_factory: Optional[ToolFactory] = None,
         timeout: float = 180.0,
+        max_retries: int = 3,
+        retry_min_wait: float = 1.0,
         core_tools: Optional[List[str]] = None,
         dynamic_tool_loading: bool = False,
         compact_tools: bool = False,
@@ -137,6 +139,8 @@ class LLMClient:
             tool_factory=self.tool_factory,
             api_key=api_key,
             timeout=timeout,
+            max_retries=max_retries,
+            retry_min_wait=retry_min_wait,
             **kwargs,
         )
 

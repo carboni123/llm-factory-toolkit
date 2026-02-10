@@ -92,6 +92,8 @@ def _create_adapter(
     api_key: Optional[str],
     tool_factory: Optional[ToolFactory],
     timeout: float,
+    max_retries: int = 3,
+    retry_min_wait: float = 1.0,
     **kwargs: Any,
 ) -> "BaseProvider":
     """Lazily import and instantiate a provider adapter."""
@@ -102,6 +104,8 @@ def _create_adapter(
             api_key=api_key,
             tool_factory=tool_factory,
             timeout=timeout,
+            max_retries=max_retries,
+            retry_min_wait=retry_min_wait,
             **kwargs,
         )
     elif provider_key == "anthropic":
@@ -111,6 +115,8 @@ def _create_adapter(
             api_key=api_key,
             tool_factory=tool_factory,
             timeout=timeout,
+            max_retries=max_retries,
+            retry_min_wait=retry_min_wait,
             **kwargs,
         )
     elif provider_key == "gemini":
@@ -120,6 +126,8 @@ def _create_adapter(
             api_key=api_key,
             tool_factory=tool_factory,
             timeout=timeout,
+            max_retries=max_retries,
+            retry_min_wait=retry_min_wait,
             **kwargs,
         )
     elif provider_key == "xai":
@@ -129,6 +137,8 @@ def _create_adapter(
             api_key=api_key,
             tool_factory=tool_factory,
             timeout=timeout,
+            max_retries=max_retries,
+            retry_min_wait=retry_min_wait,
             **kwargs,
         )
     else:
@@ -162,12 +172,16 @@ class ProviderRouter:
         tool_factory: Optional[ToolFactory] = None,
         api_key: Optional[str] = None,
         timeout: float = 180.0,
+        max_retries: int = 3,
+        retry_min_wait: float = 1.0,
         **kwargs: Any,
     ) -> None:
         self.model = model
         self.tool_factory = tool_factory
         self.api_key = api_key
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_min_wait = retry_min_wait
         self._extra_kwargs = kwargs
         self._adapters: Dict[str, "BaseProvider"] = {}
 
@@ -197,6 +211,8 @@ class ProviderRouter:
                 api_key=self.api_key,
                 tool_factory=self.tool_factory,
                 timeout=self.timeout,
+                max_retries=self.max_retries,
+                retry_min_wait=self.retry_min_wait,
                 **self._extra_kwargs,
             )
 

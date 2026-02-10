@@ -22,6 +22,8 @@ from typing import (
 from pydantic import BaseModel
 
 from ..exceptions import (
+    ProviderError,
+    RetryExhaustedError,
     ToolError,
     UnsupportedFeatureError,
 )
@@ -87,17 +89,25 @@ class BaseProvider(abc.ABC):
     streaming, and context injection.
     """
 
+    # Extra kwargs each adapter knows how to forward to its SDK.
+    # Subclasses override to whitelist provider-specific params.
+    _EXTRA_PARAMS: frozenset[str] = frozenset()
+
     def __init__(
         self,
         *,
         api_key: Optional[str] = None,
         tool_factory: Optional[ToolFactory] = None,
         timeout: float = 180.0,
+        max_retries: int = 3,
+        retry_min_wait: float = 1.0,
         **kwargs: Any,
     ) -> None:
         self.api_key = api_key
         self.tool_factory = tool_factory
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.retry_min_wait = retry_min_wait
 
     # ------------------------------------------------------------------
     # Abstract methods — each adapter MUST implement
@@ -179,6 +189,82 @@ class BaseProvider(abc.ABC):
     def _supports_reasoning_effort(self, model: str) -> bool:
         """Return ``True`` if *model* accepts ``reasoning_effort``."""
         return False
+
+    # ------------------------------------------------------------------
+    # Retry logic
+    # ------------------------------------------------------------------
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """Return ``True`` if *error* is transient and should be retried.
+
+        Subclasses override to detect provider-specific retryable errors
+        (rate limits, server errors, timeouts).  The default returns
+        ``False`` so unknown errors are never retried.
+        """
+        return False
+
+    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+        """Extract a ``Retry-After`` delay (seconds) from *error*, if available.
+
+        Subclasses override to parse SDK-specific headers.
+        """
+        return None
+
+    async def _call_api_with_retry(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> ProviderResponse:
+        """Call ``_call_api`` with exponential-backoff retry on transient errors."""
+        last_error: Optional[Exception] = None
+        for attempt in range(1 + self.max_retries):
+            try:
+                return await self._call_api(model, messages, **kwargs)
+            except ProviderError:
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt == self.max_retries or not self._is_retryable_error(e):
+                    raise ProviderError(str(e)) from e
+                wait = self.retry_min_wait * (2 ** attempt)
+                retry_after = self._extract_retry_after(e)
+                if retry_after is not None:
+                    wait = max(wait, retry_after)
+                logger.warning(
+                    "Retryable error (attempt %d/%d), waiting %.1fs: %s",
+                    attempt + 1,
+                    self.max_retries,
+                    wait,
+                    e,
+                )
+                await asyncio.sleep(wait)
+
+        # Should not reach here, but satisfy the type checker
+        assert last_error is not None  # noqa: S101
+        raise RetryExhaustedError(
+            f"All {self.max_retries} retries exhausted: {last_error}"
+        ) from last_error
+
+    # ------------------------------------------------------------------
+    # Drop unsupported params
+    # ------------------------------------------------------------------
+
+    def _filter_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Remove kwargs not in this adapter's ``_EXTRA_PARAMS`` whitelist.
+
+        Unknown params are logged at debug level and silently dropped.
+        """
+        if not kwargs:
+            return kwargs
+        unknown = set(kwargs) - self._EXTRA_PARAMS
+        if unknown:
+            logger.debug(
+                "Dropping unsupported params for %s: %s",
+                type(self).__name__,
+                unknown,
+            )
+        return {k: v for k, v in kwargs.items() if k in self._EXTRA_PARAMS}
 
     # ------------------------------------------------------------------
     # Shared helpers (moved from LiteLLMProvider)
@@ -551,7 +637,7 @@ class BaseProvider(abc.ABC):
             if effective_temp is not None and self._should_omit_temperature(model):
                 effective_temp = None
 
-            response = await self._call_api(
+            response = await self._call_api_with_retry(
                 model,
                 current_messages,
                 tools=native_tools,
@@ -775,7 +861,7 @@ class BaseProvider(abc.ABC):
             web_search=web_search,
         )
 
-        response = await self._call_api(
+        response = await self._call_api_with_retry(
             model,
             copy.deepcopy(input),
             tools=native_tools,

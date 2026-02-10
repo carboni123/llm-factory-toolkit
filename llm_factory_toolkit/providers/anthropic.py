@@ -26,12 +26,14 @@ logger = logging.getLogger(__name__)
 
 # Default max_tokens for Anthropic (required parameter)
 _DEFAULT_MAX_TOKENS = 4096
+_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 class AnthropicAdapter(BaseProvider):
     """Provider adapter for Anthropic using the Messages API."""
 
     API_ENV_VAR = "ANTHROPIC_API_KEY"
+    _EXTRA_PARAMS: frozenset[str] = frozenset({"top_k", "top_p", "stop_sequences", "metadata"})
 
     def __init__(
         self,
@@ -72,6 +74,35 @@ class AnthropicAdapter(BaseProvider):
 
         self._async_client = anthropic.AsyncAnthropic(api_key=key, timeout=self.timeout)
         return self._async_client
+
+    # ------------------------------------------------------------------
+    # Retry support
+    # ------------------------------------------------------------------
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        try:
+            from anthropic import APIConnectionError, APIStatusError, APITimeoutError
+        except ImportError:
+            return False
+        if isinstance(error, (APIConnectionError, APITimeoutError)):
+            return True
+        if isinstance(error, APIStatusError):
+            return error.status_code in _RETRYABLE_STATUS_CODES
+        return False
+
+    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+        try:
+            from anthropic import APIStatusError
+        except ImportError:
+            return None
+        if isinstance(error, APIStatusError):
+            raw = error.response.headers.get("retry-after")
+            if raw:
+                try:
+                    return float(raw)
+                except (ValueError, TypeError):
+                    pass
+        return None
 
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions → Anthropic Messages API
@@ -292,6 +323,7 @@ class AnthropicAdapter(BaseProvider):
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via Anthropic Messages API."""
+        kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
         system, remaining = self._extract_system(messages)
@@ -393,6 +425,7 @@ class AnthropicAdapter(BaseProvider):
         **kwargs: Any,
     ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
         """Stream via Anthropic Messages API."""
+        kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
         system, remaining = self._extract_system(messages)

@@ -29,3 +29,9 @@ class UnsupportedFeatureError(LLMToolkitError):
     """Exception raised when a provider does not support a requested feature."""
 
     pass
+
+
+class RetryExhaustedError(ProviderError):
+    """Raised when all retry attempts have been exhausted."""
+
+    pass

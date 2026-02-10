@@ -26,10 +26,14 @@ from ._base import BaseProvider, ProviderResponse, ProviderToolCall
 logger = logging.getLogger(__name__)
 
 
+_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
 class GeminiAdapter(BaseProvider):
     """Provider adapter for Google Gemini using the google-genai SDK."""
 
     API_ENV_VAR = "GOOGLE_API_KEY"
+    _EXTRA_PARAMS: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -75,6 +79,24 @@ class GeminiAdapter(BaseProvider):
 
     def _supports_web_search(self) -> bool:
         return True
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        # google-genai raises google.genai.errors.ClientError or
+        # google.api_core.exceptions.GoogleAPIError for API errors.
+        status = getattr(error, "status_code", None) or getattr(error, "code", None)
+        if status is not None:
+            try:
+                return int(status) in _RETRYABLE_STATUS_CODES
+            except (ValueError, TypeError):
+                pass
+        # Connection / timeout errors
+        err_name = type(error).__name__
+        if any(
+            kw in err_name.lower()
+            for kw in ("timeout", "connection", "unavailable")
+        ):
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions → Gemini native
@@ -343,6 +365,7 @@ class GeminiAdapter(BaseProvider):
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via Google Gemini API."""
+        kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
         # Extract system instruction
@@ -417,6 +440,7 @@ class GeminiAdapter(BaseProvider):
         **kwargs: Any,
     ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
         """Stream via Google Gemini API."""
+        kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
         system_instruction, remaining = self._extract_system_instruction(messages)

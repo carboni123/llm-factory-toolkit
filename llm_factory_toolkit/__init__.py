@@ -109,6 +109,7 @@ from .client import LLMClient  # noqa: E402
 from .exceptions import ConfigurationError  # noqa: E402
 from .exceptions import LLMToolkitError  # noqa: E402
 from .exceptions import ProviderError  # noqa: E402
+from .exceptions import RetryExhaustedError  # noqa: E402
 from .exceptions import ToolError  # noqa: E402
 from .exceptions import UnsupportedFeatureError  # noqa: E402
 from .tools import builtins  # noqa: E402
@@ -145,6 +146,7 @@ __all__ = [
     "ProviderError",
     "ToolError",
     "UnsupportedFeatureError",
+    "RetryExhaustedError",
     "GenerationResult",
     "StreamChunk",
     "ToolCatalog",

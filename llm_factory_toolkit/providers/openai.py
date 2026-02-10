@@ -27,10 +27,14 @@ _GPT5_PREFIXES = ("gpt-5",)
 _REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
 
 
+_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
 class OpenAIAdapter(BaseProvider):
     """Provider adapter for OpenAI using the Responses API."""
 
     API_ENV_VAR = "OPENAI_API_KEY"
+    _EXTRA_PARAMS: frozenset[str] = frozenset({"reasoning_effort"})
 
     def __init__(
         self,
@@ -94,6 +98,31 @@ class OpenAIAdapter(BaseProvider):
 
     def _supports_reasoning_effort(self, model: str) -> bool:
         return model.lower().startswith(_REASONING_PREFIXES)
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        try:
+            from openai import APIConnectionError, APIStatusError, APITimeoutError
+        except ImportError:
+            return False
+        if isinstance(error, (APIConnectionError, APITimeoutError)):
+            return True
+        if isinstance(error, APIStatusError):
+            return error.status_code in _RETRYABLE_STATUS_CODES
+        return False
+
+    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+        try:
+            from openai import APIStatusError
+        except ImportError:
+            return None
+        if isinstance(error, APIStatusError):
+            raw = error.response.headers.get("retry-after")
+            if raw:
+                try:
+                    return float(raw)
+                except (ValueError, TypeError):
+                    pass
+        return None
 
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions ↔ Responses API
@@ -383,6 +412,7 @@ class OpenAIAdapter(BaseProvider):
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via OpenAI Responses API."""
+        kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
         # Convert Chat Completions → Responses API format
@@ -470,6 +500,7 @@ class OpenAIAdapter(BaseProvider):
         **kwargs: Any,
     ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
         """Stream via OpenAI Responses API."""
+        kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
         api_input = self._convert_to_responses_api(messages)
