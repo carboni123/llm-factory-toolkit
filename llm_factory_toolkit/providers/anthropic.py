@@ -123,10 +123,10 @@ class AnthropicAdapter(BaseProvider):
                 converted.append({"role": "user", "content": blocks})
 
             elif role == "assistant":
-                blocks: List[Dict[str, Any]] = []
+                assistant_blocks: List[Dict[str, Any]] = []
                 content = msg.get("content")
                 if content:
-                    blocks.append({"type": "text", "text": content})
+                    assistant_blocks.append({"type": "text", "text": content})
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
                         func = tc.get("function", {})
@@ -134,7 +134,7 @@ class AnthropicAdapter(BaseProvider):
                             input_args = json.loads(func.get("arguments", "{}"))
                         except (json.JSONDecodeError, TypeError):
                             input_args = {}
-                        blocks.append(
+                        assistant_blocks.append(
                             {
                                 "type": "tool_use",
                                 "id": tc.get("id", ""),
@@ -142,8 +142,8 @@ class AnthropicAdapter(BaseProvider):
                                 "input": input_args,
                             }
                         )
-                if blocks:
-                    converted.append({"role": "assistant", "content": blocks})
+                if assistant_blocks:
+                    converted.append({"role": "assistant", "content": assistant_blocks})
 
             elif role == "tool":
                 # Tool results must be user messages with tool_result content
@@ -350,6 +350,9 @@ class AnthropicAdapter(BaseProvider):
                 if tc.name == structured_tool_name:
                     try:
                         args = json.loads(tc.arguments)
+                        assert isinstance(response_format, type) and issubclass(
+                            response_format, BaseModel
+                        )
                         parsed_content = response_format.model_validate(args)
                         # Remove the synthetic tool call and return as content
                         tool_calls = [

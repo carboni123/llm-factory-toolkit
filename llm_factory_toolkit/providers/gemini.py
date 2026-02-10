@@ -140,7 +140,7 @@ class GeminiAdapter(BaseProvider):
                 # Tool result message
                 call_id = msg.get("tool_call_id")
                 output = msg.get("content", "")
-                name = msg.get("name") or call_id_to_name.get(call_id, "")
+                name = msg.get("name") or call_id_to_name.get(str(call_id), "")
 
                 if name:
                     response_data: Any = output
