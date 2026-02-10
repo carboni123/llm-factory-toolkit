@@ -95,6 +95,13 @@ class OpenAIAdapter(BaseProvider):
     def _supports_reasoning_effort(self, model: str) -> bool:
         return model.lower().startswith(_REASONING_PREFIXES)
 
+    def _web_search_tool_type(self) -> str:
+        """Return the tool type string for web search.
+
+        OpenAI uses ``web_search_preview``; subclasses (e.g. xAI) override.
+        """
+        return "web_search_preview"
+
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions ↔ Responses API
     # ------------------------------------------------------------------
@@ -299,7 +306,7 @@ class OpenAIAdapter(BaseProvider):
 
         # web_search
         if web_search:
-            ws_tool: Dict[str, Any] = {"type": "web_search_preview"}
+            ws_tool: Dict[str, Any] = {"type": self._web_search_tool_type()}
             if isinstance(web_search, dict):
                 for key, value in web_search.items():
                     if key != "citations":

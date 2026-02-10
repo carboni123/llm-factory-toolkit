@@ -39,3 +39,7 @@ class XAIAdapter(OpenAIAdapter):
 
     def _supports_reasoning_effort(self, model: str) -> bool:
         return False
+
+    def _web_search_tool_type(self) -> str:
+        """xAI uses ``web_search`` instead of OpenAI's ``web_search_preview``."""
+        return "web_search"
