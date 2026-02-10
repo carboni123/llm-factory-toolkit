@@ -204,7 +204,7 @@ def test_prepare_native_tools_forwards_web_search_options() -> None:
         },
     )
 
-    web_search_tool = next(tool for tool in tools if tool["type"] == "web_search_preview")
+    web_search_tool = next(tool for tool in tools if tool["type"] == "web_search")
     function_tool = next(tool for tool in tools if tool["type"] == "function")
 
     assert "citations" not in web_search_tool
@@ -215,20 +215,20 @@ def test_prepare_native_tools_forwards_web_search_options() -> None:
 
 
 def test_openai_web_search_tool_generation() -> None:
-    """OpenAIAdapter._prepare_native_tools generates web_search_preview entries."""
+    """OpenAIAdapter._prepare_native_tools generates web_search entries."""
     adapter = _make_adapter()
 
-    # web_search=True adds a bare web_search_preview tool
+    # web_search=True adds a bare web_search tool
     tools = adapter._prepare_native_tools(None, web_search=True)  # noqa: SLF001
     assert tools is not None
-    ws = next(t for t in tools if t["type"] == "web_search_preview")
-    assert ws["type"] == "web_search_preview"
+    ws = next(t for t in tools if t["type"] == "web_search")
+    assert ws["type"] == "web_search"
 
     # web_search=False produces no tools (use_tools=None disables function tools)
     tools = adapter._prepare_native_tools(None, web_search=False)  # noqa: SLF001
     assert tools is None
 
-    # web_search={} is falsy — no web_search_preview tool generated
+    # web_search={} is falsy — no web_search tool generated
     tools = adapter._prepare_native_tools(None, web_search={})  # noqa: SLF001
     assert tools is None
 

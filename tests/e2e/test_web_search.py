@@ -32,7 +32,7 @@ def _assert_web_search_response(content: str) -> None:
 
 
 # ------------------------------------------------------------------
-# OpenAI  (web_search_preview)
+# OpenAI
 # ------------------------------------------------------------------
 
 
@@ -88,7 +88,7 @@ async def test_gemini_web_search(google_test_model: str) -> None:
 
 
 # ------------------------------------------------------------------
-# xAI  (web_search — was broken before the web_search_preview fix)
+# xAI
 # ------------------------------------------------------------------
 
 
