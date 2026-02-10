@@ -117,6 +117,7 @@ from .tools.models import GenerationResult, StreamChunk, ToolExecutionResult  # 
 from .tools.catalog import InMemoryToolCatalog, ToolCatalog, ToolCatalogEntry  # noqa: E402
 from .tools.session import ToolSession  # noqa: E402
 from .tools.tool_factory import ToolFactory  # noqa: E402
+from .models import ModelInfo, get_model_info, list_models  # noqa: E402
 
 # --- Utility functions ---
 
@@ -151,6 +152,9 @@ __all__ = [
     "ToolCatalogEntry",
     "ToolSession",
     "ToolExecutionResult",
+    "ModelInfo",
+    "list_models",
+    "get_model_info",
     "clean_json_string",
     "extract_json_from_markdown",
     "builtins",
