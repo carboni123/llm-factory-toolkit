@@ -355,6 +355,10 @@ class OpenAIAdapter(BaseProvider):
             if self._supports_reasoning_effort(model):
                 payload["reasoning"] = {"effort": effort}
 
+        # Forward any remaining kwargs to the API request
+        if kwargs:
+            payload.update(kwargs)
+
         # Structured output via text_format
         if isinstance(response_format, type) and issubclass(
             response_format, BaseModel

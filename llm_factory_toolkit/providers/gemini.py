@@ -365,7 +365,7 @@ class GeminiAdapter(BaseProvider):
 
         try:
             response = await client.aio.models.generate_content(
-                model=model, contents=contents, config=config
+                model=model, contents=contents, config=config, **kwargs
             )
         except Exception as e:
             raise ProviderError(f"Google Gemini API error: {e}") from e
@@ -434,7 +434,7 @@ class GeminiAdapter(BaseProvider):
 
         try:
             stream = await client.aio.models.generate_content_stream(
-                model=model, contents=contents, config=config
+                model=model, contents=contents, config=config, **kwargs
             )
         except Exception as e:
             raise ProviderError(f"Google Gemini API stream error: {e}") from e

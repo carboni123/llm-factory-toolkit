@@ -335,6 +335,10 @@ class AnthropicAdapter(BaseProvider):
                 request["tools"] = [output_tool]
                 request["tool_choice"] = {"type": "tool", "name": structured_tool_name}
 
+        # Forward any remaining kwargs to the API request
+        if kwargs:
+            request.update(kwargs)
+
         try:
             response = await client.messages.create(**request)
         except Exception as e:
@@ -409,6 +413,10 @@ class AnthropicAdapter(BaseProvider):
 
         if tools:
             request["tools"] = tools
+
+        # Forward any remaining kwargs to the API request
+        if kwargs:
+            request.update(kwargs)
 
         try:
             async with client.messages.stream(**request) as stream:

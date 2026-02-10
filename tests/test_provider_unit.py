@@ -40,6 +40,17 @@ def test_provider_key_resolution() -> None:
         resolve_provider_key("unknown-model-name")
 
 
+def test_bare_o_series_model_routing() -> None:
+    """Bare o-series model IDs (o1, o3, o4) route to OpenAI."""
+    assert resolve_provider_key("o1") == "openai"
+    assert resolve_provider_key("o3") == "openai"
+    assert resolve_provider_key("o4") == "openai"
+    # Prefixed variants still work
+    assert resolve_provider_key("o1-mini") == "openai"
+    assert resolve_provider_key("o3-mini") == "openai"
+    assert resolve_provider_key("o4-mini") == "openai"
+
+
 def test_gpt5_temperature_omission() -> None:
     """OpenAIAdapter._should_omit_temperature detects GPT-5 models."""
     adapter = _make_adapter()
@@ -68,6 +79,21 @@ def test_reasoning_effort_detection() -> None:
     assert not adapter._supports_reasoning_effort("gpt-4.1")  # noqa: SLF001
     assert not adapter._supports_reasoning_effort("gpt-4.1-mini")  # noqa: SLF001
     assert not adapter._supports_reasoning_effort("chatgpt-4o-latest")  # noqa: SLF001
+
+
+def test_build_request_forwards_extra_kwargs() -> None:
+    """Extra kwargs are forwarded into the request payload."""
+    adapter = _make_adapter()
+
+    payload = adapter._build_request(  # noqa: SLF001
+        model="gpt-4o-mini",
+        input_messages=[],
+        top_p=0.9,
+        presence_penalty=0.5,
+    )
+
+    assert payload["top_p"] == 0.9
+    assert payload["presence_penalty"] == 0.5
 
 
 def test_build_request_ignores_reasoning_effort_for_non_reasoning_model() -> None:

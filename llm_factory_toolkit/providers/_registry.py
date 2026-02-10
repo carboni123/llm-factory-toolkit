@@ -49,6 +49,13 @@ _BARE_PREFIX_MAP: Dict[str, str] = {
     "grok-": "xai",
 }
 
+# Exact bare model names that don't have a dash suffix (e.g. "o1", "o3", "o4")
+_EXACT_MODEL_MAP: Dict[str, str] = {
+    "o1": "openai",
+    "o3": "openai",
+    "o4": "openai",
+}
+
 
 def resolve_provider_key(model: str) -> str:
     """Resolve a model string to a provider key.
@@ -68,6 +75,10 @@ def resolve_provider_key(model: str) -> str:
     for prefix, key in _BARE_PREFIX_MAP.items():
         if bare.startswith(prefix):
             return key
+
+    # Check exact model names (e.g. "o1", "o3", "o4")
+    if bare in _EXACT_MODEL_MAP:
+        return _EXACT_MODEL_MAP[bare]
 
     raise ConfigurationError(
         f"Cannot determine provider for model '{model}'. "
