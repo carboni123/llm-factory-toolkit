@@ -6,9 +6,9 @@ Dynamic Tool Calling Benchmark
 Standalone benchmark for measuring how well LLMs follow the
 browse -> load -> use protocol with dynamic tool management.
 
-Registers 17 CRM mock tools across 6 categories and runs 10 benchmark
+Registers 23 CRM mock tools across 6 categories and runs 13 benchmark
 cases that test protocol compliance, tool loading accuracy, cross-category
-workflows, and session persistence.
+workflows, CRUD operations, and session persistence.
 
 Usage:
     python scripts/benchmark_dynamic_tools.py --model openai/gpt-4o-mini
@@ -192,7 +192,7 @@ def _build_persistence_simulation() -> tuple[ToolFactory, InMemoryToolCatalog, T
 
 
 # ---------------------------------------------------------------------------
-# 10 Benchmark Cases
+# 13 Benchmark Cases
 # ---------------------------------------------------------------------------
 
 
@@ -396,7 +396,81 @@ def build_cases() -> list[BenchmarkCase]:
         )
     )
 
-    # 10. session_persistence (persistence) - multi-turn
+    # 10. customer_update (smoke)
+    cases.append(
+        BenchmarkCase(
+            name="customer_update",
+            description="Agent discovers and uses update_customer to modify a customer record.",
+            system_prompt=SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Update Maria Silva's email address to maria.silva@newco.com. "
+                        "Her customer ID is c1-mock-uuid."
+                    ),
+                }
+            ],
+            expect_tools_loaded=["update_customer"],
+            expect_tools_called=["update_customer"],
+            expect_meta_calls=["browse_toolkit", "load_tools"],
+            expect_response_contains=["update"],
+            tags=["smoke"],
+        )
+    )
+
+    # 11. deal_lifecycle (multi-tool)
+    cases.append(
+        BenchmarkCase(
+            name="deal_lifecycle",
+            description="Agent queries deals, updates one to Won, and deletes another.",
+            system_prompt=SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Look up our deals. Then mark the Enterprise Plan deal (ID: d2-mock) as Won, "
+                        "and delete the Starter Kit deal (ID: d3-mock) because it was a duplicate."
+                    ),
+                }
+            ],
+            expect_tools_loaded=["query_deals"],
+            expect_tools_called=["query_deals"],
+            expect_meta_calls=["browse_toolkit", "load_tools"],
+            expect_response_contains=[],
+            expect_tools_loaded_any=["update_deal", "delete_deal"],
+            expect_tools_called_any=["update_deal", "delete_deal"],
+            tags=["multi-tool"],
+        )
+    )
+
+    # 12. task_cleanup (cross-category)
+    cases.append(
+        BenchmarkCase(
+            name="task_cleanup",
+            description="Agent queries tasks, updates priority on some and deletes others.",
+            system_prompt=SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Check all overdue tasks. Delete the task 'Call back client re: invoice' "
+                        "(ID: t1-mock) since it's resolved, and update the task 'Send contract revision' "
+                        "(ID: t2-mock) to Urgent priority."
+                    ),
+                }
+            ],
+            expect_tools_loaded=["query_tasks"],
+            expect_tools_called=["query_tasks"],
+            expect_meta_calls=["browse_toolkit", "load_tools"],
+            expect_response_contains=[],
+            expect_tools_loaded_any=["delete_task", "update_task"],
+            expect_tools_called_any=["delete_task", "update_task"],
+            tags=["cross-category"],
+        )
+    )
+
+    # 13. session_persistence (persistence) - multi-turn
     cases.append(
         BenchmarkCase(
             name="session_persistence",
@@ -643,8 +717,8 @@ def evaluate_case(
     meta_overhead_pct = (meta_calls_count / total_calls * 100) if total_calls else 0.0
     efficiency_ratio = (business_calls_count / total_calls * 100) if total_calls else 0.0
 
-    # Redundant browses: browse_toolkit calls beyond the first
-    browse_count = sum(1 for t in all_calls if t == "browse_toolkit")
+    # Redundant discovery calls: browse_toolkit OR find_tools calls beyond the first
+    browse_count = sum(1 for t in all_calls if t in ("browse_toolkit", "find_tools"))
     redundant_browses = max(0, browse_count - 1)
 
     # Wasted loads: non-meta tools in session that were never actually called
@@ -716,13 +790,20 @@ async def run_case(
         else:
             factory, catalog, session = _build_simulation()
 
-        # Wire up semantic search sub-agent when requested
+        # Wire up semantic search sub-agent when requested.
+        # find_tools REPLACES browse_toolkit — only one discovery tool.
         tool_execution_context: dict[str, Any] | None = None
         if search_agent_model:
             factory.register_find_tools()
+            session.unload(["browse_toolkit"])
             session.load(["find_tools"])
             search_client = LLMClient(model=search_agent_model)
             tool_execution_context = {"_search_agent": search_client}
+            # Adjust expectations: swap browse_toolkit → find_tools
+            case.expect_meta_calls = [
+                "find_tools" if t == "browse_toolkit" else t
+                for t in case.expect_meta_calls
+            ]
 
         client = LLMClient(model=model, tool_factory=factory)
 
@@ -1010,7 +1091,7 @@ def format_efficiency_analysis(results: list[BenchmarkResult]) -> str:
     lines.append("")
 
     # Per-case efficiency breakdown
-    header = f"  {'Case':<22} {'Calls':>6} {'Meta':>5} {'Biz':>5} {'Overhead':>8} {'Eff':>6} {'ReBrowse':>8} {'Wasted':>7} {'Ceiling':>7}"
+    header = f"  {'Case':<22} {'Calls':>6} {'Meta':>5} {'Biz':>5} {'Overhead':>8} {'Eff':>6} {'ReDisc':>8} {'Wasted':>7} {'Ceiling':>7}"
     lines.append(header)
     lines.append("  " + "-" * (len(header) - 2))
 
@@ -1038,7 +1119,7 @@ def format_efficiency_analysis(results: list[BenchmarkResult]) -> str:
         if r.meta_overhead_pct > 60:
             issues.append(f"  [!] {r.case_name}: {r.meta_overhead_pct:.0f}% meta overhead — model spent most calls on discovery")
         if r.redundant_browses >= 2:
-            issues.append(f"  [!] {r.case_name}: {r.redundant_browses} redundant browse_toolkit calls")
+            issues.append(f"  [!] {r.case_name}: {r.redundant_browses} redundant discovery calls")
         if len(r.wasted_loads) >= 3:
             issues.append(f"  [!] {r.case_name}: {len(r.wasted_loads)} tools loaded but never used: {r.wasted_loads}")
 

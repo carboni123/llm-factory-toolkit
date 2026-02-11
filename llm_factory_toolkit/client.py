@@ -71,29 +71,28 @@ class LLMClient:
         Base delay (seconds) for exponential backoff retries.
     core_tools:
         Tool names that should always be visible to the agent.  Only used
-        when ``dynamic_tool_loading=True``.  These tools are loaded into
-        every auto-created :class:`ToolSession` alongside the meta-tools
-        ``browse_toolkit`` and ``load_tools``.
+        when ``dynamic_tool_loading`` is enabled.  These tools are loaded
+        into every auto-created :class:`ToolSession` alongside the
+        discovery meta-tools.
     dynamic_tool_loading:
-        When ``True``, the client automatically builds an
-        :class:`InMemoryToolCatalog` from the factory, registers the
-        ``browse_toolkit`` / ``load_tools`` meta-tools, and creates a
-        fresh :class:`ToolSession` on every ``generate()`` call.  This
-        lets the agent start with only ``core_tools`` and discover/load
-        additional tools on demand, reducing context bloat.  Requires an
-        explicit ``tool_factory`` with registered tools.
+        Controls how the agent discovers tools at runtime.  Accepts:
+
+        * ``False`` (default) -- disabled, all tools sent up-front.
+        * ``True`` -- keyword search via ``browse_toolkit``.
+        * A model string (e.g. ``"openai/gpt-4o-mini"``) -- semantic
+          search via ``find_tools`` powered by a cheap sub-agent LLM.
+
+        When enabled the client automatically builds an
+        :class:`InMemoryToolCatalog`, registers the appropriate
+        discovery meta-tools, and creates a fresh :class:`ToolSession`
+        on every ``generate()`` call.  Requires an explicit
+        ``tool_factory`` with registered tools.
     compact_tools:
         When ``True``, non-core tool definitions are sent to the LLM
         with nested ``description`` and ``default`` fields stripped,
         saving 20-40% tokens.  Core tools (listed in ``core_tools``)
         always retain full definitions.  Can be overridden per-call
         via ``generate(compact_tools=...)``.  Default ``False``.
-    search_agent_model:
-        Model string for the semantic search sub-agent (e.g.
-        ``"openai/gpt-4o-mini"``).  When set, a ``find_tools``
-        meta-tool is registered that uses this cheap LLM to interpret
-        natural-language intent and find matching tools from the
-        catalog.  Only used when ``dynamic_tool_loading=True``.
     **kwargs:
         Extra keyword arguments forwarded to provider adapters.
 
@@ -115,15 +114,23 @@ class LLMClient:
             input=[{"role": "user", "content": "Use my_func"}],
         )
 
-    Dynamic tool loading (many tools, agent discovers on demand)::
+    Dynamic tool loading -- keyword search::
 
         client = LLMClient(
             model="openai/gpt-4.1-mini",
             tool_factory=factory,          # has 20+ registered tools
             core_tools=["call_human"],     # always visible
-            dynamic_tool_loading=True,     # auto catalog + meta-tools
+            dynamic_tool_loading=True,     # browse_toolkit (keyword)
         )
-        result = await client.generate(input=messages)
+
+    Dynamic tool loading -- semantic search via sub-agent::
+
+        client = LLMClient(
+            model="openai/gpt-4.1-mini",
+            tool_factory=factory,
+            core_tools=["call_human"],
+            dynamic_tool_loading="openai/gpt-4o-mini",  # find_tools (LLM)
+        )
     """
 
     def __init__(
@@ -135,9 +142,8 @@ class LLMClient:
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
         core_tools: Optional[List[str]] = None,
-        dynamic_tool_loading: bool = False,
+        dynamic_tool_loading: Union[bool, str] = False,
         compact_tools: bool = False,
-        search_agent_model: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         logger.info("Initialising LLMClient for model: %s", model)
@@ -156,16 +162,20 @@ class LLMClient:
             **kwargs,
         )
 
-        # Dynamic tool loading setup
+        # Dynamic tool loading setup — normalise str to True + model name
         self.core_tools = core_tools or []
-        self.dynamic_tool_loading = dynamic_tool_loading
-        self.search_agent_model = search_agent_model
+        if isinstance(dynamic_tool_loading, str):
+            self._search_agent_model: Optional[str] = dynamic_tool_loading
+            self.dynamic_tool_loading: bool = True
+        else:
+            self._search_agent_model = None
+            self.dynamic_tool_loading = dynamic_tool_loading
         self._search_agent: Optional[LLMClient] = None
 
         if self.dynamic_tool_loading:
             if tool_factory is None:
                 raise ConfigurationError(
-                    "dynamic_tool_loading=True requires an explicit tool_factory "
+                    "dynamic_tool_loading requires an explicit tool_factory "
                     "with registered tools."
                 )
             if self.tool_factory.get_catalog() is None:
@@ -182,9 +192,9 @@ class LLMClient:
                 raise ConfigurationError(
                     f"core_tools contain unregistered tool names: {invalid}"
                 )
-            # Semantic search sub-agent (opt-in)
-            if self.search_agent_model:
-                self._search_agent = LLMClient(model=self.search_agent_model)
+            # Semantic search sub-agent (opt-in via model string)
+            if self._search_agent_model:
+                self._search_agent = LLMClient(model=self._search_agent_model)
                 if "find_tools" not in self.tool_factory.available_tool_names:
                     self.tool_factory.register_find_tools()
 
@@ -195,9 +205,12 @@ class LLMClient:
     def _build_dynamic_session(self) -> ToolSession:
         """Create a fresh :class:`ToolSession` with core + meta tools loaded."""
         session = ToolSession()
-        meta = ["browse_toolkit", "load_tools", "unload_tools"]
+        # Use find_tools (semantic) OR browse_toolkit (keyword) — not both.
         if "find_tools" in self.tool_factory.available_tool_names:
-            meta.append("find_tools")
+            discovery = "find_tools"
+        else:
+            discovery = "browse_toolkit"
+        meta = [discovery, "load_tools", "unload_tools"]
         initial = list(dict.fromkeys(self.core_tools + meta))
         session.load(initial)
         return session
@@ -309,8 +322,8 @@ class LLMClient:
                 * ``["tool_a", "tool_b"]``: only these tools are visible.
                 * ``None``: **no** tools; pure text generation.
 
-                When ``dynamic_tool_loading=True``, this is overridden by the
-                active tools in the auto-created :class:`ToolSession`.
+                When ``dynamic_tool_loading`` is enabled, this is overridden
+                by the active tools in the auto-created :class:`ToolSession`.
             tool_execution_context: A dict of server-side values injected
                 into tool functions by matching parameter names.  The LLM
                 never sees these values.  Example::
@@ -344,7 +357,7 @@ class LLMClient:
             tool_session: An explicit :class:`ToolSession` for dynamic tool
                 loading.  When provided, the model sees **only** the tools
                 in the session's active set (recomputed each loop iteration).
-                If ``dynamic_tool_loading=True`` and no ``tool_session`` is
+                If ``dynamic_tool_loading`` is enabled and no ``tool_session`` is
                 passed, a fresh session with ``core_tools`` + meta-tools is
                 created automatically.
             compact_tools: Override the client's ``compact_tools`` setting

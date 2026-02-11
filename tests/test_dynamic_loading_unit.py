@@ -77,6 +77,14 @@ class TestDynamicToolLoading:
                 dynamic_tool_loading=True,
             )
 
+    def test_dynamic_string_requires_tool_factory(self) -> None:
+        """ConfigurationError when dynamic_tool_loading is a model string but no factory."""
+        with pytest.raises(ConfigurationError, match="dynamic_tool_loading"):
+            LLMClient(
+                model="openai/gpt-4o-mini",
+                dynamic_tool_loading="openai/gpt-4o-mini",
+            )
+
     def test_auto_builds_catalog(self) -> None:
         """Catalog and meta-tools auto-created when not already set up."""
         factory = _make_factory()

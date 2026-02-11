@@ -216,9 +216,17 @@ client = LLMClient(
     model="openai/gpt-4.1-mini",
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
-    dynamic_tool_loading=True,       # Enables browse_toolkit, load_tools, unload_tools
+    dynamic_tool_loading=True,       # Keyword search via browse_toolkit
     compact_tools=True,              # 20-40% token savings on non-core tools
-    search_agent_model="openai/gpt-4o-mini",  # Optional: enables semantic find_tools
+)
+
+# Or use semantic search via a cheap sub-agent LLM:
+client = LLMClient(
+    model="openai/gpt-4.1-mini",
+    tool_factory=factory,
+    core_tools=["call_human"],
+    dynamic_tool_loading="openai/gpt-4o-mini",  # Semantic search via find_tools
+    compact_tools=True,
 )
 
 result = await client.generate(
@@ -226,12 +234,12 @@ result = await client.generate(
 )
 ```
 
-With `dynamic_tool_loading=True`, the client automatically:
+`dynamic_tool_loading` accepts `True` (keyword search) or a model string (semantic search). Either way, the client automatically:
 1. Builds a searchable `InMemoryToolCatalog` from the factory
-2. Registers `browse_toolkit`, `load_tools`, `load_tool_group`, and `unload_tools` meta-tools
+2. Registers discovery meta-tools (`browse_toolkit` or `find_tools`) plus `load_tools`, `load_tool_group`, and `unload_tools`
 3. Creates a fresh `ToolSession` per `generate()` call with your `core_tools` + meta-tools loaded
 
-The agent uses `browse_toolkit` to search for relevant tools by keyword, category, or group, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs. When `search_agent_model` is set, `find_tools` provides semantic search via a cheap sub-agent LLM for natural-language queries that keyword search might miss.
+The agent uses the discovery tool to search for relevant tools, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs. When a model string is passed, `find_tools` uses a cheap sub-agent LLM to interpret natural-language intent — better for queries that keyword search might miss.
 
 **Context-aware tool selection:** Search uses majority matching (at least half of the query tokens must appear) combined with weighted relevance scoring (name=3x, tags=2x, description=1x, category=1x). This allows natural-language queries to find relevant tools even when not all keywords match exactly. The `group` filter gracefully falls back to `category` when tools don't have explicit groups.
 

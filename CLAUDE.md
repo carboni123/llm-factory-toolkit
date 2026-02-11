@@ -48,7 +48,7 @@ This library uses **native provider adapters** with a shared agentic loop:
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading`/`search_agent_model`, history merging | ~700 |
+| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading` (`bool` or model string), history merging | ~700 |
 | `providers/__init__.py` | Package exports: `ProviderRouter`, `BaseProvider`, normalised types | ~10 |
 | `providers/_base.py` | `BaseProvider` ABC -- shared agentic loop, tool dispatch, compact mode, auto-compact | ~820 |
 | `providers/_registry.py` | `ProviderRouter` -- model prefix routing, lazy adapter caching | ~150 |
@@ -144,7 +144,7 @@ Two modes of operation:
 
 When a `tool_session` is active, the agentic loop recomputes visible tools each iteration from `session.list_active()`. Meta-tools (`browse_toolkit`, `load_tools`, `unload_tools`) modify the session mid-loop so newly loaded tools appear in the next LLM call, and unloaded tools are removed.
 
-**Semantic search** (`find_tools`): Set `search_agent_model="openai/gpt-4o-mini"` on `LLMClient` to enable `find_tools`, a meta-tool that uses a cheap sub-agent LLM to interpret natural-language intent and find matching tools. The sub-agent receives the full catalog (names + descriptions + tags only, no parameter schemas) and returns matching tool names in a single LLM call. Coexists with keyword-based `browse_toolkit`.
+**Semantic search** (`find_tools`): Pass a model string to `dynamic_tool_loading` (e.g. `dynamic_tool_loading="openai/gpt-4o-mini"`) to use `find_tools` instead of `browse_toolkit`. This meta-tool uses a cheap sub-agent LLM to interpret natural-language intent and find matching tools. The sub-agent receives the full catalog (names + descriptions + tags only, no parameter schemas) and returns matching tool names in a single LLM call. Only one discovery tool is loaded per session — `browse_toolkit` for `True`, `find_tools` for a model string.
 
 Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Context injection passes `tool_session`, `tool_catalog`, and `_search_agent` to meta-tools without LLM visibility.
 
@@ -199,7 +199,7 @@ Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Contex
 - `test_llmcall_websearch.py` -- web search
 - `test_llmcall_google.py` -- Google Gemini provider
 - `test_llmcall_dynamic_tools.py` -- dynamic tool loading with real APIs
-- `test_simulation_crm.py` -- 17-tool CRM simulation with dynamic loading
+- `test_simulation_crm.py` -- 23-tool CRM simulation with dynamic loading
 - `test_streaming.py` -- streaming responses
 - `test_toolfactory_usage_metadata.py` -- usage tracking end-to-end
 - Skip conditions: `@pytest.mark.skipif(not OPENAI_API_KEY, reason="...")`

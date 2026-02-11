@@ -664,9 +664,17 @@ client = LLMClient(
     model="openai/gpt-4.1-mini",
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
-    dynamic_tool_loading=True,       # Enables browse_toolkit, load_tools, unload_tools
-    compact_tools=True,              # Optional: strip nested descriptions from non-core tools (20-40% token savings)
-    search_agent_model="openai/gpt-4o-mini",  # Optional: enables find_tools semantic search
+    dynamic_tool_loading=True,       # Keyword search via browse_toolkit
+    compact_tools=True,              # Optional: 20-40% token savings on non-core tools
+)
+
+# Or use semantic search via a cheap sub-agent LLM:
+client = LLMClient(
+    model="openai/gpt-4.1-mini",
+    tool_factory=factory,
+    core_tools=["call_human"],
+    dynamic_tool_loading="openai/gpt-4o-mini",  # Semantic search via find_tools
+    compact_tools=True,
 )
 
 result = await client.generate(
@@ -674,12 +682,11 @@ result = await client.generate(
 )
 ```
 
-With `dynamic_tool_loading=True`, the client automatically:
+`dynamic_tool_loading` accepts `True` (keyword search) or a model string (semantic search). Either way, the client automatically:
 1. Builds a searchable `InMemoryToolCatalog` from the factory (if no catalog already exists)
-2. Registers `browse_toolkit`, `load_tools`, `load_tool_group`, and `unload_tools` meta-tools (if not already registered)
+2. Registers discovery meta-tools: `browse_toolkit` (keyword) or `find_tools` (semantic), plus `load_tools`, `load_tool_group`, and `unload_tools`
 3. Validates that all `core_tools` are registered in the factory
 4. Creates a fresh `ToolSession` per `generate()` call with `core_tools` + meta-tools loaded
-5. When `search_agent_model` is set, creates a sub-agent and registers `find_tools` for semantic search
 
 If you pass an explicit `tool_session` to `generate()`, it takes precedence over the auto-created session.
 
@@ -839,28 +846,27 @@ The catalog uses **agentic search** (substring-based keyword matching with major
 
 ### Semantic Search with `find_tools`
 
-For cases where keyword search falls short (e.g., "I need to register new customers" won't match `create_customer` because "register" doesn't appear in its metadata), the `find_tools` meta-tool uses a cheap sub-agent LLM to interpret natural language intent:
+For cases where keyword search falls short (e.g., "I need to register new customers" won't match `create_customer` because "register" doesn't appear in its metadata), pass a model string to `dynamic_tool_loading` to enable semantic search:
 
 ```python
 client = LLMClient(
     model="openai/gpt-4o",
     tool_factory=factory,
-    dynamic_tool_loading=True,
-    search_agent_model="openai/gpt-4o-mini",  # Cheap model for tool finding
+    dynamic_tool_loading="openai/gpt-4o-mini",  # Cheap model for tool finding
 )
 ```
 
-When `search_agent_model` is set:
-- A `find_tools` meta-tool is registered alongside `browse_toolkit`
-- The agent can call `find_tools(intent="I need to register new customers")` to discover tools semantically
+When a model string is passed:
+- `find_tools` replaces `browse_toolkit` as the sole discovery tool
+- The agent calls `find_tools(intent="I need to register new customers")` to discover tools semantically
 - A sub-agent receives the catalog (names + descriptions + tags, no parameter schemas) and returns matching tool names
 - This is a **single LLM call** — not a full agentic loop — keeping latency and cost minimal
 - Hallucinated tool names are filtered out automatically (validated against the catalog)
-- The response format matches `browse_toolkit` so the agent follows the same browse -> load -> use protocol
+- The response format matches `browse_toolkit` so the agent follows the same discover -> load -> use protocol
 
-Both discovery methods coexist:
-- **`browse_toolkit`**: Keyword search — fast, free, zero LLM cost
-- **`find_tools`**: Semantic search — smarter, costs one sub-agent LLM call per invocation
+Two discovery modes (mutually exclusive):
+- **`dynamic_tool_loading=True`**: Keyword search via `browse_toolkit` — fast, free, zero LLM cost
+- **`dynamic_tool_loading="model_string"`**: Semantic search via `find_tools` — smarter, costs one sub-agent LLM call per invocation
 
 ### Best Practices
 

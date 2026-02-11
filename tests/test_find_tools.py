@@ -556,15 +556,15 @@ class TestRegisterFindTools:
 
 
 # ------------------------------------------------------------------
-# LLMClient integration (search_agent_model)
+# LLMClient integration (dynamic_tool_loading with model string)
 # ------------------------------------------------------------------
 
 
 class TestClientSearchAgentModel:
-    """Tests for LLMClient.search_agent_model wiring."""
+    """Tests for LLMClient dynamic_tool_loading='model_string' wiring."""
 
     def test_no_search_agent_by_default(self) -> None:
-        """Without search_agent_model, find_tools is not registered."""
+        """dynamic_tool_loading=True uses keyword search, no sub-agent."""
         factory = _make_factory()
         client = LLMClient(
             model="openai/gpt-4o-mini",
@@ -574,46 +574,43 @@ class TestClientSearchAgentModel:
         assert client._search_agent is None
         assert "find_tools" not in factory.available_tool_names
 
-    def test_search_agent_creates_sub_client(self) -> None:
-        """search_agent_model creates a sub-LLMClient and registers find_tools."""
+    def test_string_creates_sub_client(self) -> None:
+        """Model string creates a sub-LLMClient and registers find_tools."""
         factory = _make_factory()
         client = LLMClient(
             model="openai/gpt-4o-mini",
             tool_factory=factory,
-            dynamic_tool_loading=True,
-            search_agent_model="openai/gpt-4o-mini",
+            dynamic_tool_loading="openai/gpt-4o-mini",
         )
         assert client._search_agent is not None
         assert isinstance(client._search_agent, LLMClient)
         assert "find_tools" in factory.available_tool_names
 
-    def test_search_agent_model_requires_dynamic_loading(self) -> None:
-        """search_agent_model without dynamic_tool_loading does nothing."""
+    def test_string_sets_dynamic_tool_loading_true(self) -> None:
+        """Model string normalises to dynamic_tool_loading=True internally."""
         factory = _make_factory()
         client = LLMClient(
             model="openai/gpt-4o-mini",
             tool_factory=factory,
-            search_agent_model="openai/gpt-4o-mini",
+            dynamic_tool_loading="openai/gpt-4o-mini",
         )
-        # Not in dynamic mode, so sub-agent should not be created
-        assert client._search_agent is None
+        assert client.dynamic_tool_loading is True
 
     def test_session_includes_find_tools(self) -> None:
-        """_build_dynamic_session includes find_tools when registered."""
+        """Semantic mode: session has find_tools, NOT browse_toolkit."""
         factory = _make_factory()
         client = LLMClient(
             model="openai/gpt-4o-mini",
             tool_factory=factory,
-            dynamic_tool_loading=True,
-            search_agent_model="openai/gpt-4o-mini",
+            dynamic_tool_loading="openai/gpt-4o-mini",
         )
         session = client._build_dynamic_session()
         assert session.is_active("find_tools")
-        assert session.is_active("browse_toolkit")
+        assert not session.is_active("browse_toolkit")
         assert session.is_active("load_tools")
 
     def test_session_without_find_tools(self) -> None:
-        """Without search_agent_model, session doesn't include find_tools."""
+        """Keyword mode (True): session has browse_toolkit, NOT find_tools."""
         factory = _make_factory()
         client = LLMClient(
             model="openai/gpt-4o-mini",
@@ -631,8 +628,7 @@ class TestClientSearchAgentModel:
         client = LLMClient(
             model="openai/gpt-4o-mini",
             tool_factory=factory,
-            dynamic_tool_loading=True,
-            search_agent_model="openai/gpt-4o-mini",
+            dynamic_tool_loading="openai/gpt-4o-mini",
         )
 
         captured_context = []
@@ -653,7 +649,7 @@ class TestClientSearchAgentModel:
 
     @pytest.mark.asyncio
     async def test_no_search_agent_not_in_context(self) -> None:
-        """Without search_agent_model, _search_agent is not in context."""
+        """Keyword mode: _search_agent is not in context."""
         factory = _make_factory()
         client = LLMClient(
             model="openai/gpt-4o-mini",

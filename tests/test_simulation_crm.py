@@ -2,7 +2,7 @@
 """
 CRM simulation tests using mock versions of real backend tools.
 
-Registers 17 tools across 6 categories (crm, sales, tasks, calendar,
+Registers 23 tools across 6 categories (crm, sales, tasks, calendar,
 communication, session) and runs multi-scenario conversations to verify
 dynamic tool loading works end-to-end with a realistic tool set.
 
@@ -46,7 +46,7 @@ def _safe_print(text: str) -> None:
 
 
 # =====================================================================
-# Mock tool functions (17 tools)
+# Mock tool functions (23 tools)
 # =====================================================================
 
 
@@ -134,6 +134,33 @@ def create_customer(
     )
 
 
+def update_customer(
+    customer_id: str,
+    full_name: str | None = None,
+    email: str | None = None,
+    phone_number: str | None = None,
+    organization: str | None = None,
+    status: str | None = None,
+    notes: str | None = None,
+    **_,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        content=f"Customer {customer_id} updated successfully.",
+        metadata={"customer_id": customer_id, "updated_fields": []},
+    )
+
+
+def delete_customer(
+    customer_id: str,
+    reason: str | None = None,
+    **_,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        content=f"Customer {customer_id} deleted.",
+        metadata={"customer_id": customer_id, "reason": reason},
+    )
+
+
 # --- Sales category ---
 
 def query_deals(
@@ -167,6 +194,32 @@ def create_deal(
     return ToolExecutionResult(
         content=f"Deal created: {name} (ID: {mock_id}) - ${amount or 0:.2f}",
         metadata={"deal_id": mock_id, "name": name, "amount": amount},
+    )
+
+
+def update_deal(
+    deal_id: str,
+    name: str | None = None,
+    amount: float | None = None,
+    stage: str | None = None,
+    status: str | None = None,
+    customer_id: str | None = None,
+    **_,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        content=f"Deal {deal_id} updated successfully.",
+        metadata={"deal_id": deal_id, "updated_fields": []},
+    )
+
+
+def delete_deal(
+    deal_id: str,
+    reason: str | None = None,
+    **_,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        content=f"Deal {deal_id} deleted.",
+        metadata={"deal_id": deal_id, "reason": reason},
     )
 
 
@@ -217,6 +270,33 @@ def create_task(
             f"- Priority: {priority or 'Medium'}"
         ),
         metadata={"task_id": mock_id, "title": title, "due_date": due_date},
+    )
+
+
+def update_task(
+    task_id: str,
+    title: str | None = None,
+    due_date: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    description: str | None = None,
+    assignee_id: str | None = None,
+    **_,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        content=f"Task {task_id} updated successfully.",
+        metadata={"task_id": task_id, "updated_fields": []},
+    )
+
+
+def delete_task(
+    task_id: str,
+    reason: str | None = None,
+    **_,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        content=f"Task {task_id} deleted.",
+        metadata={"task_id": task_id, "reason": reason},
     )
 
 
@@ -358,7 +438,7 @@ def generate_report(
 
 
 # =====================================================================
-# Parameter schemas (17 tools)
+# Parameter schemas (23 tools)
 # =====================================================================
 
 QUERY_CUSTOMERS_PARAMS = {
@@ -403,6 +483,33 @@ CREATE_CUSTOMER_PARAMS = {
     "required": ["full_name"],
 }
 
+UPDATE_CUSTOMER_PARAMS = {
+    "type": "object",
+    "properties": {
+        "customer_id": {"type": "string", "description": "UUID of the customer to update."},
+        "full_name": {"type": ["string", "null"], "description": "New full name."},
+        "email": {"type": ["string", "null"], "description": "New email address."},
+        "phone_number": {"type": ["string", "null"], "description": "New phone number."},
+        "organization": {"type": ["string", "null"], "description": "New organization."},
+        "status": {
+            "type": ["string", "null"],
+            "enum": ["Lead", "Prospect", "Active", "Inactive", "Archived", None],
+            "description": "New customer status.",
+        },
+        "notes": {"type": ["string", "null"], "description": "New notes."},
+    },
+    "required": ["customer_id"],
+}
+
+DELETE_CUSTOMER_PARAMS = {
+    "type": "object",
+    "properties": {
+        "customer_id": {"type": "string", "description": "UUID of the customer to delete."},
+        "reason": {"type": ["string", "null"], "description": "Reason for deletion."},
+    },
+    "required": ["customer_id"],
+}
+
 QUERY_DEALS_PARAMS = {
     "type": "object",
     "properties": {
@@ -437,6 +544,36 @@ CREATE_DEAL_PARAMS = {
         },
     },
     "required": ["name"],
+}
+
+UPDATE_DEAL_PARAMS = {
+    "type": "object",
+    "properties": {
+        "deal_id": {"type": "string", "description": "UUID of the deal to update."},
+        "name": {"type": ["string", "null"], "description": "New deal name."},
+        "amount": {"type": ["number", "null"], "description": "New deal value."},
+        "stage": {
+            "type": ["string", "null"],
+            "enum": ["Prospecting", "Qualification", "Proposal", "Negotiation", "Closed", None],
+            "description": "New pipeline stage.",
+        },
+        "status": {
+            "type": ["string", "null"],
+            "enum": ["Open", "Won", "Lost", "On Hold", None],
+            "description": "New deal status.",
+        },
+        "customer_id": {"type": ["string", "null"], "description": "New customer UUID."},
+    },
+    "required": ["deal_id"],
+}
+
+DELETE_DEAL_PARAMS = {
+    "type": "object",
+    "properties": {
+        "deal_id": {"type": "string", "description": "UUID of the deal to delete."},
+        "reason": {"type": ["string", "null"], "description": "Reason for deletion."},
+    },
+    "required": ["deal_id"],
 }
 
 QUERY_TASKS_PARAMS = {
@@ -478,6 +615,37 @@ CREATE_TASK_PARAMS = {
         "context_summary": {"type": ["string", "null"], "description": "AI summary of why task was created."},
     },
     "required": ["title", "due_date"],
+}
+
+UPDATE_TASK_PARAMS = {
+    "type": "object",
+    "properties": {
+        "task_id": {"type": "string", "description": "UUID of the task to update."},
+        "title": {"type": ["string", "null"], "description": "New task title."},
+        "due_date": {"type": ["string", "null"], "description": "New due date (YYYY-MM-DD)."},
+        "priority": {
+            "type": ["string", "null"],
+            "enum": ["Low", "Medium", "High", "Urgent", None],
+            "description": "New task priority.",
+        },
+        "status": {
+            "type": ["string", "null"],
+            "enum": ["To Do", "In Progress", "Completed", "Blocked", None],
+            "description": "New task status.",
+        },
+        "description": {"type": ["string", "null"], "description": "New task description."},
+        "assignee_id": {"type": ["string", "null"], "description": "New assignee UUID."},
+    },
+    "required": ["task_id"],
+}
+
+DELETE_TASK_PARAMS = {
+    "type": "object",
+    "properties": {
+        "task_id": {"type": "string", "description": "UUID of the task to delete."},
+        "reason": {"type": ["string", "null"], "description": "Reason for deletion."},
+    },
+    "required": ["task_id"],
 }
 
 QUERY_CALENDAR_PARAMS = {
@@ -602,12 +770,18 @@ ALL_TOOLS = [
     (get_customer_context, "get_customer_context", "Get complete context for a customer including profile, tasks, deals, and events.", GET_CUSTOMER_CONTEXT_PARAMS, "crm", ["customer", "context", "profile"]),
     (get_crm_summary, "get_crm_summary", "Get high-level CRM overview: customers, deal pipeline, task backlog, key metrics.", GET_CRM_SUMMARY_PARAMS, "crm", ["summary", "metrics", "overview"]),
     (create_customer, "create_customer", "Create a new customer in the CRM system.", CREATE_CUSTOMER_PARAMS, "crm", ["create", "customer"]),
+    (update_customer, "update_customer", "Update an existing customer's details (name, email, phone, status).", UPDATE_CUSTOMER_PARAMS, "crm", ["update", "customer", "edit"]),
+    (delete_customer, "delete_customer", "Delete a customer from the CRM.", DELETE_CUSTOMER_PARAMS, "crm", ["delete", "customer", "remove"]),
     # Sales
     (query_deals, "query_deals", "List and search deals in the sales pipeline with filtering.", QUERY_DEALS_PARAMS, "sales", ["deals", "pipeline", "search"]),
     (create_deal, "create_deal", "Create a new deal in the CRM to track a potential sale.", CREATE_DEAL_PARAMS, "sales", ["create", "deal"]),
+    (update_deal, "update_deal", "Update an existing deal's details (name, amount, stage, status).", UPDATE_DEAL_PARAMS, "sales", ["update", "deal", "edit"]),
+    (delete_deal, "delete_deal", "Delete a deal from the sales pipeline.", DELETE_DEAL_PARAMS, "sales", ["delete", "deal", "remove"]),
     # Tasks
     (query_tasks, "query_tasks", "List and search tasks with filtering for status, priority, and overdue.", QUERY_TASKS_PARAMS, "tasks", ["tasks", "todo", "search"]),
     (create_task, "create_task", "Create a new task for follow-ups, reminders, or action items.", CREATE_TASK_PARAMS, "tasks", ["create", "task", "todo"]),
+    (update_task, "update_task", "Update an existing task's details (title, due date, priority, status).", UPDATE_TASK_PARAMS, "tasks", ["update", "task", "edit"]),
+    (delete_task, "delete_task", "Delete a task.", DELETE_TASK_PARAMS, "tasks", ["delete", "task", "remove"]),
     # Calendar
     (query_calendar, "query_calendar", "Query calendar events to check availability and view schedules.", QUERY_CALENDAR_PARAMS, "calendar", ["schedule", "events", "availability"]),
     (create_calendar_event, "create_calendar_event", "Create a new calendar event (appointment, meeting).", CREATE_CALENDAR_EVENT_PARAMS, "calendar", ["create", "event", "appointment"]),
@@ -624,7 +798,7 @@ ALL_TOOLS = [
 
 
 def _build_simulation() -> tuple[LLMClient, ToolFactory, InMemoryToolCatalog, ToolSession]:
-    """Register all 17 CRM tools + meta-tools and return a ready-to-use simulation."""
+    """Register all 23 CRM tools + meta-tools and return a ready-to-use simulation."""
     factory = ToolFactory()
 
     for func, name, description, params, category, tags in ALL_TOOLS:
