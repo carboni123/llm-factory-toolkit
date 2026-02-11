@@ -20,9 +20,9 @@ def main() -> int:
     project_root = Path(__file__).parent.parent
     load_dotenv(project_root / ".env")
 
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("GOOGLE_API_KEY is not set.")
+        print("GEMINI_API_KEY is not set.")
         return 1
 
     try:

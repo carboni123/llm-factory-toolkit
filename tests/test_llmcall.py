@@ -25,12 +25,12 @@ EXPECTED_ANSWER_FRAGMENT = "Paris"  # We expect 'Paris' to be in the response
 
 # --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 skip_openai = not OPENAI_API_KEY
-skip_google = not GOOGLE_API_KEY
+skip_google = not GEMINI_API_KEY
 skip_reason_openai = "OPENAI_API_KEY environment variable not set"
-skip_reason_google = "GOOGLE_API_KEY environment variable not set"
+skip_reason_google = "GEMINI_API_KEY environment variable not set"
 
 # --- OpenAI Test Case ---
 
@@ -112,10 +112,10 @@ async def test_openai_simple_call(openai_test_model: str) -> None:
 async def test_google_genai_simple_call(google_test_model: str) -> None:
     """
     Tests a simple request-response interaction with the Google GenAI provider via LLMClient.
-    Requires GOOGLE_API_KEY to be set in the environment.
+    Requires GEMINI_API_KEY to be set in the environment.
     """
     api_key_display = (
-        f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "Not Set"
+        f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "Not Set"
     )
     print(
         f"\nAttempting Google GenAI API call via LLMClient (Key detected: {api_key_display})..."

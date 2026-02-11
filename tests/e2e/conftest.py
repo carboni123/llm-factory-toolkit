@@ -10,16 +10,15 @@ from llm_factory_toolkit import LLMClient
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
-
 # --- Skip helpers ---
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 XAI_API_KEY = os.environ.get("XAI_API_KEY")
 
 skip_openai = pytest.mark.skipif(not OPENAI_API_KEY, reason="OPENAI_API_KEY not set")
-skip_google = pytest.mark.skipif(not GOOGLE_API_KEY, reason="GOOGLE_API_KEY not set")
+skip_google = pytest.mark.skipif(not GEMINI_API_KEY, reason="GEMINI_API_KEY not set")
 skip_anthropic = pytest.mark.skipif(
     not ANTHROPIC_API_KEY, reason="ANTHROPIC_API_KEY not set"
 )

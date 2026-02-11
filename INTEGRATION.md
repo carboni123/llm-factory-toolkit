@@ -44,7 +44,7 @@ Set your provider's API key via environment variable or `.env` file:
 ```bash
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
-export GOOGLE_API_KEY="..."
+export GEMINI_API_KEY="..."
 export XAI_API_KEY="..."
 ```
 
@@ -1000,7 +1000,6 @@ The v2.0 release replaces the LiteLLM dependency with native provider adapters f
 - Provider SDKs are optional: `pip install llm-factory-toolkit[openai]`, `[anthropic]`, `[gemini]`, or `[all]`
 - Only 4 providers are supported (OpenAI, Anthropic, Gemini, xAI); Mistral, Cohere, Bedrock, Ollama are no longer available
 - `dynamic_tool_loading` now accepts `True` (keyword) or a model string (semantic search) instead of just a boolean
-- `GEMINI_API_KEY` renamed to `GOOGLE_API_KEY`
 
 ### v0.x to v1.0
 

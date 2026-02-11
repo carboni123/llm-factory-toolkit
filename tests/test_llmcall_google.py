@@ -1,5 +1,5 @@
 """Tests if we can make a basic Google GenAI API call using the LLMClient.
-This is an integration test and requires a valid GOOGLE_API_KEY environment variable.
+This is an integration test and requires a valid GEMINI_API_KEY environment variable.
 """
 
 import os
@@ -23,9 +23,9 @@ SYSTEM_PROMPT = "You are a helpful assistant."
 USER_PROMPT = "What is the capital of France?"
 EXPECTED_ANSWER_FRAGMENT = "Paris"  # We expect 'Paris' to be in the response
 # --- Skip Condition ---
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-should_skip = not GOOGLE_API_KEY
-skip_reason = "GOOGLE_API_KEY environment variable not set"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+should_skip = not GEMINI_API_KEY
+skip_reason = "GEMINI_API_KEY environment variable not set"
 
 # --- Test Case ---
 
@@ -34,10 +34,10 @@ skip_reason = "GOOGLE_API_KEY environment variable not set"
 async def test_google_simple_call(google_test_model: str) -> None:
     """
     Tests a simple request-response interaction with the Google GenAI provider via LLMClient.
-    Requires GOOGLE_API_KEY to be set in the environment.
+    Requires GEMINI_API_KEY to be set in the environment.
     """
     api_key_display = (
-        f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "Not Set"
+        f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "Not Set"
     )
     print(
         f"\nAttempting Google GenAI API call via LLMClient (Key detected: {api_key_display})..."

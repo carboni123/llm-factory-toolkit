@@ -349,7 +349,7 @@ class TestGetClient:
     ) -> None:
         adapter = GeminiAdapter()
         adapter._client = None  # noqa: SLF001
-        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
         fake_genai = SimpleNamespace(Client=lambda **kw: SimpleNamespace())
         fake_google = SimpleNamespace(genai=fake_genai)

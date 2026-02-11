@@ -16,7 +16,7 @@ pip install -e ".[all,dev]"
 # Run tests (unit only, no API keys needed)
 pytest tests/ -k "not integration" -v
 
-# Run all tests (requires OPENAI_API_KEY, GOOGLE_API_KEY, ANTHROPIC_API_KEY in .env)
+# Run all tests (requires OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY in .env)
 pytest tests/ -v
 
 # Lint

@@ -23,7 +23,7 @@ A Python toolkit for interacting with the Big 4 LLM providers (OpenAI, Anthropic
 |----------|--------|-------------|-----|---------|
 | OpenAI | `openai/` | `gpt-`, `o1-`, `o3-`, `o4-`, `chatgpt-` | `openai` (Responses API) | `OPENAI_API_KEY` |
 | Anthropic | `anthropic/` | `claude-` | `anthropic` (Messages API) | `ANTHROPIC_API_KEY` |
-| Google Gemini | `gemini/`, `google/` | `gemini-` | `google-genai` (GenerateContent) | `GOOGLE_API_KEY` |
+| Google Gemini | `gemini/`, `google/` | `gemini-` | `google-genai` (GenerateContent) | `GEMINI_API_KEY` |
 | xAI | `xai/` | `grok-` | `openai` (custom base_url) | `XAI_API_KEY` |
 
 ## Installation
@@ -54,7 +54,7 @@ Set your API key via environment variable or `.env` file:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-# or ANTHROPIC_API_KEY, GOOGLE_API_KEY, XAI_API_KEY
+# or ANTHROPIC_API_KEY, GEMINI_API_KEY, XAI_API_KEY
 ```
 
 ```python
@@ -405,7 +405,7 @@ pip install -e ".[all,dev]"
 # Unit tests (fast, no API keys needed)
 pytest tests/ -k "not integration" -v
 
-# Integration tests (require OPENAI_API_KEY, GOOGLE_API_KEY, ANTHROPIC_API_KEY in .env)
+# Integration tests (require OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY in .env)
 pytest tests/ -v
 ```
 

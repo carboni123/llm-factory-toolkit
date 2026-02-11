@@ -36,12 +36,12 @@ def _safe_print(text: str) -> None:
 
 # --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 skip_openai = not OPENAI_API_KEY
-skip_google = not GOOGLE_API_KEY
+skip_google = not GEMINI_API_KEY
 skip_reason_openai = "OPENAI_API_KEY environment variable not set"
-skip_reason_google = "GOOGLE_API_KEY environment variable not set"
+skip_reason_google = "GEMINI_API_KEY environment variable not set"
 
 # --- Constants ---
 SYSTEM_PROMPT = (
@@ -258,7 +258,7 @@ async def test_google_dynamic_browse_load_use(google_test_model: str) -> None:
 
     Full 3-step agentic flow on the Gemini adapter path.
     """
-    api_key_display = f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "N/A"
+    api_key_display = f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "N/A"
     print(f"\n--- Test: Google dynamic browse/load/use (Key: {api_key_display}) ---")
 
     try:
@@ -491,7 +491,7 @@ async def test_openai_session_persistence_across_calls(openai_test_model: str) -
 @pytest.mark.skipif(skip_google, reason=skip_reason_google)
 async def test_google_session_persistence_across_calls(google_test_model: str) -> None:
     """Same as test 4 but on the Gemini adapter path."""
-    api_key_display = f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "N/A"
+    api_key_display = f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "N/A"
     print(f"\n--- Test: Google session persistence (Key: {api_key_display}) ---")
 
     try:

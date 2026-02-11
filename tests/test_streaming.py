@@ -24,12 +24,12 @@ USER_PROMPT = "What is the capital of France? Answer in one word."
 
 # --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 skip_openai = not OPENAI_API_KEY
-skip_google = not GOOGLE_API_KEY
+skip_google = not GEMINI_API_KEY
 skip_reason_openai = "OPENAI_API_KEY environment variable not set"
-skip_reason_google = "GOOGLE_API_KEY environment variable not set"
+skip_reason_google = "GEMINI_API_KEY environment variable not set"
 
 
 def _is_rate_limit_or_quota_error(error: Exception) -> bool:
@@ -195,7 +195,7 @@ async def test_openai_streaming_usage_metadata(openai_test_model: str) -> None:
 async def test_google_genai_streaming_basic(google_test_model: str) -> None:
     """
     Tests that stream=True returns an async generator of StreamChunk objects
-    with a Google GenAI model. Requires GOOGLE_API_KEY.
+    with a Google GenAI model. Requires GEMINI_API_KEY.
     """
     print(f"\n--- Starting Test: Google GenAI Streaming Basic ---")
 

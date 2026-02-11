@@ -33,12 +33,12 @@ USER_PROMPT_MULTI_TOOL = "Please retrieve the master access code. Use 'source_A'
 
 # --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 skip_openai = not OPENAI_API_KEY
-skip_google = not GOOGLE_API_KEY
+skip_google = not GEMINI_API_KEY
 skip_reason_openai = "OPENAI_API_KEY environment variable not set"
-skip_reason_google = "GOOGLE_API_KEY environment variable not set"
+skip_reason_google = "GEMINI_API_KEY environment variable not set"
 
 # --- Mock Tool Definitions (3 Tools) ---
 
@@ -261,10 +261,10 @@ async def test_google_genai_three_tool_calls_combined_secret(
 ) -> None:
     """
     Tests an interaction where the LLM must call three distinct tools
-    and combine their results as instructed. Requires GOOGLE_API_KEY.
+    and combine their results as instructed. Requires GEMINI_API_KEY.
     """
     api_key_display = (
-        f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "Not Set"
+        f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "Not Set"
     )
     print(
         f"\n--- Starting Test: Google GenAI Three Tool Call Combined Secret (Key: {api_key_display}) ---"

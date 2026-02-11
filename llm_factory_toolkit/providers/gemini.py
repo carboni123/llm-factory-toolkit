@@ -32,7 +32,7 @@ _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 class GeminiAdapter(BaseProvider):
     """Provider adapter for Google Gemini using the google-genai SDK."""
 
-    API_ENV_VAR = "GOOGLE_API_KEY"
+    API_ENV_VAR = "GEMINI_API_KEY"
     _EXTRA_PARAMS: frozenset[str] = frozenset()
 
     def __init__(
