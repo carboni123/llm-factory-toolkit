@@ -2,9 +2,11 @@
 
 Benchmark results for the dynamic tool calling system across different LLM providers.
 
+> For the full benchmark specification -- metrics, methodology, test cases, and how to extend -- see **[docs/BENCHMARK.md](../BENCHMARK.md)**.
+
 ## Benchmark Overview
 
-The benchmark registers 17 CRM mock tools across 6 categories and runs 10 test cases that evaluate:
+The benchmark registers 23 CRM mock tools across 6 categories and runs 13 test cases that evaluate:
 - **Protocol compliance**: Does the agent follow browse -> load -> use?
 - **Tool loading accuracy**: Does it load the right tools?
 - **Tool usage correctness**: Does it call tools with correct arguments?
