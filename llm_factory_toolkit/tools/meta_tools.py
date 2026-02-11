@@ -9,7 +9,10 @@ and are never visible to the LLM.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from .catalog import ToolCatalog
 from .models import ToolExecutionResult
@@ -296,7 +299,7 @@ def load_tool_group(
 
 #: Tool names that cannot be unloaded (meta-tools themselves).
 _META_TOOL_NAMES = frozenset(
-    {"browse_toolkit", "load_tools", "load_tool_group", "unload_tools"}
+    {"browse_toolkit", "load_tools", "load_tool_group", "unload_tools", "find_tools"}
 )
 
 
@@ -428,3 +431,196 @@ UNLOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
     },
     "required": ["tool_names"],
 }
+
+FIND_TOOLS_PARAMETERS: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "intent": {
+            "type": "string",
+            "description": (
+                "Natural language description of what tools you need. "
+                "Be specific about the task you want to accomplish."
+            ),
+        },
+    },
+    "required": ["intent"],
+}
+
+
+# ------------------------------------------------------------------
+# find_tools (semantic search via sub-agent)
+# ------------------------------------------------------------------
+
+#: System prompt for the tool-finding sub-agent.
+_FIND_TOOLS_SYSTEM = (
+    "You are a tool-finding assistant. Given a catalog of available tools "
+    "and a user intent, identify the tools that best match the intent.\n\n"
+    "Rules:\n"
+    "- Return ONLY tool names that exist in the catalog.\n"
+    "- Select the minimum set of tools needed for the task.\n"
+    "- If no tools match, return an empty list.\n"
+    "- Respond with a JSON object: "
+    '{"tool_names": ["name1", "name2"], "reasoning": "brief explanation"}'
+)
+
+
+def _format_catalog_for_prompt(
+    entries: List[Any],
+    active: set,
+) -> str:
+    """Format catalog entries into a compact prompt string."""
+    lines: List[str] = []
+    for entry in entries:
+        if entry.name in active:
+            continue  # skip already-loaded tools
+        parts = [f"- {entry.name}: {entry.description}"]
+        if entry.category:
+            parts.append(f"  category: {entry.category}")
+        if entry.tags:
+            parts.append(f"  tags: {', '.join(entry.tags)}")
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
+async def find_tools(
+    intent: str,
+    *,
+    tool_catalog: Optional[ToolCatalog] = None,
+    tool_session: Optional[ToolSession] = None,
+    _search_agent: Optional[Any] = None,
+) -> ToolExecutionResult:
+    """Find tools using semantic search via a sub-agent LLM.
+
+    Instead of keyword matching, this meta-tool sends the full catalog
+    to a cheap sub-agent LLM that interprets the natural-language
+    *intent* and returns the most relevant tool names.
+
+    Args:
+        intent: Natural language description of what tools are needed.
+        tool_catalog: Injected -- the catalog to search.
+        tool_session: Injected -- current session (for active status).
+        _search_agent: Injected -- a pre-configured :class:`LLMClient`
+            instance used for the sub-agent call.
+    """
+    if _search_agent is None:
+        return ToolExecutionResult(
+            content=json.dumps({
+                "error": "Semantic search not configured. "
+                "Set search_agent_model on LLMClient to enable find_tools.",
+            }),
+            error="No search agent configured",
+        )
+
+    if tool_catalog is None:
+        return ToolExecutionResult(
+            content=json.dumps({"error": "Tool catalog not configured."}),
+            error="No catalog configured",
+        )
+
+    # Collect all catalog entries (lightweight — no parameter schemas).
+    all_entries = tool_catalog.list_all()
+    active = tool_session.active_tools if tool_session else set()
+
+    catalog_text = _format_catalog_for_prompt(all_entries, active)
+
+    if not catalog_text.strip():
+        return ToolExecutionResult(
+            content=json.dumps({
+                "results": [],
+                "total_found": 0,
+                "intent": intent,
+                "hint": "All tools are already loaded. Call them directly.",
+            }),
+            payload=[],
+            metadata={"intent": intent},
+        )
+
+    # Build the sub-agent prompt.
+    user_prompt = (
+        f"Available tools:\n{catalog_text}\n\n"
+        f"User intent: \"{intent}\"\n\n"
+        "Return the JSON object with the matching tool names."
+    )
+
+    # Single LLM call — no agentic loop, no tools.
+    try:
+        result = await _search_agent.generate(
+            input=[
+                {"role": "system", "content": _FIND_TOOLS_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_tool_iterations=0,
+        )
+    except Exception as exc:
+        logger.warning("find_tools sub-agent call failed: %s", exc)
+        return ToolExecutionResult(
+            content=json.dumps({
+                "error": f"Sub-agent call failed: {exc}",
+                "hint": "Fall back to browse_toolkit with keyword search.",
+            }),
+            error=str(exc),
+        )
+
+    # Parse the sub-agent response.
+    tool_names: List[str] = []
+    reasoning = ""
+    try:
+        parsed = json.loads(result.content)
+        raw_names = parsed.get("tool_names", [])
+        reasoning = parsed.get("reasoning", "")
+        # Validate against catalog — reject hallucinated names.
+        for name in raw_names:
+            if isinstance(name, str) and tool_catalog.has_entry(name):
+                tool_names.append(name)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        logger.warning("find_tools: failed to parse sub-agent response: %s", result.content)
+        return ToolExecutionResult(
+            content=json.dumps({
+                "error": "Failed to parse sub-agent response.",
+                "raw_response": str(result.content)[:200],
+                "hint": "Fall back to browse_toolkit with keyword search.",
+            }),
+            error="Parse error",
+        )
+
+    # Build browse_toolkit-compatible response.
+    results: List[Dict[str, Any]] = []
+    for name in tool_names:
+        entry = tool_catalog.get_entry(name)
+        if entry is None:
+            continue
+        is_active = name in active
+        results.append({
+            "name": entry.name,
+            "description": entry.description,
+            "category": entry.category,
+            "group": entry.group,
+            "tags": entry.tags,
+            "active": is_active,
+            "status": "loaded" if is_active else "available - call load_tools to activate",
+        })
+
+    body: Dict[str, Any] = {
+        "results": results,
+        "total_found": len(results),
+        "intent": intent,
+        "reasoning": reasoning,
+    }
+
+    if results:
+        body["hint"] = (
+            "Call load_tools with the tool names you need, then use them. "
+            "Do not re-browse for these same tools."
+        )
+    else:
+        body["hint"] = (
+            "No matching tools found. Try browse_toolkit with keyword search "
+            "or rephrase your intent."
+        )
+
+    return ToolExecutionResult(
+        content=json.dumps(body, indent=2),
+        payload=results,
+        metadata={"intent": intent, "tool_names": tool_names},
+    )

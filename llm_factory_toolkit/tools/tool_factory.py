@@ -356,6 +356,32 @@ class ToolFactory:
             "Registered meta-tools: browse_toolkit, load_tools, load_tool_group, unload_tools"
         )
 
+    def register_find_tools(self) -> None:
+        """Register the ``find_tools`` semantic search meta-tool.
+
+        This is separate from :meth:`register_meta_tools` because it
+        requires a ``search_agent_model`` to be configured on the
+        :class:`LLMClient`.  When registered, ``find_tools`` appears
+        alongside the keyword-based ``browse_toolkit`` as an alternative
+        discovery mechanism.
+        """
+        from .meta_tools import FIND_TOOLS_PARAMETERS, find_tools
+
+        self.register_tool(
+            function=find_tools,
+            name="find_tools",
+            description=(
+                "Find tools using natural language intent. "
+                "Describe what you need and a sub-agent will search the "
+                "catalog for matching tools. Use this when keyword search "
+                "via browse_toolkit returns no results."
+            ),
+            parameters=FIND_TOOLS_PARAMETERS,
+            category="system",
+            tags=["meta", "discovery", "semantic"],
+        )
+        module_logger.info("Registered semantic meta-tool: find_tools")
+
     def get_tool_definitions(
         self,
         filter_tool_names: Optional[Sequence[str]] = None,

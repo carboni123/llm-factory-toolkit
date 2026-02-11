@@ -48,7 +48,7 @@ This library uses **native provider adapters** with a shared agentic loop:
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading`, history merging | ~660 |
+| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading`/`search_agent_model`, history merging | ~700 |
 | `providers/__init__.py` | Package exports: `ProviderRouter`, `BaseProvider`, normalised types | ~10 |
 | `providers/_base.py` | `BaseProvider` ABC -- shared agentic loop, tool dispatch, compact mode, auto-compact | ~820 |
 | `providers/_registry.py` | `ProviderRouter` -- model prefix routing, lazy adapter caching | ~150 |
@@ -58,14 +58,14 @@ This library uses **native provider adapters** with a shared agentic loop:
 | `providers/gemini.py` | `GeminiAdapter` -- Google Gemini GenerateContent, native structured output | ~380 |
 | `providers/xai.py` | `XAIAdapter` -- thin OpenAI subclass with custom base_url | ~50 |
 | `exceptions.py` | Exception hierarchy: `LLMToolkitError` > `ConfigurationError`, `ProviderError`, `ToolError`, `UnsupportedFeatureError` | ~30 |
-| `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`), dispatch, context injection, mock mode, usage tracking, meta-tools | ~640 |
+| `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`), dispatch, context injection, mock mode, usage tracking, meta-tools, `register_find_tools` | ~640 |
 | `tools/base_tool.py` | `BaseTool` ABC for class-based tools (includes `CATEGORY`, `TAGS` class attrs) | ~45 |
 | `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
 | `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking | ~190 |
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` (category `"utility"`) | ~60 |
 | `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, majority-match search, group-to-category fallback, offset/pagination | ~520 |
 | `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation, analytics tracking | ~250 |
-| `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools` -- meta-tools for dynamic discovery with pagination (category `"system"`) | ~400 |
+| `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools`, `find_tools` -- meta-tools for dynamic discovery with pagination and semantic search (category `"system"`) | ~630 |
 | `__init__.py` | Public exports, `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~75 |
 
 ### Data Flow
@@ -144,7 +144,9 @@ Two modes of operation:
 
 When a `tool_session` is active, the agentic loop recomputes visible tools each iteration from `session.list_active()`. Meta-tools (`browse_toolkit`, `load_tools`, `unload_tools`) modify the session mid-loop so newly loaded tools appear in the next LLM call, and unloaded tools are removed.
 
-Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Context injection passes `tool_session` and `tool_catalog` to meta-tools without LLM visibility.
+**Semantic search** (`find_tools`): Set `search_agent_model="openai/gpt-4o-mini"` on `LLMClient` to enable `find_tools`, a meta-tool that uses a cheap sub-agent LLM to interpret natural-language intent and find matching tools. The sub-agent receives the full catalog (names + descriptions + tags only, no parameter schemas) and returns matching tool names in a single LLM call. Coexists with keyword-based `browse_toolkit`.
+
+Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Context injection passes `tool_session`, `tool_catalog`, and `_search_agent` to meta-tools without LLM visibility.
 
 ### Tool Registration Pipeline
 `register_tool()` accepts `category` and `tags` which are stored in the `ToolRegistration` dataclass. `register_tool_class()` reads `CATEGORY`/`TAGS` from `BaseTool` subclasses via `getattr()`. `InMemoryToolCatalog._build_from_factory()` reads category/tags from `factory.registrations` property, so catalogs auto-populate without needing `add_metadata()` calls.
@@ -154,12 +156,13 @@ Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Contex
 
 ## Testing
 
-### Unit Tests (no API keys, 425 tests)
+### Unit Tests (no API keys, 592 tests)
 - `test_builtin_tools.py` -- built-in tool functions + category metadata
 - `test_client_unit.py` -- LLMClient generate/intent/error wrapping
 - `test_dynamic_loading_unit.py` -- `core_tools`/`dynamic_tool_loading` constructor feature
 - `test_merge_history.py` -- message merging logic
 - `test_meta_tools.py` -- browse_toolkit, load_tools, unload_tools, register_meta_tools, system category
+- `test_find_tools.py` -- find_tools semantic search, sub-agent mocking, name validation, client wiring (32 tests)
 - `test_mock_tools.py` -- mock mode behavior
 - `test_provider_openai_paths_unit.py` -- OpenAI structured output, tool calls, streaming (mocked)
 - `test_provider_unit.py` -- provider routing, adapter feature flags, tool definitions
