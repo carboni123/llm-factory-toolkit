@@ -542,7 +542,7 @@ async def find_tools(
         "Return the JSON object with the matching tool names."
     )
 
-    # Single LLM call — no agentic loop, no tools.
+    # Single LLM call — no tools, no agentic loop.
     try:
         result = await _search_agent.generate(
             input=[
@@ -550,7 +550,7 @@ async def find_tools(
                 {"role": "user", "content": user_prompt},
             ],
             response_format={"type": "json_object"},
-            max_tool_iterations=0,
+            use_tools=None,
         )
     except Exception as exc:
         logger.warning("find_tools sub-agent call failed: %s", exc)

@@ -423,7 +423,7 @@ class TestFindTools:
         agent.generate.assert_called_once()
         call_kwargs = agent.generate.call_args.kwargs
         assert call_kwargs["response_format"] == {"type": "json_object"}
-        assert call_kwargs["max_tool_iterations"] == 0
+        assert call_kwargs["use_tools"] is None
         # System message included
         messages = call_kwargs["input"]
         assert messages[0]["role"] == "system"

@@ -65,7 +65,7 @@ def _safe_print(text: str) -> None:
 # Meta-tool names
 # ---------------------------------------------------------------------------
 
-META_TOOLS = {"browse_toolkit", "load_tools", "load_tool_group", "unload_tools"}
+META_TOOLS = {"browse_toolkit", "load_tools", "load_tool_group", "unload_tools", "find_tools"}
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +506,14 @@ def _summarize_tool_response(name: str, content: str) -> str:
 
     if name == "browse_toolkit":
         return _summarize_browse_result(data)
+    if name == "find_tools":
+        results = data.get("results", [])
+        names = [r.get("name", "?") for r in results]
+        reasoning = data.get("reasoning", "")
+        parts = [f"{len(results)} results: {names}"]
+        if reasoning:
+            parts.append(f'reason="{reasoning[:80]}"')
+        return " | ".join(parts)
     if name in ("load_tools", "load_tool_group"):
         return _summarize_load_result(data)
     if name == "unload_tools":
@@ -693,7 +701,12 @@ def evaluate_case(
 # ---------------------------------------------------------------------------
 
 
-async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> BenchmarkResult:
+async def run_case(
+    case: BenchmarkCase,
+    model: str,
+    verbose: bool = False,
+    search_agent_model: str | None = None,
+) -> BenchmarkResult:
     """Run a single benchmark case and return the result."""
     start = time.time()
     try:
@@ -702,6 +715,14 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
             factory, catalog, session = _build_persistence_simulation()
         else:
             factory, catalog, session = _build_simulation()
+
+        # Wire up semantic search sub-agent when requested
+        tool_execution_context: dict[str, Any] | None = None
+        if search_agent_model:
+            factory.register_find_tools()
+            session.load(["find_tools"])
+            search_client = LLMClient(model=search_agent_model)
+            tool_execution_context = {"_search_agent": search_client}
 
         client = LLMClient(model=model, tool_factory=factory)
 
@@ -719,6 +740,7 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
                     model=model,
                     temperature=0.0,
                     tool_session=session,
+                    tool_execution_context=tool_execution_context,
                     max_tool_iterations=case.max_tool_iterations,
                 )
                 all_tool_names_called.extend(extract_tool_names(result.messages or []))
@@ -737,6 +759,7 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
                 model=model,
                 temperature=0.0,
                 tool_session=session,
+                tool_execution_context=tool_execution_context,
                 max_tool_iterations=case.max_tool_iterations,
             )
             all_tool_names_called = extract_tool_names(result.messages or [])
@@ -1192,6 +1215,7 @@ async def run_benchmark(
     verbose: bool = False,
     trace: bool = False,
     output: str | None = None,
+    search_agent_model: str | None = None,
 ) -> None:
     """Run the full benchmark suite."""
     all_cases = build_cases()
@@ -1212,6 +1236,8 @@ async def run_benchmark(
     _safe_print("=" * 60)
     _safe_print("  Dynamic Tool Calling Benchmark")
     _safe_print(f"  Model: {model}")
+    if search_agent_model:
+        _safe_print(f"  Search agent: {search_agent_model}")
     _safe_print(f"  Cases: {len(all_cases)}")
     if tags:
         _safe_print(f"  Tags filter: {tags}")
@@ -1225,7 +1251,7 @@ async def run_benchmark(
         progress = f"[{i}/{len(all_cases)}]"
         _safe_print(f"\n{progress} Running: {case.name} ({case.description[:60]}...)")
 
-        result = await run_case(case, model, verbose=verbose)
+        result = await run_case(case, model, verbose=verbose, search_agent_model=search_agent_model)
         results.append(result)
 
         icon = STATUS_ICONS.get(result.status, "[????]")
@@ -1309,6 +1335,10 @@ def main() -> None:
         "--output",
         help="Save markdown report to file",
     )
+    parser.add_argument(
+        "--search-agent-model",
+        help="Enable find_tools semantic search with this model as sub-agent (e.g. openai/gpt-4o-mini)",
+    )
 
     args = parser.parse_args()
 
@@ -1323,6 +1353,7 @@ def main() -> None:
             verbose=args.verbose,
             trace=args.trace,
             output=args.output,
+            search_agent_model=args.search_agent_model,
         )
     )
 
