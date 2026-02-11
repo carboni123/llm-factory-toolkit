@@ -3,11 +3,11 @@
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A flexible Python toolkit for interacting with 100+ LLM providers through a unified interface. Built on [LiteLLM](https://github.com/BerriAI/litellm) for provider routing, with a powerful tool framework featuring context injection, nested tool execution, mock mode, and intent planning.
+A Python toolkit for interacting with the Big 4 LLM providers (OpenAI, Anthropic, Google Gemini, xAI) through a unified async interface, with a production-grade agentic tool framework featuring dynamic tool loading, context injection, nested execution, and structured output.
 
 ## Key Features
 
-*   **100+ Providers:** Switch between OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Bedrock, and many more by changing a single model string. Powered by LiteLLM.
+*   **4 Native Providers:** OpenAI (Responses API), Anthropic (Messages API), Google Gemini (GenerateContent), and xAI -- switch by changing a single model string. No proxy layer; each adapter talks directly to the provider SDK.
 *   **Dynamic Tool Loading:** Start with a small set of core tools and let the agent discover and load additional tools on demand from a searchable catalog, reducing context bloat.
 *   **Tool Context Injection:** Inject server-side data (user IDs, API keys, DB connections) into tool functions without exposing it to the LLM.
 *   **Nested Tool Execution:** Tools can call other tools via `ToolRuntime` with configurable depth limits.
@@ -17,13 +17,27 @@ A flexible Python toolkit for interacting with 100+ LLM providers through a unif
 *   **Structured Output:** Request JSON or Pydantic model responses.
 *   **Async First:** Built with `asyncio` for non-blocking I/O.
 
+## Supported Providers
+
+| Provider | Prefix | Bare prefix | SDK | API Key |
+|----------|--------|-------------|-----|---------|
+| OpenAI | `openai/` | `gpt-`, `o1-`, `o3-`, `o4-`, `chatgpt-` | `openai` (Responses API) | `OPENAI_API_KEY` |
+| Anthropic | `anthropic/` | `claude-` | `anthropic` (Messages API) | `ANTHROPIC_API_KEY` |
+| Google Gemini | `gemini/`, `google/` | `gemini-` | `google-genai` (GenerateContent) | `GOOGLE_API_KEY` |
+| xAI | `xai/` | `grok-` | `openai` (custom base_url) | `XAI_API_KEY` |
+
 ## Installation
 
 ```bash
 pip install llm-factory-toolkit
 
-# For OpenAI file_search support (optional):
-pip install llm-factory-toolkit[openai]
+# Install with specific provider SDKs:
+pip install llm-factory-toolkit[openai]       # OpenAI + xAI
+pip install llm-factory-toolkit[anthropic]    # Anthropic
+pip install llm-factory-toolkit[gemini]       # Google Gemini
+
+# Install all provider SDKs:
+pip install llm-factory-toolkit[all]
 ```
 
 Or from source:
@@ -31,7 +45,7 @@ Or from source:
 ```bash
 git clone https://github.com/carboni123/llm_factory_toolkit.git
 cd llm_factory_toolkit
-pip install -e ".[dev]"
+pip install -e ".[all,dev]"
 ```
 
 ## Quick Start
@@ -40,7 +54,7 @@ Set your API key via environment variable or `.env` file:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-# or ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.
+# or ANTHROPIC_API_KEY, GOOGLE_API_KEY, XAI_API_KEY
 ```
 
 ```python
@@ -70,20 +84,11 @@ The constructor's `model` sets the default, but you can override per-call:
 # Set a default model
 client = LLMClient(model="openai/gpt-4o-mini")
 
-# Override on any generate() call — no need for a new client
-result = await client.generate(
-    input=messages,
-    model="anthropic/claude-sonnet-4",
-)
-
-# Any LiteLLM model string works
+# Override on any generate() call -- no need for a new client
+result = await client.generate(input=messages, model="anthropic/claude-sonnet-4")
 result = await client.generate(input=messages, model="gemini/gemini-2.5-flash")
 result = await client.generate(input=messages, model="xai/grok-3")
-result = await client.generate(input=messages, model="mistral/mistral-large-latest")
-result = await client.generate(input=messages, model="ollama/llama3")
 ```
-
-See [LiteLLM's provider list](https://docs.litellm.ai/docs/providers) for all supported models.
 
 ## Streaming
 
@@ -213,7 +218,7 @@ factory.register_tool(function=search_crm, name="search_crm", ...)
 # ... register many more tools ...
 
 client = LLMClient(
-    model="openai/gpt-4.1-mini",
+    model="anthropic/claude-haiku-4-5-20251001",
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
     dynamic_tool_loading=True,       # Keyword search via browse_toolkit
@@ -222,7 +227,7 @@ client = LLMClient(
 
 # Or use semantic search via a cheap sub-agent LLM:
 client = LLMClient(
-    model="openai/gpt-4.1-mini",
+    model="anthropic/claude-haiku-4-5-20251001",
     tool_factory=factory,
     core_tools=["call_human"],
     dynamic_tool_loading="openai/gpt-4o-mini",  # Semantic search via find_tools
@@ -239,9 +244,9 @@ result = await client.generate(
 2. Registers discovery meta-tools (`browse_toolkit` or `find_tools`) plus `load_tools`, `load_tool_group`, and `unload_tools`
 3. Creates a fresh `ToolSession` per `generate()` call with your `core_tools` + meta-tools loaded
 
-The agent uses the discovery tool to search for relevant tools, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs. When a model string is passed, `find_tools` uses a cheap sub-agent LLM to interpret natural-language intent — better for queries that keyword search might miss.
+The agent uses the discovery tool to search for relevant tools, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs. When a model string is passed, `find_tools` uses a cheap sub-agent LLM to interpret natural-language intent -- better for queries that keyword search might miss.
 
-**Context-aware tool selection:** Search uses majority matching (at least half of the query tokens must appear) combined with weighted relevance scoring (name=3x, tags=2x, description=1x, category=1x). This allows natural-language queries to find relevant tools even when not all keywords match exactly. The `group` filter gracefully falls back to `category` when tools don't have explicit groups.
+**Context-aware tool selection:** Search uses majority matching (at least half of the query tokens must appear) combined with weighted relevance scoring (name=3x, tags=2x, description=1x, category=1x). Category and group filters are case-insensitive. When tool names are invalid, `load_tools` returns `did_you_mean` suggestions via fuzzy matching.
 
 **Token optimization:** Use `compact_tools=True` to strip nested descriptions and defaults from non-core tool definitions, saving 20-40% tokens. Core tools always retain full definitions for critical agent understanding.
 
@@ -273,7 +278,7 @@ result = await client.generate(input=messages, tool_session=session)
 # Check budget usage
 budget = session.get_budget_usage()
 print(f"Token usage: {budget['utilisation']*100:.1f}%")
-print(f"Warning state: {budget['warning']}")  # True if ≥75%
+print(f"Warning state: {budget['warning']}")  # True if >=75%
 ```
 
 **How auto-compact works:**
@@ -362,7 +367,6 @@ result = await client.generate(
 ## File Search (OpenAI only)
 
 ```python
-# Requires: pip install llm-factory-toolkit[openai]
 client = LLMClient(model="openai/gpt-4o-mini")
 
 result = await client.generate(
@@ -372,8 +376,6 @@ result = await client.generate(
 ```
 
 ## Reasoning Models
-
-LiteLLM handles reasoning model parameters automatically:
 
 ```python
 result = await client.generate(
@@ -395,30 +397,16 @@ result = await client.generate(
 )
 ```
 
-## Migration from v0.x
-
-```python
-# BEFORE (v0.x):
-client = LLMClient(provider_type="openai", model="gpt-4o-mini")
-client = LLMClient(provider_type="google_genai", model="gemini-2.5-flash")
-client = LLMClient(provider_type="xai", model="grok-beta")
-
-# AFTER (v1.0):
-client = LLMClient(model="openai/gpt-4o-mini")
-client = LLMClient(model="gemini/gemini-2.5-flash")
-client = LLMClient(model="xai/grok-beta")
-client = LLMClient(model="anthropic/claude-sonnet-4")  # NEW!
-```
-
 ## Development & Testing
 
 ```bash
-pip install -e ".[dev]"
-pytest -m "not integration" tests/
+pip install -e ".[all,dev]"
 
-# Integration tests are manual-only:
-export OPENAI_API_KEY="your_key"
-pytest -m integration --run-integration tests/
+# Unit tests (fast, no API keys needed)
+pytest tests/ -k "not integration" -v
+
+# Integration tests (require OPENAI_API_KEY, GOOGLE_API_KEY, ANTHROPIC_API_KEY in .env)
+pytest tests/ -v
 ```
 
 ## License
