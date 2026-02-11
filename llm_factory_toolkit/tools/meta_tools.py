@@ -12,11 +12,11 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
-
 from .catalog import ToolCatalog
 from .models import ToolExecutionResult
 from .session import ToolSession
+
+logger = logging.getLogger(__name__)
 
 
 def _suggest_similar_names(
@@ -125,8 +125,7 @@ def browse_toolkit(
     # Protocol hint to reduce redundant re-browsing
     if active_count > 0 and available_count == 0:
         body["hint"] = (
-            f"All {active_count} matching tools are already loaded. "
-            "Call them directly."
+            f"All {active_count} matching tools are already loaded. Call them directly."
         )
     elif available_count > 0:
         body["hint"] = (
@@ -188,7 +187,7 @@ def load_tools(
 
     loaded: List[str] = []
     already_active: List[str] = []
-    invalid: List[str] = []
+    invalid: List[Any] = []
 
     # Build token_counts map from catalog for budget enforcement
     token_counts: Dict[str, int] = {}
@@ -198,9 +197,7 @@ def load_tools(
         if tool_catalog and not tool_catalog.has_entry(name):
             suggestions = _suggest_similar_names(name, tool_catalog)
             invalid.append(
-                {"name": name, "did_you_mean": suggestions}
-                if suggestions
-                else name
+                {"name": name, "did_you_mean": suggestions} if suggestions else name
             )
             continue
         if name in tool_session.active_tools:
@@ -496,7 +493,7 @@ _FIND_TOOLS_SYSTEM = (
 
 def _format_catalog_for_prompt(
     entries: List[Any],
-    active: set,
+    active: set[str],
 ) -> str:
     """Format catalog entries into a compact prompt string."""
     lines: List[str] = []
@@ -534,10 +531,12 @@ async def find_tools(
     """
     if _search_agent is None:
         return ToolExecutionResult(
-            content=json.dumps({
-                "error": "Semantic search not configured. "
-                "Set search_agent_model on LLMClient to enable find_tools.",
-            }),
+            content=json.dumps(
+                {
+                    "error": "Semantic search not configured. "
+                    "Set search_agent_model on LLMClient to enable find_tools.",
+                }
+            ),
             error="No search agent configured",
         )
 
@@ -555,12 +554,14 @@ async def find_tools(
 
     if not catalog_text.strip():
         return ToolExecutionResult(
-            content=json.dumps({
-                "results": [],
-                "total_found": 0,
-                "intent": intent,
-                "hint": "All tools are already loaded. Call them directly.",
-            }),
+            content=json.dumps(
+                {
+                    "results": [],
+                    "total_found": 0,
+                    "intent": intent,
+                    "hint": "All tools are already loaded. Call them directly.",
+                }
+            ),
             payload=[],
             metadata={"intent": intent},
         )
@@ -568,7 +569,7 @@ async def find_tools(
     # Build the sub-agent prompt.
     user_prompt = (
         f"Available tools:\n{catalog_text}\n\n"
-        f"User intent: \"{intent}\"\n\n"
+        f'User intent: "{intent}"\n\n'
         "Return the JSON object with the matching tool names."
     )
 
@@ -585,10 +586,12 @@ async def find_tools(
     except Exception as exc:
         logger.warning("find_tools sub-agent call failed: %s", exc)
         return ToolExecutionResult(
-            content=json.dumps({
-                "error": f"Sub-agent call failed: {exc}",
-                "hint": "Fall back to browse_toolkit with keyword search.",
-            }),
+            content=json.dumps(
+                {
+                    "error": f"Sub-agent call failed: {exc}",
+                    "hint": "Fall back to browse_toolkit with keyword search.",
+                }
+            ),
             error=str(exc),
         )
 
@@ -604,13 +607,17 @@ async def find_tools(
             if isinstance(name, str) and tool_catalog.has_entry(name):
                 tool_names.append(name)
     except (json.JSONDecodeError, AttributeError, TypeError):
-        logger.warning("find_tools: failed to parse sub-agent response: %s", result.content)
+        logger.warning(
+            "find_tools: failed to parse sub-agent response: %s", result.content
+        )
         return ToolExecutionResult(
-            content=json.dumps({
-                "error": "Failed to parse sub-agent response.",
-                "raw_response": str(result.content)[:200],
-                "hint": "Fall back to browse_toolkit with keyword search.",
-            }),
+            content=json.dumps(
+                {
+                    "error": "Failed to parse sub-agent response.",
+                    "raw_response": str(result.content)[:200],
+                    "hint": "Fall back to browse_toolkit with keyword search.",
+                }
+            ),
             error="Parse error",
         )
 
@@ -621,15 +628,19 @@ async def find_tools(
         if entry is None:
             continue
         is_active = name in active
-        results.append({
-            "name": entry.name,
-            "description": entry.description,
-            "category": entry.category,
-            "group": entry.group,
-            "tags": entry.tags,
-            "active": is_active,
-            "status": "loaded" if is_active else "available - call load_tools to activate",
-        })
+        results.append(
+            {
+                "name": entry.name,
+                "description": entry.description,
+                "category": entry.category,
+                "group": entry.group,
+                "tags": entry.tags,
+                "active": is_active,
+                "status": "loaded"
+                if is_active
+                else "available - call load_tools to activate",
+            }
+        )
 
     body: Dict[str, Any] = {
         "results": results,

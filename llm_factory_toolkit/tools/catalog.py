@@ -433,12 +433,14 @@ class InMemoryToolCatalog(ToolCatalog):
             if group_prefix:
                 if entry.group:
                     # Tool has an explicit group — match exactly or by prefix.
-                    if entry.group != group and not entry.group.startswith(group_prefix):
+                    if entry.group != group and not entry.group.startswith(
+                        group_prefix
+                    ):
                         continue
                 else:
                     # No group set — fall back to category (LLMs often use
                     # the group parameter as if it were a category filter).
-                    if (entry.category or "").lower() != group.lower():
+                    if (entry.category or "").lower() != (group or "").lower():
                         continue
             if tag_set and not tag_set.intersection(t.lower() for t in entry.tags):
                 continue
