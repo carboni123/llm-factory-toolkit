@@ -19,6 +19,31 @@ from .models import ToolExecutionResult
 from .session import ToolSession
 
 
+def _suggest_similar_names(
+    invalid_name: str, catalog: ToolCatalog, max_suggestions: int = 3
+) -> List[str]:
+    """Return catalog tool names that are similar to *invalid_name*.
+
+    Uses substring matching and token overlap to find plausible candidates.
+    """
+    name_lower = invalid_name.lower()
+    tokens = set(name_lower.replace("-", "_").split("_"))
+    scored: list[tuple[str, int]] = []
+    for entry in catalog.list_all():
+        entry_lower = entry.name.lower()
+        entry_tokens = set(entry_lower.replace("-", "_").split("_"))
+        score = 0
+        # Substring match (either direction)
+        if name_lower in entry_lower or entry_lower in name_lower:
+            score += 3
+        # Shared token overlap
+        score += len(tokens & entry_tokens) * 2
+        if score > 0:
+            scored.append((entry.name, score))
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    return [name for name, _ in scored[:max_suggestions]]
+
+
 # ------------------------------------------------------------------
 # browse_toolkit
 # ------------------------------------------------------------------
@@ -171,7 +196,12 @@ def load_tools(
         # Validate against catalog if available (has_entry avoids lazy
         # parameter resolution, keeping the check lightweight).
         if tool_catalog and not tool_catalog.has_entry(name):
-            invalid.append(name)
+            suggestions = _suggest_similar_names(name, tool_catalog)
+            invalid.append(
+                {"name": name, "did_you_mean": suggestions}
+                if suggestions
+                else name
+            )
             continue
         if name in tool_session.active_tools:
             already_active.append(name)

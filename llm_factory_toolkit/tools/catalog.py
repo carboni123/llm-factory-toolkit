@@ -428,7 +428,7 @@ class InMemoryToolCatalog(ToolCatalog):
         group_prefix = (group + ".") if group else None
 
         for entry in self._entries.values():
-            if category and entry.category != category:
+            if category and (entry.category or "").lower() != category.lower():
                 continue
             if group_prefix:
                 if entry.group:
@@ -438,7 +438,7 @@ class InMemoryToolCatalog(ToolCatalog):
                 else:
                     # No group set — fall back to category (LLMs often use
                     # the group parameter as if it were a category filter).
-                    if entry.category != group:
+                    if (entry.category or "").lower() != group.lower():
                         continue
             if tag_set and not tag_set.intersection(t.lower() for t in entry.tags):
                 continue

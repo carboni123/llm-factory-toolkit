@@ -172,14 +172,33 @@ def query_deals(
     per_page: int | None = None,
     **_,
 ) -> ToolExecutionResult:
+    deals = [
+        {"id": "d1-mock", "name": "Premium Package", "customer": "Maria Silva", "amount": 5000, "stage": "Proposal"},
+        {"id": "d2-mock", "name": "Enterprise Plan", "customer": "Joao Santos", "amount": 12500, "stage": "Negotiation"},
+        {"id": "d3-mock", "name": "Starter Kit", "customer": "Ana Oliveira", "amount": 1500, "stage": "Prospecting"},
+    ]
+    # Filter by search term, stage, or customer_id when provided
+    filtered = deals
+    if search:
+        term = search.lower()
+        filtered = [d for d in filtered if term in d["name"].lower() or term in d["customer"].lower()]
+    if stage:
+        filtered = [d for d in filtered if d["stage"].lower() == stage.lower()]
+    if customer_id:
+        filtered = [d for d in filtered if customer_id.lower() in d["customer"].lower()]
+
+    if not filtered:
+        return ToolExecutionResult(
+            content="No deals found matching the criteria.",
+            metadata={"total": 0, "pipeline_value": 0},
+        )
+    total_value = sum(d["amount"] for d in filtered)
+    lines = [f"Pipeline: ${total_value:,.2f} ({len(filtered)} deals)\n"]
+    for i, d in enumerate(filtered, 1):
+        lines.append(f"{i}. [{d['id']}] {d['name']} - {d['customer']} | ${d['amount']:,} | Stage: {d['stage']}")
     return ToolExecutionResult(
-        content=(
-            "Open pipeline: $127,500.00 (12 deals)\n\n"
-            "1. Premium Package - Maria Silva | $5,000 | Stage: Proposal\n"
-            "2. Enterprise Plan - Joao Santos | $12,500 | Stage: Negotiation\n"
-            "3. Starter Kit - Ana Oliveira | $1,500 | Stage: Prospecting"
-        ),
-        metadata={"total": 12, "pipeline_value": 127500.0},
+        content="\n".join(lines),
+        metadata={"total": len(filtered), "pipeline_value": total_value},
     )
 
 

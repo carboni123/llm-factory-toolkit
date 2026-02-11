@@ -284,6 +284,38 @@ print(f"Warning state: {budget['warning']}")  # True if ≥75%
 - Meta-tool responses include a `compact_mode` field to inform the agent
 - Set `auto_compact=False` if you want manual control over compact mode
 
+### Benchmark Results
+
+We benchmark dynamic tool loading with 23 mock CRM tools across 6 categories and 13 test cases covering single-tool use, multi-tool workflows, cross-category discovery, and session persistence. Full methodology in [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
+**Haiku 4.5 (keyword vs semantic search):**
+
+| Metric | Keyword (`browse_toolkit`) | Semantic (`find_tools`) |
+|--------|---------------------------|------------------------|
+| Pass rate | **13/13 (100%)** | 12/13 (92%) |
+| Total tokens | 132K | **100K (-24%)** |
+| Total tool calls | **54** | 61 |
+| Redundant discovery | 4 | 0 on 11/13 cases |
+| Wall time | **186s** | 237s |
+
+**What dynamic tool loading achieves:**
+
+- **Less context usage** -- Only 1-3 tools loaded per task instead of all 23. The agent discovers and loads what it needs on demand.
+- **Lower token consumption** -- Semantic search uses 24% fewer tokens than keyword search. Combined with `compact_tools=True` (20-40% savings on definitions), total context usage drops significantly.
+- **Scalable tool catalogs** -- The catalog holds tools without putting them in the prompt. Tested with 200-500 tool catalogs in stress tests.
+- **Better tool selection** -- Semantic search via a cheap sub-agent interprets natural-language intent, finding tools that keyword matching might miss.
+
+**When to use which mode:**
+
+| Scenario | Recommended mode |
+|----------|-----------------|
+| Strong models (Claude, GPT-4o) | `dynamic_tool_loading=True` (keyword) -- fast, simple, high accuracy |
+| Weaker models or vague queries | `dynamic_tool_loading="openai/gpt-4o-mini"` (semantic) -- better precision |
+| Large catalogs (50+ tools) | Semantic -- scales better than keyword matching |
+| Latency-sensitive | Keyword -- no sub-agent overhead |
+
+See `docs/dynamic_tools_benchmark_results/` for detailed per-model reports.
+
 ## GenerationResult
 
 `LLMClient.generate` returns a `GenerationResult` with:
