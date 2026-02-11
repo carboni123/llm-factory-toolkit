@@ -59,24 +59,31 @@ class ToolCatalogEntry:
     def matches_query(self, query: str) -> bool:
         """Return True if *query* keywords match name, description, or tags.
 
-        Matching is substring-based and tolerant of morphological variants:
-        each query token must appear as a substring of the searchable text,
-        OR a word from the searchable text (>= 3 chars) must appear as a
-        substring of the token (e.g. "secrets" matches "secret").
+        Matching is substring-based and tolerant of morphological variants.
+        Uses **majority matching**: at least ``ceil(len(tokens) / 2)``
+        tokens must appear (as a substring in the searchable text, or via
+        reverse containment for plurals/verb forms).  This allows
+        natural-language queries like ``"deal create pipeline crm"`` to
+        match tools that contain most — but not all — of the tokens.
         """
         tokens = query.lower().split()
+        if not tokens:
+            return False
         searchable = f"{self.name} {self.description} {' '.join(self.tags)}".lower()
         searchable_words = set(searchable.replace("_", " ").replace("-", " ").split())
 
+        matched = 0
         for tok in tokens:
             if tok in searchable:
+                matched += 1
                 continue
             # Reverse containment: handles plurals / verb forms
             # e.g. "secrets" matches because "secret" (a word) is in "secrets"
             if any(w in tok for w in searchable_words if len(w) >= 3):
-                continue
-            return False
-        return True
+                matched += 1
+
+        required = max(1, -(-len(tokens) // 2))  # ceil(len / 2)
+        return matched >= required
 
     def relevance_score(self, query: str) -> float:
         """Compute a 0.0-1.0 relevance score against *query*.
@@ -423,11 +430,16 @@ class InMemoryToolCatalog(ToolCatalog):
         for entry in self._entries.values():
             if category and entry.category != category:
                 continue
-            if group_prefix and (
-                not entry.group
-                or (entry.group != group and not entry.group.startswith(group_prefix))
-            ):
-                continue
+            if group_prefix:
+                if entry.group:
+                    # Tool has an explicit group — match exactly or by prefix.
+                    if entry.group != group and not entry.group.startswith(group_prefix):
+                        continue
+                else:
+                    # No group set — fall back to category (LLMs often use
+                    # the group parameter as if it were a category filter).
+                    if entry.category != group:
+                        continue
             if tag_set and not tag_set.intersection(t.lower() for t in entry.tags):
                 continue
             if query and not entry.matches_query(query):

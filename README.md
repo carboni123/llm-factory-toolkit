@@ -232,7 +232,7 @@ With `dynamic_tool_loading=True`, the client automatically:
 
 The agent uses `browse_toolkit` to search for relevant tools by keyword, category, or group, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs.
 
-**Context-aware tool selection:** Search results are automatically sorted by relevance score (0.0-1.0) using weighted field matching (name=3x, tags=2x, description=1x, category=1x). This ensures the most relevant tools appear first, improving discovery quality for the agent.
+**Context-aware tool selection:** Search uses majority matching (at least half of the query tokens must appear) combined with weighted relevance scoring (name=3x, tags=2x, description=1x, category=1x). This allows natural-language queries to find relevant tools even when not all keywords match exactly. The `group` filter gracefully falls back to `category` when tools don't have explicit groups.
 
 **Token optimization:** Use `compact_tools=True` to strip nested descriptions and defaults from non-core tool definitions, saving 20-40% tokens. Core tools always retain full definitions for critical agent understanding.
 

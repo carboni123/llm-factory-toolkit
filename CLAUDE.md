@@ -63,7 +63,7 @@ This library uses **native provider adapters** with a shared agentic loop:
 | `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
 | `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking | ~190 |
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` (category `"utility"`) | ~60 |
-| `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, search with offset/pagination | ~510 |
+| `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, majority-match search, group-to-category fallback, offset/pagination | ~520 |
 | `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation, analytics tracking | ~250 |
 | `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools` -- meta-tools for dynamic discovery with pagination (category `"system"`) | ~400 |
 | `__init__.py` | Public exports, `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~75 |

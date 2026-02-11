@@ -741,6 +741,7 @@ results = catalog.search(tags=["search", "customer"])
 # Search by group (hierarchical namespace filtering)
 results = catalog.search(group="crm")  # Returns "crm.contacts", "crm.pipeline", etc.
 results = catalog.search(group="crm.contacts")  # Returns exact group match only
+# Note: if tools don't have an explicit group, the group filter falls back to category matching
 
 # Combined filters
 results = catalog.search(query="search", category="crm", group="crm.contacts", limit=5)
@@ -825,12 +826,14 @@ The dynamic loading system has been audited for production use with large catalo
 
 ### Search Strategy
 
-The catalog uses **agentic search** (substring-based keyword matching) rather than semantic/vector search. This design:
+The catalog uses **agentic search** (substring-based keyword matching with majority matching) rather than semantic/vector search. This design:
 
-- Enables iterative refinement (the agent narrows results using category + tag filters)
-- Requires no external dependencies (no embeddings, no NLP libraries)
-- Handles plurals and verb forms via reverse containment ("secrets" matches "secret")
-- Works well for catalogs under 200 tools
+- Uses **majority matching**: at least `ceil(N/2)` query tokens must appear in the tool's name, description, or tags (e.g., 2 of 3 tokens, 2 of 4, 3 of 5). This allows natural-language queries like `"deal create pipeline crm"` to match tools that contain most but not all tokens.
+- Results are sorted by **weighted relevance scoring** (name=3x, tags=2x, description=1x, category=1x), so the best matches appear first.
+- Handles plurals and verb forms via reverse containment ("secrets" matches "secret", "emails" matches "email").
+- The `group` filter gracefully falls back to `category` matching when tools don't have an explicit group set, so agents can use either interchangeably.
+- Requires no external dependencies (no embeddings, no NLP libraries).
+- Works well for catalogs under 200 tools.
 
 ### Best Practices
 

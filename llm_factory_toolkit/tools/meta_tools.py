@@ -82,6 +82,10 @@ def browse_toolkit(
     # Retrieve total matching count from the catalog (before pagination).
     total_matched = getattr(tool_catalog, "_last_search_total", len(results))
 
+    # Count how many results are already loaded
+    active_count = sum(1 for r in results if r.get("active"))
+    available_count = len(results) - active_count
+
     body: Dict[str, Any] = {
         "results": results,
         "total_found": len(results),
@@ -89,6 +93,18 @@ def browse_toolkit(
         "available_categories": categories,
         "available_groups": groups,
     }
+
+    # Protocol hint to reduce redundant re-browsing
+    if active_count > 0 and available_count == 0:
+        body["hint"] = (
+            f"All {active_count} matching tools are already loaded. "
+            "Call them directly."
+        )
+    elif available_count > 0:
+        body["hint"] = (
+            "Call load_tools with the tool names you need, then use them. "
+            "Do not re-browse for these same tools."
+        )
     if query:
         body["query"] = query
     if category:
@@ -173,6 +189,13 @@ def load_tools(
         "failed_limit": failed_limit,
         "active_count": len(tool_session.active_tools),
     }
+
+    # Protocol hint to prevent re-browsing after loading
+    if actually_loaded or already_active:
+        response["hint"] = (
+            "Tools are now active. Use them directly to complete the task. "
+            "Do not browse or load again."
+        )
 
     # Include budget snapshot when available
     if tool_session.token_budget is not None:

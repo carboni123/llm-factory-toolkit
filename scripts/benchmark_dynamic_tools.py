@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 import time
@@ -123,6 +124,19 @@ class BenchmarkResult:
     hit_ceiling: bool = False
     wasted_loads: list[str] = field(default_factory=list)
     redundant_browses: int = 0
+    # Tool call trace
+    trace: list[TraceEntry] = field(default_factory=list)
+
+
+@dataclass
+class TraceEntry:
+    """A single tool call in the execution trace."""
+
+    step: int
+    tool_name: str
+    arguments: dict[str, Any]
+    response_summary: str
+    is_meta: bool
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +462,114 @@ def extract_tool_names(messages: list[dict]) -> list[str]:
     return names
 
 
+def _summarize_browse_result(data: dict) -> str:
+    """Summarize a browse_toolkit response."""
+    results = data.get("results", [])
+    loaded = sum(1 for r in results if r.get("active"))
+    available = len(results) - loaded
+    total = data.get("total_matched", len(results))
+    cats = data.get("available_categories", [])
+
+    parts = [f"{total} results ({loaded} loaded, {available} available)"]
+    if data.get("query"):
+        parts.insert(0, f'query="{data["query"]}"')
+    if data.get("category_filter"):
+        parts.insert(0, f'category="{data["category_filter"]}"')
+    if cats:
+        parts.append(f"categories: {cats}")
+    if data.get("has_more"):
+        parts.append("has_more=True")
+    return " | ".join(parts)
+
+
+def _summarize_load_result(data: dict) -> str:
+    """Summarize a load_tools response."""
+    parts: list[str] = []
+    if data.get("loaded"):
+        parts.append(f"loaded: {data['loaded']}")
+    if data.get("already_active"):
+        parts.append(f"already_active: {data['already_active']}")
+    if data.get("invalid"):
+        parts.append(f"invalid: {data['invalid']}")
+    if data.get("failed_limit"):
+        parts.append(f"failed_limit: {data['failed_limit']}")
+    parts.append(f"active: {data.get('active_count', '?')}")
+    return " | ".join(parts)
+
+
+def _summarize_tool_response(name: str, content: str) -> str:
+    """Build a smart summary of a tool response based on tool type."""
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return content[:120] + ("..." if len(content) > 120 else "")
+
+    if name == "browse_toolkit":
+        return _summarize_browse_result(data)
+    if name in ("load_tools", "load_tool_group"):
+        return _summarize_load_result(data)
+    if name == "unload_tools":
+        unloaded = data.get("unloaded", [])
+        return f"unloaded: {unloaded}" if unloaded else "nothing unloaded"
+
+    # Business tools: compact JSON preview
+    preview = json.dumps(data, ensure_ascii=False)
+    return preview[:120] + ("..." if len(preview) > 120 else "")
+
+
+def extract_tool_trace(messages: list[dict]) -> list[TraceEntry]:
+    """Extract a structured tool call trace from the conversation transcript."""
+    # Build a lookup: call_id -> tool response content
+    response_map: dict[str, tuple[str, str]] = {}  # call_id -> (name, content)
+    for msg in messages:
+        if msg.get("role") == "tool":
+            call_id = msg.get("tool_call_id", "")
+            if call_id:
+                response_map[call_id] = (msg.get("name", ""), msg.get("content", ""))
+
+    trace: list[TraceEntry] = []
+    step = 0
+    seen_ids: set[str] = set()
+
+    for msg in messages:
+        if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+            continue
+        for tc in msg["tool_calls"]:
+            call_id = tc.get("id", "")
+            if call_id in seen_ids:
+                continue
+            seen_ids.add(call_id)
+
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            if not name:
+                continue
+
+            step += 1
+            # Parse arguments
+            raw_args = func.get("arguments", "{}")
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            except (json.JSONDecodeError, TypeError):
+                args = {"_raw": raw_args}
+
+            # Get response summary
+            resp_name, resp_content = response_map.get(call_id, ("", ""))
+            summary = _summarize_tool_response(name, resp_content) if resp_content else "(no response)"
+
+            trace.append(
+                TraceEntry(
+                    step=step,
+                    tool_name=name,
+                    arguments=args if isinstance(args, dict) else {},
+                    response_summary=summary,
+                    is_meta=name in META_TOOLS,
+                )
+            )
+
+    return trace
+
+
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
@@ -584,6 +706,7 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
         client = LLMClient(model=model, tool_factory=factory)
 
         all_tool_names_called: list[str] = []
+        all_messages: list[dict] = []
         total_tokens = 0
         last_content = ""
 
@@ -599,6 +722,7 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
                     max_tool_iterations=case.max_tool_iterations,
                 )
                 all_tool_names_called.extend(extract_tool_names(result.messages or []))
+                all_messages.extend(result.messages or [])
                 if result.usage:
                     total_tokens += result.usage.get("total_tokens", 0)
                 last_content = str(result.content or "")
@@ -616,6 +740,7 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
                 max_tool_iterations=case.max_tool_iterations,
             )
             all_tool_names_called = extract_tool_names(result.messages or [])
+            all_messages = result.messages or []
             if result.usage:
                 total_tokens = result.usage.get("total_tokens", 0)
             last_content = str(result.content or "")
@@ -625,6 +750,9 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
         # Detect ceiling hit from the warning marker injected by BaseProvider
         hit_ceiling = "[Warning: Max tool iterations" in last_content
 
+        # Extract tool call trace
+        trace = extract_tool_trace(all_messages)
+
         if verbose:
             unique_called = list(dict.fromkeys(all_tool_names_called))
             _safe_print(f"\n  [verbose] Active tools: {session.list_active()}")
@@ -633,7 +761,7 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
             _safe_print(f"  [verbose] Hit ceiling: {hit_ceiling}")
             _safe_print(f"  [verbose] Response: {last_content[:300]}")
 
-        return evaluate_case(
+        bench_result = evaluate_case(
             case,
             all_tool_names_called,
             session,
@@ -643,6 +771,8 @@ async def run_case(case: BenchmarkCase, model: str, verbose: bool = False) -> Be
             total_tokens,
             hit_ceiling,
         )
+        bench_result.trace = trace
+        return bench_result
 
     except Exception as e:
         import traceback
@@ -683,6 +813,61 @@ STATUS_ICONS = {
     "fail": "[FAIL]",
     "error": "[ERR ]",
 }
+
+
+def _format_args(args: dict[str, Any], max_len: int = 80) -> str:
+    """Format tool call arguments compactly."""
+    if not args:
+        return ""
+    parts: list[str] = []
+    for k, v in args.items():
+        if isinstance(v, str):
+            parts.append(f'{k}="{v}"')
+        elif isinstance(v, list) and all(isinstance(i, str) for i in v):
+            parts.append(f"{k}={v}")
+        else:
+            parts.append(f"{k}={json.dumps(v, ensure_ascii=False)}")
+    text = ", ".join(parts)
+    if len(text) > max_len:
+        return text[:max_len] + "..."
+    return text
+
+
+def format_case_trace(result: BenchmarkResult) -> str:
+    """Format the tool call trace for a single benchmark case."""
+    lines: list[str] = []
+    icon = STATUS_ICONS.get(result.status, "[????]")
+    lines.append(
+        f"\n  {icon} {result.case_name} "
+        f"({result.total_tool_calls} calls, {result.duration_ms}ms)"
+    )
+
+    if not result.trace:
+        lines.append("    (no tool calls)")
+        return "\n".join(lines)
+
+    for entry in result.trace:
+        marker = "M" if entry.is_meta else " "
+        args_str = _format_args(entry.arguments)
+        lines.append(f"    {entry.step:>2}. [{marker}] {entry.tool_name}({args_str})")
+        lines.append(f"         -> {entry.response_summary}")
+
+    return "\n".join(lines)
+
+
+def format_all_traces(results: list[BenchmarkResult]) -> str:
+    """Format tool call traces for all benchmark cases."""
+    lines: list[str] = []
+    lines.append("")
+    lines.append("=" * 100)
+    lines.append("  TOOL CALL TRACES")
+    lines.append("=" * 100)
+
+    for r in results:
+        lines.append(format_case_trace(r))
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 def format_summary_table(results: list[BenchmarkResult]) -> str:
@@ -844,7 +1029,7 @@ def format_efficiency_analysis(results: list[BenchmarkResult]) -> str:
     return "\n".join(lines)
 
 
-def format_markdown_report(results: list[BenchmarkResult]) -> str:
+def format_markdown_report(results: list[BenchmarkResult], include_traces: bool = False) -> str:
     """Format a full markdown report suitable for saving to a file."""
     lines: list[str] = []
     model = results[0].model if results else "unknown"
@@ -970,6 +1155,28 @@ def format_markdown_report(results: list[BenchmarkResult]) -> str:
             lines.append(f"- **Response:** {preview}...")
         lines.append("")
 
+    # Tool call traces
+    if include_traces:
+        lines.append("## Tool Call Traces")
+        lines.append("")
+        for r in results:
+            lines.append(f"<details>")
+            lines.append(f"<summary><b>{r.case_name}</b> [{r.status}] — {r.total_tool_calls} calls</summary>")
+            lines.append("")
+            lines.append("```")
+            if r.trace:
+                for entry in r.trace:
+                    marker = "META" if entry.is_meta else "    "
+                    args_str = _format_args(entry.arguments)
+                    lines.append(f"  {entry.step:>2}. [{marker}] {entry.tool_name}({args_str})")
+                    lines.append(f"       -> {entry.response_summary}")
+            else:
+                lines.append("  (no tool calls)")
+            lines.append("```")
+            lines.append("")
+            lines.append("</details>")
+            lines.append("")
+
     return "\n".join(lines)
 
 
@@ -983,6 +1190,7 @@ async def run_benchmark(
     tags: list[str] | None = None,
     only: list[str] | None = None,
     verbose: bool = False,
+    trace: bool = False,
     output: str | None = None,
 ) -> None:
     """Run the full benchmark suite."""
@@ -1043,9 +1251,14 @@ async def run_benchmark(
     details = format_failure_details(results)
     _safe_print(details)
 
+    # Print traces if requested
+    if trace:
+        traces_output = format_all_traces(results)
+        _safe_print(traces_output)
+
     # Save markdown report if requested
     if output:
-        report = format_markdown_report(results)
+        report = format_markdown_report(results, include_traces=trace)
         with open(output, "w", encoding="utf-8") as f:
             f.write(report)
         _safe_print(f"  Report saved to: {output}")
@@ -1088,6 +1301,11 @@ def main() -> None:
         help="Print full responses and tool details",
     )
     parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Print tool call traces showing the full call flow per case",
+    )
+    parser.add_argument(
         "--output",
         help="Save markdown report to file",
     )
@@ -1103,6 +1321,7 @@ def main() -> None:
             tags=tag_list,
             only=only_list,
             verbose=args.verbose,
+            trace=args.trace,
             output=args.output,
         )
     )

@@ -309,7 +309,8 @@ class ToolFactory:
             description=(
                 "Search the tool catalog to discover available tools. "
                 "Returns matching tools with name, description, category, and tags. "
-                "Use load_tools to activate the tools you need."
+                "After browsing, use load_tools to activate what you need. "
+                "Do not re-browse for tools you have already seen or loaded."
             ),
             parameters=BROWSE_TOOLKIT_PARAMETERS,
             category="system",
@@ -319,8 +320,10 @@ class ToolFactory:
             function=load_tools,
             name="load_tools",
             description=(
-                "Load tools into the active session so you can use them. "
-                "Pass a list of tool names discovered via browse_toolkit."
+                "Load tools into the active session so you can call them. "
+                "Pass a list of tool names discovered via browse_toolkit. "
+                "Load ALL tools you need in one call. "
+                "Loaded tools stay active — do not re-browse or re-load."
             ),
             parameters=LOAD_TOOLS_PARAMETERS,
             category="system",

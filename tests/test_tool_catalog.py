@@ -199,9 +199,40 @@ class TestEntryMatchesQuery:
         entry = ToolCatalogEntry(name="tool", description="desc", tags=["crm", "sales"])
         assert entry.matches_query("crm")
 
-    def test_all_tokens_must_match(self) -> None:
+    def test_no_tokens_match_returns_false(self) -> None:
         entry = ToolCatalogEntry(name="send_email", description="Send email")
-        assert not entry.matches_query("send database")
+        assert not entry.matches_query("database network")
+
+    def test_majority_match_two_tokens(self) -> None:
+        """With 2 tokens, 1 must match (ceil(2/2)=1)."""
+        entry = ToolCatalogEntry(name="send_email", description="Send email")
+        # "send" matches, "database" doesn't -> 1/2 >= 1 -> True
+        assert entry.matches_query("send database")
+
+    def test_majority_match_three_tokens(self) -> None:
+        """With 3 tokens, 2 must match (ceil(3/2)=2)."""
+        entry = ToolCatalogEntry(
+            name="create_deal",
+            description="Create a new deal in the CRM to track a potential sale.",
+            tags=["create", "deal"],
+        )
+        # "deal" + "create" match, "pipeline" doesn't -> 2/3 >= 2 -> True
+        assert entry.matches_query("deal create pipeline")
+        # Only "deal" matches -> 1/3 < 2 -> False
+        assert not entry.matches_query("deal pipeline forecast")
+
+    def test_majority_match_four_tokens(self) -> None:
+        """With 4 tokens, 2 must match (ceil(4/2)=2)."""
+        entry = ToolCatalogEntry(
+            name="create_deal",
+            description="Create a new deal in the CRM to track a potential sale.",
+            tags=["create", "deal"],
+            category="sales",
+        )
+        # "deal" + "create" + "crm" match -> 3/4 >= 2 -> True
+        assert entry.matches_query("deal create pipeline crm")
+        # Only "create" matches -> 1/4 < 2 -> False
+        assert not entry.matches_query("create pipeline forecast revenue")
 
     def test_matches_plural_form(self) -> None:
         """'secrets' matches an entry containing 'secret' (reverse containment)."""
