@@ -3,11 +3,11 @@
 ## Product Overview
 
 **Name:** llm_factory_toolkit
-**Version:** 1.0.0
+**Version:** 2.0.0
 **License:** MIT
 **Author:** Diego Carboni
 
-LLM Factory Toolkit is a Python library for building LLM-powered agents. It provides a production-grade tool framework with an agentic execution loop, backed by unified access to 100+ LLM providers.
+LLM Factory Toolkit is a Python library for building LLM-powered agents. It provides a production-grade tool framework with an agentic execution loop, backed by native adapters for the Big 4 LLM providers (OpenAI, Anthropic, Google Gemini, xAI).
 
 ### Product Priorities
 
@@ -16,7 +16,7 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 - Agentic loop: iterate tool calls until the model has nothing left to call, then return a final response.
 
 **P1 -- Unified access**
-- Multi-provider routing: swap between 100+ LLMs without changing application code.
+- Multi-provider routing: swap between OpenAI, Anthropic, Gemini, and xAI without changing application code.
 - Context injection: pass runtime data (user_id, db, etc.) to tools without exposing it to the model.
 - Content/payload separation: tool results split into LLM-facing content and app-facing payload.
 - Structured output: Pydantic model validation on model responses.
@@ -102,7 +102,7 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 | `load_tools` meta-tool adds tools to session mid-loop | Done |
 | `tool_session` param on `generate()` / `generate_stream()` | Done |
 | Agentic loop recomputes visible tools each iteration from session | Done |
-| Both LiteLLM and OpenAI Responses API paths support dynamic loading | Done |
+| All 4 native provider adapters support dynamic loading | Done |
 | Full backward compatibility: `tool_session=None` = same as before | Done |
 | `ToolSession.to_dict()` / `from_dict()` for external persistence (Redis/DB) | Done |
 
@@ -154,28 +154,28 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 
 #### R6: Multi-Provider Interface
 
-**Goal:** One API surface that works identically across 100+ LLM providers.
+**Goal:** One API surface that works identically across all supported LLM providers.
 
 | Requirement | Status |
 |-------------|--------|
 | Single constructor: `LLMClient(model="provider/model")` | Done |
 | Provider inferred from model string prefix | Done |
-| OpenAI, Anthropic, Google, xAI, Mistral, Cohere, Bedrock, Ollama support | Done |
+| OpenAI, Anthropic, Google Gemini, xAI support via native adapters | Done |
 | API key loading: direct arg > env var > `.env` file | Done |
 | Extra kwargs forwarded to underlying provider | Done |
 
-#### R7: Dual Routing Architecture
+#### R7: Native Provider Architecture
 
-**Goal:** Leverage OpenAI's Responses API for OpenAI models while using LiteLLM for universal compatibility.
+**Goal:** Direct SDK integration with each provider for maximum feature support.
 
 | Requirement | Status |
 |-------------|--------|
-| OpenAI models detected by prefix (`gpt-`, `o1-`, `o3-`, `o4-`, `chatgpt-`) | Done |
-| OpenAI path uses native `openai` SDK with Responses API | Done |
-| All other models route through `litellm.acompletion()` | Done |
-| Consistent `GenerationResult` return type regardless of path | Done |
-| Message format conversion between Responses API and Chat Completions | Done |
-| `openai` SDK is optional dependency (`pip install llm-factory-toolkit[openai]`) | Done |
+| `ProviderRouter` resolves model strings to adapters via prefix matching | Done |
+| `BaseProvider` ABC owns shared agentic loop (`generate`, `generate_stream`) | Done |
+| Each adapter implements `_call_api()` and `_call_api_stream()` | Done |
+| Chat Completions format as loop currency; adapters convert internally | Done |
+| Consistent `GenerationResult` return type regardless of provider | Done |
+| Provider SDKs are optional dependencies (`[openai]`, `[anthropic]`, `[gemini]`) | Done |
 
 #### R8: Context Injection
 
@@ -229,7 +229,7 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 | `web_search=True` enables search | Done |
 | `web_search={"search_context_size": "high"}` with options | Done |
 | Full params on OpenAI (user_location, filters) | Done |
-| Limited params on LiteLLM path (search_context_size only) | Done |
+| xAI native web search via `live_search` tool | Done |
 
 #### R13: File Search (OpenAI Only)
 
@@ -300,28 +300,32 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
                     ToolFactory (tools/)
                    /          |                \
           register_tool()  register_tool_class()  register_meta_tools()
-          (category/tags)  BaseTool (CATEGORY/TAGS)  browse_toolkit / load_tools
+          (category/tags)  BaseTool (CATEGORY/TAGS)  browse_toolkit / load_tools / find_tools
                               |
                    InMemoryToolCatalog ←→ ToolSession
                    (searchable entries)    (active tools per conversation)
                               |
-                    LiteLLMProvider (provider.py)
-                   /                              \
-        OpenAI Responses API               litellm.acompletion()
-        (openai SDK)                       (100+ providers)
-                   \                              /
+                    ProviderRouter (providers/_registry.py)
+                   /          |          |          \
+        OpenAIAdapter  AnthropicAdapter  GeminiAdapter  XAIAdapter
+        (Responses API)  (Messages API)  (GenerateContent)  (OpenAI compat)
+                   \          |          |          /
+                    BaseProvider (shared agentic loop)
+                              |
                     GenerationResult / StreamChunk
 ```
 
 ### Key Design Decisions
 
-1. **Dual routing over universal adapter** -- OpenAI's Responses API offers features (file_search, strict tool schemas, native web search) that a lowest-common-denominator approach would lose.
+1. **Native adapters over proxy layer** -- Each provider adapter talks directly to its SDK, enabling full feature support (OpenAI file_search, strict schemas; Anthropic structured output via tool trick; Gemini native response_schema).
 
-2. **Context injection over global state** -- Server-side data is passed per-call via `tool_execution_context`, not stored in globals or singletons. This is safe for concurrent requests in web servers.
+2. **Shared agentic loop** -- One loop in `BaseProvider` handles all providers identically. Adapters only implement `_call_api()` and `_call_api_stream()`, converting to/from Chat Completions format internally.
 
-3. **Content/payload separation** -- `ToolExecutionResult` splits output into `content` (for the LLM) and `payload` (for the application). This enables deferred processing patterns where tool side-effects (database writes, API calls) produce data the app needs but the LLM doesn't.
+3. **Context injection over global state** -- Server-side data is passed per-call via `tool_execution_context`, not stored in globals or singletons. This is safe for concurrent requests in web servers.
 
-4. **Optional dependencies** -- The `openai` SDK and `sympy` are optional. The core library works with only `litellm`, `pydantic`, and `python-dotenv`.
+4. **Content/payload separation** -- `ToolExecutionResult` splits output into `content` (for the LLM) and `payload` (for the application). This enables deferred processing patterns where tool side-effects (database writes, API calls) produce data the app needs but the LLM doesn't.
+
+5. **Optional dependencies** -- Provider SDKs are optional. The core library works with only `pydantic` and `python-dotenv`.
 
 ---
 
@@ -343,14 +347,23 @@ LLM Factory Toolkit is a Python library for building LLM-powered agents. It prov
 llm_factory_toolkit/
     __init__.py          # Public exports, .env loading, utilities
     client.py            # LLMClient: thin wrapper, tool registration, history merging
-    provider.py          # LiteLLMProvider: dual routing, generation loops, message conversion
-    exceptions.py        # Exception hierarchy
+    models.py            # ModelInfo, MODEL_CATALOG, list_models(), get_model_info()
+    exceptions.py        # Exception hierarchy (incl. RetryExhaustedError)
+    providers/
+        __init__.py      # Package exports
+        _base.py         # BaseProvider ABC: shared agentic loop, tool dispatch
+        _registry.py     # ProviderRouter: model prefix routing, lazy adapter caching
+        _util.py         # bare_model_name(), strip_urls()
+        openai.py        # OpenAIAdapter (Responses API)
+        anthropic.py     # AnthropicAdapter (Messages API)
+        gemini.py        # GeminiAdapter (GenerateContent)
+        xai.py           # XAIAdapter (OpenAI subclass, custom base_url)
     tools/
         __init__.py      # Tool framework exports
         base_tool.py     # BaseTool ABC
         builtins.py      # safe_math_evaluator, read_local_file
         catalog.py       # ToolCatalog ABC, InMemoryToolCatalog, ToolCatalogEntry
-        meta_tools.py    # browse_toolkit, load_tools, unload_tools (dynamic loading)
+        meta_tools.py    # browse_toolkit, load_tools, find_tools, unload_tools
         models.py        # GenerationResult, StreamChunk, ParsedToolCall, etc.
         runtime.py       # ToolRuntime for nested tool calls
         session.py       # ToolSession for per-conversation tool visibility
@@ -363,10 +376,11 @@ llm_factory_toolkit/
 
 | Package | Version | Purpose | Required |
 |---------|---------|---------|----------|
-| `litellm` | >=1.70 | Multi-provider LLM routing | Yes |
 | `pydantic` | >=2.11 | Data validation, structured output | Yes |
 | `python-dotenv` | >=1.1 | Environment variable loading | Yes |
-| `openai` | >=2.7.1 | OpenAI Responses API | Optional (`[openai]`) |
+| `openai` | >=2.7.1 | OpenAI + xAI adapters | Optional (`[openai]`) |
+| `anthropic` | >=0.40 | Anthropic adapter | Optional (`[anthropic]`) |
+| `google-genai` | >=1.0 | Gemini adapter | Optional (`[gemini]`) |
 | `sympy` | >=1.12 | Safe math evaluation builtin | Optional (`[builtins]`) |
 
 ---
@@ -409,7 +423,7 @@ llm_factory_toolkit/
 - **Prompt management** -- Users manage their own prompts and message arrays.
 - **Model fine-tuning** -- Only inference-time interaction is supported.
 - **Caching layer** -- Users implement their own caching if needed.
-- **Rate limiting** -- Handled by LiteLLM or the provider; not in this library.
+- **Rate limiting** -- Handled by the provider; not in this library.
 - **Synchronous API** -- Async-only by design. Users wrap with `asyncio.run()` as needed.
 
 ---

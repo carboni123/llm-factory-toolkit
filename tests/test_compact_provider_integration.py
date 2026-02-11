@@ -5,8 +5,7 @@ core tools keep full definitions, tool dispatch still works (no regression),
 _resolve_tool_definitions returns correct structure, LLMClient wires
 compact_tools through, and compact definitions are measurably smaller.
 
-Rewritten to use the new BaseProvider / _MockAdapter architecture
-(replacing the old LiteLLMProvider-based tests).
+Uses BaseProvider / _MockAdapter architecture.
 """
 
 from __future__ import annotations

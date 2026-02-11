@@ -248,7 +248,7 @@ async def test_openai_dynamic_browse_load_use(openai_test_model: str) -> None:
 
 
 # =====================================================================
-# Test 2: Full flow — browse, load, use (Google / LiteLLM)
+# Test 2: Full flow — browse, load, use (Google / Gemini)
 # =====================================================================
 
 
@@ -256,7 +256,7 @@ async def test_openai_dynamic_browse_load_use(openai_test_model: str) -> None:
 async def test_google_dynamic_browse_load_use(google_test_model: str) -> None:
     """Agent discovers get_weather via browse_toolkit, loads it, then uses it.
 
-    Full 3-step agentic flow on the LiteLLM path.
+    Full 3-step agentic flow on the Gemini adapter path.
     """
     api_key_display = f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "N/A"
     print(f"\n--- Test: Google dynamic browse/load/use (Key: {api_key_display}) ---")
@@ -484,13 +484,13 @@ async def test_openai_session_persistence_across_calls(openai_test_model: str) -
 
 
 # =====================================================================
-# Test 5: Session persistence (Google / LiteLLM path)
+# Test 5: Session persistence (Google / Gemini adapter)
 # =====================================================================
 
 
 @pytest.mark.skipif(skip_google, reason=skip_reason_google)
 async def test_google_session_persistence_across_calls(google_test_model: str) -> None:
-    """Same as test 4 but on the LiteLLM path via Google."""
+    """Same as test 4 but on the Gemini adapter path."""
     api_key_display = f"{GOOGLE_API_KEY[:5]}...{GOOGLE_API_KEY[-4:]}" if GOOGLE_API_KEY else "N/A"
     print(f"\n--- Test: Google session persistence (Key: {api_key_display}) ---")
 

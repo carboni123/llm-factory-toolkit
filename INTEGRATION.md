@@ -44,8 +44,8 @@ Set your provider's API key via environment variable or `.env` file:
 ```bash
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
-export GEMINI_API_KEY="..."
-# LiteLLM uses standard env vars for each provider
+export GOOGLE_API_KEY="..."
+export XAI_API_KEY="..."
 ```
 
 The library loads `.env` automatically on import.
@@ -56,7 +56,7 @@ The `LLMClient` is the main interface for interacting with LLMs.
 
 ### Initialization
 
-Import and instantiate the client with a LiteLLM model string (`provider/model`).
+Import and instantiate the client with a model string (`provider/model`).
 
 ```python
 from llm_factory_toolkit import LLMClient
@@ -77,11 +77,10 @@ tool_factory = ToolFactory()
 # ... register tools ...
 client = LLMClient(model="openai/gpt-4o-mini", tool_factory=tool_factory)
 
-# Extra kwargs are forwarded to litellm.acompletion()
+# Extra kwargs are forwarded to the provider SDK
 client = LLMClient(
     model="openai/gpt-4o-mini",
     timeout=300.0,
-    num_retries=3,
 )
 ```
 
@@ -130,10 +129,9 @@ result = await client.generate(input=messages)
 result = await client.generate(input=messages, model="anthropic/claude-sonnet-4")
 result = await client.generate(input=messages, model="gemini/gemini-2.5-flash")
 result = await client.generate(input=messages, model="xai/grok-3")
-result = await client.generate(input=messages, model="ollama/llama3")
 ```
 
-See [LiteLLM's provider list](https://docs.litellm.ai/docs/providers) for all 100+ supported models.
+Supported providers: OpenAI (`openai/`), Anthropic (`anthropic/`), Google Gemini (`gemini/` or `google/`), and xAI (`xai/`). Bare model prefixes also work (e.g., `gpt-4o-mini`, `claude-sonnet-4`, `gemini-2.5-flash`, `grok-3`).
 
 ## Streaming
 
@@ -378,14 +376,14 @@ result = await client.generate(
 
 1. You send a message to the LLM via `client.generate()`.
 2. The LLM determines a tool should be called based on registered tool descriptions and schemas.
-3. The `LiteLLMProvider` receives the tool call request from `litellm.acompletion()`.
-4. The provider uses `ToolFactory.dispatch_tool()` to:
+3. The provider adapter receives the tool call request from the API.
+4. The `BaseProvider` uses `ToolFactory.dispatch_tool()` to:
     * Find the correct registered function.
     * Parse the arguments provided by the LLM.
     * Inject any `tool_execution_context` values that match function parameters.
     * Execute your function with the combined arguments.
     * JSON-serialise the return value.
-5. The provider sends the serialised result back to the LLM as a `{"role": "tool"}` message.
+5. The adapter sends the serialised result back to the LLM as a `{"role": "tool"}` message.
 6. The LLM uses the tool result to formulate its final response.
 7. `client.generate()` returns a `GenerationResult` with the final content, deferred payloads, and the tool transcript.
 
@@ -518,7 +516,7 @@ async def run_pydantic_mode():
 
 ## Web Search
 
-Enable provider web search (supported by OpenAI, Anthropic, Google, xAI via LiteLLM):
+Enable provider web search (supported by OpenAI and xAI):
 
 ```python
 # Simple boolean
@@ -536,7 +534,7 @@ result = await client.generate(
 
 ## File Search (OpenAI only)
 
-Search over documents in OpenAI vector stores. Requires `pip install llm-factory-toolkit[openai]`.
+Search over documents in OpenAI vector stores.
 
 ```python
 client = LLMClient(model="openai/gpt-4o-mini")
@@ -551,7 +549,7 @@ File search is only supported with OpenAI models. Using it with other providers 
 
 ## Reasoning Models
 
-LiteLLM handles reasoning model parameters automatically:
+The OpenAI adapter handles reasoning model parameters automatically:
 
 ```python
 result = await client.generate(
@@ -661,7 +659,7 @@ factory.register_tool(
 # ... register many more tools ...
 
 client = LLMClient(
-    model="openai/gpt-4.1-mini",
+    model="anthropic/claude-haiku-4-5-20251001",
     tool_factory=factory,
     core_tools=["call_human"],       # Always available to the agent
     dynamic_tool_loading=True,       # Keyword search via browse_toolkit
@@ -670,7 +668,7 @@ client = LLMClient(
 
 # Or use semantic search via a cheap sub-agent LLM:
 client = LLMClient(
-    model="openai/gpt-4.1-mini",
+    model="anthropic/claude-haiku-4-5-20251001",
     tool_factory=factory,
     core_tools=["call_human"],
     dynamic_tool_loading="openai/gpt-4o-mini",  # Semantic search via find_tools
@@ -711,7 +709,7 @@ factory.register_meta_tools()
 session = ToolSession()
 session.load(["call_human", "browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
 
-client = LLMClient(model="openai/gpt-4.1-mini", tool_factory=factory)
+client = LLMClient(model="anthropic/claude-haiku-4-5-20251001", tool_factory=factory)
 result = await client.generate(input=messages, tool_session=session)
 ```
 
@@ -770,7 +768,7 @@ When working with large tool catalogs, you can reduce context token usage by 20-
 ```python
 # Enable at client level (applies to all calls)
 client = LLMClient(
-    model="openai/gpt-4.1-mini",
+    model="anthropic/claude-haiku-4-5-20251001",
     tool_factory=factory,
     core_tools=["call_human"],
     dynamic_tool_loading=True,
@@ -992,29 +990,26 @@ For very large catalogs (500+ tools), consider:
 - **Custom Catalog Backends:** Implement a Redis-backed or database-backed `ToolCatalog` for distributed systems
 - **Group-based loading:** Use `load_tool_group()` to load entire tool groups efficiently
 
-## Migration from v0.x
+## Migration Notes
 
-The v1.0 release replaces the custom provider layer with LiteLLM, which is a breaking change to the constructor API:
+### v1.x to v2.0
+
+The v2.0 release replaces the LiteLLM dependency with native provider adapters for OpenAI, Anthropic, Google Gemini, and xAI:
+
+- **No more LiteLLM** -- each adapter talks directly to the provider SDK
+- Provider SDKs are optional: `pip install llm-factory-toolkit[openai]`, `[anthropic]`, `[gemini]`, or `[all]`
+- Only 4 providers are supported (OpenAI, Anthropic, Gemini, xAI); Mistral, Cohere, Bedrock, Ollama are no longer available
+- `dynamic_tool_loading` now accepts `True` (keyword) or a model string (semantic search) instead of just a boolean
+- `GEMINI_API_KEY` renamed to `GOOGLE_API_KEY`
+
+### v0.x to v1.0
 
 ```python
 # BEFORE (v0.x):
 client = LLMClient(provider_type="openai", model="gpt-4o-mini")
-client = LLMClient(provider_type="google_genai", model="gemini-2.5-flash")
-client = LLMClient(provider_type="xai", model="grok-beta")
 
-# AFTER (v1.0):
+# AFTER (v1.0+):
 client = LLMClient(model="openai/gpt-4o-mini")
-client = LLMClient(model="gemini/gemini-2.5-flash")
-client = LLMClient(model="xai/grok-beta")
-client = LLMClient(model="anthropic/claude-sonnet-4")  # NEW! 100+ providers
 ```
 
-Key changes:
-
-- `provider_type` parameter removed. The provider is inferred from the model string prefix.
-- Tool messages now use standard Chat Completions format (`{"role": "tool", "tool_call_id": ..., "content": ...}`) instead of the OpenAI Responses API format.
-- `web_search` is now handled by LiteLLM across multiple providers.
-- `file_search` remains OpenAI-only but now requires `pip install llm-factory-toolkit[openai]`.
-- The `providers/` directory has been removed. All provider routing is handled by LiteLLM.
-
-The tool framework (`ToolFactory`, `BaseTool`, context injection, mock mode, intent planning) is unchanged.
+The tool framework (`ToolFactory`, `BaseTool`, context injection, mock mode, intent planning) is unchanged across all versions.

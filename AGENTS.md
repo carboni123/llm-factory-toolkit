@@ -20,10 +20,11 @@ llm_factory_toolkit/
 │   │   └── meta_tools.py    # browse_toolkit, load_tools, unload_tools (dynamic discovery)
 │   ├── __init__.py   # Package init with exports and utilities
 │   ├── client.py     # LLMClient (core_tools, dynamic_tool_loading, tool registration)
-│   ├── provider.py   # LiteLLMProvider (dual routing to 100+ LLM providers)
-│   └── exceptions.py # Custom exceptions
+│   ├── models.py     # ModelInfo, MODEL_CATALOG, list_models(), get_model_info()
+│   ├── exceptions.py # Custom exceptions
+│   └── providers/    # Native adapters: OpenAI, Anthropic, Gemini, xAI
 ├── examples/         # Usage examples (e.g., custom_tool_example.py)
-├── tests/            # Pytest suites (29 files: 15 unit + 14 integration)
+├── tests/            # Pytest suites (40+ files: 26 unit + 14 integration)
 ├── .github/          # Workflows and issue templates
 ├── pyproject.toml    # Build config and metadata (source of truth for deps)
 ├── requirements.txt  # Pinned dependencies (generated)
@@ -87,9 +88,9 @@ raise ProviderError("API request failed: details")
 
 ### 3.6. Provider and Tool Patterns
 
-*   Provider routing is handled by `LiteLLMProvider` in `provider.py`, backed by LiteLLM. Do not add custom provider adapters.
+*   Provider routing is handled by `ProviderRouter` in `providers/_registry.py` with native adapters for OpenAI, Anthropic, Gemini, and xAI.
 *   Tools use `ToolFactory` for registration; encourage class-based tools with embedded metadata.
-*   Core logic (e.g., generation loops, tool dispatch) lives in `provider.py`; `client.py` is a thin wrapper.
+*   Core logic (agentic loop, tool dispatch) lives in `providers/_base.py`; `client.py` is a thin wrapper.
 *   Keep components framework-agnostic where possible (e.g., no direct deps in tools).
 
 ### 3.7. Configuration

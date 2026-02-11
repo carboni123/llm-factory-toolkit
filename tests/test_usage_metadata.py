@@ -3,8 +3,7 @@
 Validates that BaseProvider.generate() properly accumulates usage from
 ProviderResponse.usage across single and multi-iteration (tool call) loops.
 
-Migration note: replaces old LiteLLMProvider-based tests with a _MockAdapter
-that exercises the same BaseProvider.generate() agentic loop.
+Uses _MockAdapter to exercise the BaseProvider.generate() agentic loop.
 """
 
 from __future__ import annotations
@@ -155,7 +154,7 @@ class TestGenerationResultUsageField:
 
 
 # ---------------------------------------------------------------------------
-# Provider usage accumulation (replaces TestLiteLLMUsage)
+# Provider usage accumulation
 # ---------------------------------------------------------------------------
 
 

@@ -9,60 +9,51 @@ Benchmark results for the dynamic tool calling system across different LLM provi
 The benchmark registers 23 CRM mock tools across 6 categories and runs 13 test cases that evaluate:
 - **Protocol compliance**: Does the agent follow browse -> load -> use?
 - **Tool loading accuracy**: Does it load the right tools?
-- **Tool usage correctness**: Does it call tools with correct arguments?
+- **Tool usage correctness**: Does it call the right tools?
+- **Response quality**: Does the final response contain expected information?
 - **Efficiency**: Meta-tool overhead, redundant browses, wasted loads
 
-## Model Comparison (Pre-Search Fix)
+## Latest Results (v2.0)
 
-| Metric | gpt-4o-mini | grok-4.1-fast | claude-haiku-4.5 |
-|--------|-------------|---------------|------------------|
-| Pass rate | 6/10 (60%) | 7/10 (70%) | 9/10 (90%) |
-| Fails | 4 | 0 | 0 |
-| Partials | 0 | 3 | 1 |
-| Total calls | 44 | 74 | 43 |
-| Avg overhead | 77% | 78% | 63% |
-| Redundant browses | varied | 5-7/case | 0-3/case |
-| Tokens | 49k | 117k | 95k |
-| Total time | 89s | 111s | 90s |
+### Haiku 4.5 -- Keyword vs Semantic
 
-Haiku's strengths:
-- 9/10 pass -- only missed calendar_booking because it noticed a time conflict and flagged it instead of double-booking (arguably the right call)
-- 63% meta overhead -- lowest of the three, meaning more calls go to actual business tools
-- 43 total calls -- same as mini but actually completes the work
-- Zero redundant browses on simple cases -- browses once, loads, acts
-- Perfect protocol compliance on every single case
+| Metric | Keyword (`browse_toolkit`) | Semantic (`find_tools`) |
+|--------|---------------------------|------------------------|
+| Pass rate | **13/13 (100%)** | 12/13 (92%) |
+| Total tokens | 132K | **100K (-24%)** |
+| Total tool calls | **54** | 61 |
+| Redundant discovery | 4 | 0 on 11/13 cases |
+| Wall time | **186s** | 237s |
 
-The efficiency gap is real: Haiku does in 3 calls (browse -> load -> use) what Grok does in 8-14 and what mini often can't finish at all.
+### GPT-4o-mini -- Keyword vs Semantic
 
-## Search Fix Impact
+| Metric | Keyword (`browse_toolkit`) | Semantic (`find_tools`) |
+|--------|---------------------------|------------------------|
+| Pass rate | 10/13 (77%) | 10/13 (77%) |
+| Total tokens | 155K | **90K (-42%)** |
+| Total tool calls | 89 | 86 |
+| Ceiling hits | 0 | 0 |
+| Wall time | 140s | 163s |
 
-Two fixes were applied to `catalog.py` to improve search behavior:
+### Key Findings
 
-1. **Majority matching** (`matches_query()`): Changed from strict AND-logic (all tokens must match) to majority matching (`ceil(N/2)` tokens required). Natural-language queries like `"deal create pipeline crm"` now match tools containing most but not all tokens.
-
-2. **Group-to-category fallback** (`search()`): When the `group` filter is used but tools don't have explicit groups set, the filter falls back to matching against `category`. LLMs often use the `group` parameter as if it were a category filter.
-
-### Before vs After (grok-4-1-fast-non-reasoning, smoke cases)
-
-| Case | Before (calls) | After (calls) | First-browse result |
-|------|---------------|--------------|-------------------|
-| crm_summary | 5 | 4 | 0 results -> 1 result |
-| customer_lookup | 5 | 3 (optimal) | 0 results -> 1 result |
-| deal_creation | 6 | 9 (more exploration) | 0 results -> 2 results |
-
-Key improvement: `customer_lookup` now achieves the optimal browse -> load -> use in 3 calls with zero redundant browses, down from 5 calls with 2 redundant browses.
+- **Haiku achieves 100% pass rate** on keyword search -- browses once, loads, acts
+- **Semantic search saves 24-42% tokens** across both models
+- **Keyword search is faster** (no sub-agent overhead) but can waste calls on poor queries
+- **Case-insensitive category matching** prevents wasted browses (LLMs use "CRM" vs catalog "crm")
+- **Fuzzy name suggestions** in `load_tools` help LLMs recover from guessed tool names
 
 ## Running the Benchmark
 
 ```bash
-# Basic run
+# Keyword search (default)
 python scripts/benchmark_dynamic_tools.py --model openai/gpt-4o-mini
 
-# With specific tags
-python scripts/benchmark_dynamic_tools.py --model xai/grok-4-1-fast-non-reasoning --tags smoke
+# Semantic search
+python scripts/benchmark_dynamic_tools.py --model anthropic/claude-haiku-4-5-20251001 --search-agent-model anthropic/claude-haiku-4-5-20251001
 
 # With tool call tracing
-python scripts/benchmark_dynamic_tools.py --model xai/grok-4-1-fast-non-reasoning --trace
+python scripts/benchmark_dynamic_tools.py --model anthropic/claude-haiku-4-5-20251001 --trace
 
 # Save report
 python scripts/benchmark_dynamic_tools.py --model anthropic/claude-haiku-4-5-20251001 --output report.md
@@ -73,6 +64,9 @@ python scripts/benchmark_dynamic_tools.py --model openai/gpt-4o --only crm_summa
 
 ## Report Files
 
-- `benchmark_report.md` -- gpt-4o-mini baseline
-- `benchmark_report_grok41.md` -- grok-4.1-fast (non-reasoning)
-- `benchmark_report_haiku.md` -- claude-haiku-4.5
+Reports are named `full_{mode}_{model}_{date}.md`:
+
+- `full_keyword_haiku_2026-02-11.md` -- Haiku keyword search (13/13 pass)
+- `full_semantic_haiku_2026-02-11.md` -- Haiku semantic search (12/13 pass)
+- `full_keyword_2026-02-11_v2.md` -- GPT-4o-mini keyword (10/13 pass)
+- `full_semantic_2026-02-11_v2.md` -- GPT-4o-mini semantic (10/13 pass)
