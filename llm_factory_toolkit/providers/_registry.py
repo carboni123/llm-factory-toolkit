@@ -148,9 +148,7 @@ def _create_adapter(
 class ProviderRouter:
     """Routes generation calls to the correct provider adapter.
 
-    Drop-in replacement for ``LiteLLMProvider`` with identical method
-    signatures.  Lazily creates and caches one adapter instance per
-    provider key.
+    Lazily creates and caches one adapter instance per provider key.
 
     Parameters
     ----------

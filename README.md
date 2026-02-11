@@ -242,9 +242,9 @@ result = await client.generate(
 `dynamic_tool_loading` accepts `True` (keyword search) or a model string (semantic search). Either way, the client automatically:
 1. Builds a searchable `InMemoryToolCatalog` from the factory
 2. Registers discovery meta-tools (`browse_toolkit` or `find_tools`) plus `load_tools`, `load_tool_group`, and `unload_tools`
-3. Creates a fresh `ToolSession` per `generate()` call with your `core_tools` + meta-tools loaded
+3. Creates a fresh `ToolSession` per `generate()` call with your `core_tools` + the discovery tool, `load_tools`, and `unload_tools` pre-loaded
 
-The agent uses the discovery tool to search for relevant tools, `load_tools` to activate individual tools, `load_tool_group` to load entire groups at once, and `unload_tools` to free context tokens by removing tools it no longer needs. When a model string is passed, `find_tools` uses a cheap sub-agent LLM to interpret natural-language intent -- better for queries that keyword search might miss.
+The agent uses the discovery tool to search for relevant tools, `load_tools` to activate individual tools, and `unload_tools` to free context tokens by removing tools it no longer needs. `load_tool_group` is registered but not pre-loaded -- the agent can load it on demand if it needs batch group loading. When a model string is passed, `find_tools` uses a cheap sub-agent LLM to interpret natural-language intent -- better for queries that keyword search might miss.
 
 **Context-aware tool selection:** Search uses majority matching (at least half of the query tokens must appear) combined with weighted relevance scoring (name=3x, tags=2x, description=1x, category=1x). Category and group filters are case-insensitive. When tool names are invalid, `load_tools` returns `did_you_mean` suggestions via fuzzy matching.
 

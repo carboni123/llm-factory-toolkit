@@ -57,7 +57,8 @@ This library uses **native provider adapters** with a shared agentic loop:
 | `providers/anthropic.py` | `AnthropicAdapter` -- Anthropic Messages API, structured output via tool trick | ~480 |
 | `providers/gemini.py` | `GeminiAdapter` -- Google Gemini GenerateContent, native structured output | ~380 |
 | `providers/xai.py` | `XAIAdapter` -- thin OpenAI subclass with custom base_url | ~50 |
-| `exceptions.py` | Exception hierarchy: `LLMToolkitError` > `ConfigurationError`, `ProviderError`, `ToolError`, `UnsupportedFeatureError` | ~30 |
+| `exceptions.py` | Exception hierarchy: `LLMToolkitError` > `ConfigurationError`, `ProviderError`, `ToolError`, `UnsupportedFeatureError`, `RetryExhaustedError` | ~40 |
+| `models.py` | `ModelInfo`, `MODEL_CATALOG`, `list_models()`, `get_model_info()` -- model metadata registry | ~290 |
 | `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`), dispatch, context injection, mock mode, usage tracking, meta-tools, `register_find_tools` | ~640 |
 | `tools/base_tool.py` | `BaseTool` ABC for class-based tools (includes `CATEGORY`, `TAGS` class attrs) | ~45 |
 | `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
@@ -66,7 +67,7 @@ This library uses **native provider adapters** with a shared agentic loop:
 | `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, majority-match search, group-to-category fallback, offset/pagination | ~520 |
 | `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation, analytics tracking | ~250 |
 | `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools`, `find_tools` -- meta-tools for dynamic discovery with pagination and semantic search (category `"system"`) | ~630 |
-| `__init__.py` | Public exports, `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~75 |
+| `__init__.py` | Public exports (`ModelInfo`, `list_models`, `get_model_info`, etc.), `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~170 |
 
 ### Data Flow
 

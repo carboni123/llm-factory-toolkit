@@ -306,7 +306,7 @@ class BaseProvider(abc.ABC):
         return {k: v for k, v in kwargs.items() if k in self._EXTRA_PARAMS}
 
     # ------------------------------------------------------------------
-    # Shared helpers (moved from LiteLLMProvider)
+    # Shared helpers
     # ------------------------------------------------------------------
 
     def _inject_dynamic_tool_context(

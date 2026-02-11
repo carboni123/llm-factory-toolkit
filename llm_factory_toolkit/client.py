@@ -51,7 +51,7 @@ class LLMClient:
     Parameters
     ----------
     model:
-        LiteLLM model identifier.  Uses the ``provider/model`` convention
+        Model identifier.  Uses the ``provider/model`` convention
         (e.g. ``"openai/gpt-4o-mini"``, ``"anthropic/claude-sonnet-4"``,
         ``"gemini/gemini-2.5-flash"``).  Well-known OpenAI models work
         without a prefix (e.g. ``"gpt-4o"``).

@@ -17,7 +17,7 @@ Quick start
 Tool usage
 ----------
 Register Python functions as tools the LLM can call during generation.
-The agentic loop dispatches tool calls automatically (up to 5 iterations)
+The agentic loop dispatches tool calls automatically (up to 25 iterations)
 and feeds results back to the model until it produces a final text response.
 ::
 
