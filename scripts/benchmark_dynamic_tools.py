@@ -65,7 +65,13 @@ def _safe_print(text: str) -> None:
 # Meta-tool names
 # ---------------------------------------------------------------------------
 
-META_TOOLS = {"browse_toolkit", "load_tools", "load_tool_group", "unload_tools", "find_tools"}
+META_TOOLS = {
+    "browse_toolkit",
+    "load_tools",
+    "load_tool_group",
+    "unload_tools",
+    "find_tools",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +88,9 @@ class BenchmarkCase:
     expect_tools_loaded: list[str]  # Tools that should be in session.list_active()
     expect_tools_called: list[str]  # Tool names that should appear in transcript
     expect_meta_calls: list[str]  # Meta-tools that should be called
-    expect_response_contains: list[str]  # Substrings in final response (case-insensitive)
+    expect_response_contains: list[
+        str
+    ]  # Substrings in final response (case-insensitive)
     tags: list[str]
     max_tool_iterations: int = 25
     # For multi-turn: messages is a list of message lists.
@@ -108,7 +116,10 @@ class BenchmarkResult:
     protocol_score: str
     loading_score: str
     usage_score: str
+    response_score: str
     overall_score: str
+    response_expected_contains: list[str] = field(default_factory=list)
+    response_missing_contains: list[str] = field(default_factory=list)
     response_text: str = ""
     duration_ms: int = 0
     total_tokens: int = 0
@@ -144,7 +155,9 @@ class TraceEntry:
 # ---------------------------------------------------------------------------
 
 
-def _build_persistence_simulation() -> tuple[ToolFactory, InMemoryToolCatalog, ToolSession]:
+def _build_persistence_simulation() -> tuple[
+    ToolFactory, InMemoryToolCatalog, ToolSession
+]:
     """Build the standard CRM simulation plus a get_weather tool for the
     session persistence test case."""
     factory = ToolFactory()
@@ -206,7 +219,12 @@ def build_cases() -> list[BenchmarkCase]:
             name="crm_summary",
             description="Agent discovers CRM tools, loads get_crm_summary, and reports metrics.",
             system_prompt=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": "How many customers do we have? Give me a CRM overview."}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": "How many customers do we have? Give me a CRM overview.",
+                }
+            ],
             expect_tools_loaded=["get_crm_summary"],
             expect_tools_called=["get_crm_summary"],
             expect_meta_calls=["browse_toolkit", "load_tools"],
@@ -250,8 +268,8 @@ def build_cases() -> list[BenchmarkCase]:
                     ),
                 }
             ],
-            expect_tools_loaded=["create_calendar_event"],
-            expect_tools_called=["create_calendar_event"],
+            expect_tools_loaded=["query_calendar", "create_calendar_event"],
+            expect_tools_called=["query_calendar", "create_calendar_event"],
             expect_meta_calls=["browse_toolkit", "load_tools"],
             expect_response_contains=["haircut", "maria"],
             tags=["multi-tool"],
@@ -637,7 +655,11 @@ def extract_tool_trace(messages: list[dict]) -> list[TraceEntry]:
 
             # Get response summary
             resp_name, resp_content = response_map.get(call_id, ("", ""))
-            summary = _summarize_tool_response(name, resp_content) if resp_content else "(no response)"
+            summary = (
+                _summarize_tool_response(name, resp_content)
+                if resp_content
+                else "(no response)"
+            )
 
             trace.append(
                 TraceEntry(
@@ -671,35 +693,51 @@ def evaluate_case(
     active = session.list_active()
     total_calls = len(all_calls)
 
+    def _format_any(options: list[str]) -> str:
+        return f"ANY({' | '.join(options)})"
+
     # ---- Meta-tool protocol check ----
     meta_called = [t for t in all_calls if t in META_TOOLS]
     meta_unique = list(dict.fromkeys(meta_called))
     meta_missing = [t for t in case.expect_meta_calls if t not in meta_unique]
 
     # ---- Loading check (with OR logic support) ----
+    loaded_expected = list(case.expect_tools_loaded)
+    loaded_missing = [t for t in case.expect_tools_loaded if t not in active]
     if case.expect_tools_loaded_any:
+        loaded_any_label = _format_any(case.expect_tools_loaded_any)
+        loaded_expected.append(loaded_any_label)
         loaded_any_ok = any(t in active for t in case.expect_tools_loaded_any)
-        loaded_missing = [] if loaded_any_ok else case.expect_tools_loaded_any
-        loaded_expected = case.expect_tools_loaded_any
-    else:
-        loaded_missing = [t for t in case.expect_tools_loaded if t not in active]
-        loaded_expected = case.expect_tools_loaded
+        if not loaded_any_ok:
+            loaded_missing.append(loaded_any_label)
 
     # ---- Usage check (with OR logic support) ----
     non_meta_called = [t for t in all_calls if t not in META_TOOLS]
     non_meta_unique = list(dict.fromkeys(non_meta_called))
 
+    called_expected = list(case.expect_tools_called)
+    called_missing = [t for t in case.expect_tools_called if t not in non_meta_unique]
     if case.expect_tools_called_any:
+        called_any_label = _format_any(case.expect_tools_called_any)
+        called_expected.append(called_any_label)
         called_any_ok = any(t in non_meta_unique for t in case.expect_tools_called_any)
-        called_missing = [] if called_any_ok else case.expect_tools_called_any
-        called_expected = case.expect_tools_called_any
-    else:
-        called_missing = [t for t in case.expect_tools_called if t not in non_meta_unique]
-        called_expected = case.expect_tools_called
+        if not called_any_ok:
+            called_missing.append(called_any_label)
+
+    # ---- Response content check ----
+    response_expected = case.expect_response_contains
+    response_text_lower = response_text.lower()
+    response_missing = [
+        s for s in response_expected if s.lower() not in response_text_lower
+    ]
 
     # ---- Scores ----
     meta_matched = len(case.expect_meta_calls) - len(meta_missing)
-    proto_score = f"{meta_matched}/{len(case.expect_meta_calls)}" if case.expect_meta_calls else "n/a"
+    proto_score = (
+        f"{meta_matched}/{len(case.expect_meta_calls)}"
+        if case.expect_meta_calls
+        else "n/a"
+    )
 
     load_matched = len(loaded_expected) - len(loaded_missing)
     load_score = f"{load_matched}/{len(loaded_expected)}" if loaded_expected else "n/a"
@@ -707,15 +745,27 @@ def evaluate_case(
     call_matched = len(called_expected) - len(called_missing)
     call_score = f"{call_matched}/{len(called_expected)}" if called_expected else "n/a"
 
-    total_expected = len(case.expect_meta_calls) + len(loaded_expected) + len(called_expected)
-    total_matched = meta_matched + load_matched + call_matched
+    response_matched = len(response_expected) - len(response_missing)
+    response_score = (
+        f"{response_matched}/{len(response_expected)}" if response_expected else "n/a"
+    )
+
+    total_expected = (
+        len(case.expect_meta_calls)
+        + len(loaded_expected)
+        + len(called_expected)
+        + len(response_expected)
+    )
+    total_matched = meta_matched + load_matched + call_matched + response_matched
     overall = f"{total_matched}/{total_expected}"
 
     # ---- Efficiency metrics ----
     meta_calls_count = len(meta_called)
     business_calls_count = len(non_meta_called)
     meta_overhead_pct = (meta_calls_count / total_calls * 100) if total_calls else 0.0
-    efficiency_ratio = (business_calls_count / total_calls * 100) if total_calls else 0.0
+    efficiency_ratio = (
+        (business_calls_count / total_calls * 100) if total_calls else 0.0
+    )
 
     # Redundant discovery calls: browse_toolkit OR find_tools calls beyond the first
     browse_count = sum(1 for t in all_calls if t in ("browse_toolkit", "find_tools"))
@@ -730,10 +780,15 @@ def evaluate_case(
     proto_ok = not meta_missing
     load_ok = not loaded_missing
     call_ok = not called_missing
+    response_ok = not response_missing
 
-    if proto_ok and load_ok and call_ok:
+    checks = [proto_ok, load_ok, call_ok]
+    if response_expected:
+        checks.append(response_ok)
+
+    if all(checks):
         status = "pass"
-    elif any([proto_ok, load_ok, call_ok]):
+    elif any(checks):
         status = "partial"
     else:
         status = "fail"
@@ -753,7 +808,10 @@ def evaluate_case(
         protocol_score=proto_score,
         loading_score=load_score,
         usage_score=call_score,
+        response_score=response_score,
         overall_score=overall,
+        response_expected_contains=response_expected,
+        response_missing_contains=response_missing,
         response_text=response_text[:500],
         duration_ms=duration_ms,
         total_tokens=total_tokens,
@@ -884,22 +942,41 @@ async def run_case(
         duration_ms = int((time.time() - start) * 1000)
         if verbose:
             traceback.print_exc()
+
+        loaded_expected = list(case.expect_tools_loaded)
+        if case.expect_tools_loaded_any:
+            loaded_expected.append(f"ANY({' | '.join(case.expect_tools_loaded_any)})")
+
+        called_expected = list(case.expect_tools_called)
+        if case.expect_tools_called_any:
+            called_expected.append(f"ANY({' | '.join(case.expect_tools_called_any)})")
+
+        total_expected = (
+            len(case.expect_meta_calls)
+            + len(loaded_expected)
+            + len(called_expected)
+            + len(case.expect_response_contains)
+        )
+
         return BenchmarkResult(
             case_name=case.name,
             status="error",
             meta_calls_expected=case.expect_meta_calls,
             meta_calls_actual=[],
             meta_calls_missing=case.expect_meta_calls,
-            tools_expected_loaded=case.expect_tools_loaded,
+            tools_expected_loaded=loaded_expected,
             tools_actual_loaded=[],
-            tools_missing_loaded=case.expect_tools_loaded,
-            tools_expected_called=case.expect_tools_called,
+            tools_missing_loaded=loaded_expected,
+            tools_expected_called=called_expected,
             tools_actual_called=[],
-            tools_missing_called=case.expect_tools_called,
+            tools_missing_called=called_expected,
             protocol_score=f"0/{len(case.expect_meta_calls)}",
-            loading_score=f"0/{len(case.expect_tools_loaded)}",
-            usage_score=f"0/{len(case.expect_tools_called)}",
-            overall_score="0/0",
+            loading_score=f"0/{len(loaded_expected)}" if loaded_expected else "n/a",
+            usage_score=f"0/{len(called_expected)}" if called_expected else "n/a",
+            response_score=f"0/{len(case.expect_response_contains)}"
+            if case.expect_response_contains
+            else "n/a",
+            overall_score=f"0/{total_expected}" if total_expected else "0/0",
             duration_ms=duration_ms,
             model=model,
             error=f"{type(e).__name__}: {e}",
@@ -987,13 +1064,15 @@ def format_summary_table(results: list[BenchmarkResult]) -> str:
 
     if results:
         lines.append(f"  Model: {results[0].model}")
-        lines.append(f"  Date:  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        lines.append(
+            f"  Date:  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+        )
         lines.append("")
 
     # Table header
     header = (
         f"  {'Status':<8} {'Case':<22} {'Protocol':<10} {'Loading':<10} "
-        f"{'Usage':<10} {'Overall':<10} {'Calls':>6} {'Meta%':>6} "
+        f"{'Usage':<10} {'Response':<10} {'Overall':<10} {'Calls':>6} {'Meta%':>6} "
         f"{'Eff%':>6} {'Ceil':>4} {'Time':>8} {'Tokens':>8}"
     )
     lines.append(header)
@@ -1006,7 +1085,7 @@ def format_summary_table(results: list[BenchmarkResult]) -> str:
         ceil_str = "YES" if r.hit_ceiling else "-"
         row = (
             f"  {icon:<8} {r.case_name:<22} {r.protocol_score:<10} "
-            f"{r.loading_score:<10} {r.usage_score:<10} {r.overall_score:<10} "
+            f"{r.loading_score:<10} {r.usage_score:<10} {r.response_score:<10} {r.overall_score:<10} "
             f"{r.total_tool_calls:>6} {r.meta_overhead_pct:>5.0f}% "
             f"{r.efficiency_ratio:>5.0f}% {ceil_str:>4} "
             f"{time_str:>8} {tokens_str:>8}"
@@ -1030,9 +1109,13 @@ def format_summary_table(results: list[BenchmarkResult]) -> str:
     avg_overhead = (total_meta / total_calls_all * 100) if total_calls_all else 0
     avg_efficiency = (total_business / total_calls_all * 100) if total_calls_all else 0
 
-    lines.append(f"  Summary: {total_pass} pass / {total_partial} partial / {total_fail} fail / {total_error} error  (out of {total_cases})")
+    lines.append(
+        f"  Summary: {total_pass} pass / {total_partial} partial / {total_fail} fail / {total_error} error  (out of {total_cases})"
+    )
     lines.append(f"  Total time: {total_duration}ms | Total tokens: {total_tokens_all}")
-    lines.append(f"  Total calls: {total_calls_all} ({total_meta} meta + {total_business} business) | Avg overhead: {avg_overhead:.0f}% | Ceiling hits: {ceiling_hits}")
+    lines.append(
+        f"  Total calls: {total_calls_all} ({total_meta} meta + {total_business} business) | Avg overhead: {avg_overhead:.0f}% | Ceiling hits: {ceiling_hits}"
+    )
     lines.append("")
 
     return "\n".join(lines)
@@ -1072,6 +1155,11 @@ def format_failure_details(results: list[BenchmarkResult]) -> str:
         if r.tools_missing_called:
             lines.append(f"  Missing called: {r.tools_missing_called}")
             lines.append(f"  Actual called:  {r.tools_actual_called}")
+
+        if r.response_missing_contains:
+            lines.append(
+                f"  Missing response substrings: {r.response_missing_contains}"
+            )
 
         if r.response_text:
             preview = r.response_text[:200].replace("\n", " ")
@@ -1115,13 +1203,21 @@ def format_efficiency_analysis(results: list[BenchmarkResult]) -> str:
     issues: list[str] = []
     for r in results:
         if r.hit_ceiling:
-            issues.append(f"  [!] {r.case_name}: Hit {r.total_tool_calls}-call ceiling — task may be incomplete")
+            issues.append(
+                f"  [!] {r.case_name}: Hit {r.total_tool_calls}-call ceiling — task may be incomplete"
+            )
         if r.meta_overhead_pct > 60:
-            issues.append(f"  [!] {r.case_name}: {r.meta_overhead_pct:.0f}% meta overhead — model spent most calls on discovery")
+            issues.append(
+                f"  [!] {r.case_name}: {r.meta_overhead_pct:.0f}% meta overhead — model spent most calls on discovery"
+            )
         if r.redundant_browses >= 2:
-            issues.append(f"  [!] {r.case_name}: {r.redundant_browses} redundant discovery calls")
+            issues.append(
+                f"  [!] {r.case_name}: {r.redundant_browses} redundant discovery calls"
+            )
         if len(r.wasted_loads) >= 3:
-            issues.append(f"  [!] {r.case_name}: {len(r.wasted_loads)} tools loaded but never used: {r.wasted_loads}")
+            issues.append(
+                f"  [!] {r.case_name}: {len(r.wasted_loads)} tools loaded but never used: {r.wasted_loads}"
+            )
 
     if issues:
         lines.append("  Issues:")
@@ -1133,7 +1229,9 @@ def format_efficiency_analysis(results: list[BenchmarkResult]) -> str:
     return "\n".join(lines)
 
 
-def format_markdown_report(results: list[BenchmarkResult], include_traces: bool = False) -> str:
+def format_markdown_report(
+    results: list[BenchmarkResult], include_traces: bool = False
+) -> str:
     """Format a full markdown report suitable for saving to a file."""
     lines: list[str] = []
     model = results[0].model if results else "unknown"
@@ -1167,16 +1265,22 @@ def format_markdown_report(results: list[BenchmarkResult], include_traces: bool 
     # Results table
     lines.append("## Results")
     lines.append("")
-    lines.append("| Status | Case | Protocol | Loading | Usage | Overall | Calls | Meta% | Eff% | Ceiling | Time | Tokens |")
-    lines.append("|--------|------|----------|---------|-------|---------|-------|-------|------|---------|------|--------|")
+    lines.append(
+        "| Status | Case | Protocol | Loading | Usage | Response | Overall | Calls | Meta% | Eff% | Ceiling | Time | Tokens |"
+    )
+    lines.append(
+        "|--------|------|----------|---------|-------|----------|---------|-------|-------|------|---------|------|--------|"
+    )
 
     for r in results:
-        icon = {"pass": "PASS", "partial": "PART", "fail": "FAIL", "error": "ERR"}.get(r.status, "?")
+        icon = {"pass": "PASS", "partial": "PART", "fail": "FAIL", "error": "ERR"}.get(
+            r.status, "?"
+        )
         tokens_str = str(r.total_tokens) if r.total_tokens else "-"
         ceil_str = "HIT" if r.hit_ceiling else "-"
         lines.append(
             f"| {icon} | {r.case_name} | {r.protocol_score} | "
-            f"{r.loading_score} | {r.usage_score} | {r.overall_score} | "
+            f"{r.loading_score} | {r.usage_score} | {r.response_score} | {r.overall_score} | "
             f"{r.total_tool_calls} | {r.meta_overhead_pct:.0f}% | {r.efficiency_ratio:.0f}% | "
             f"{ceil_str} | {r.duration_ms}ms | {tokens_str} |"
         )
@@ -1201,6 +1305,10 @@ def format_markdown_report(results: list[BenchmarkResult], include_traces: bool 
                     lines.append(f"- **Missing loaded:** {r.tools_missing_loaded}")
                 if r.tools_missing_called:
                     lines.append(f"- **Missing called:** {r.tools_missing_called}")
+                if r.response_missing_contains:
+                    lines.append(
+                        f"- **Missing response substrings:** {r.response_missing_contains}"
+                    )
                 if r.response_text:
                     preview = r.response_text[:300].replace("\n", " ")
                     lines.append(f"- **Response preview:** {preview}")
@@ -1209,8 +1317,12 @@ def format_markdown_report(results: list[BenchmarkResult], include_traces: bool 
     # Efficiency analysis
     lines.append("## Efficiency Analysis")
     lines.append("")
-    lines.append("| Case | Calls | Meta | Business | Overhead% | Efficiency% | Redundant Browses | Wasted Loads | Ceiling |")
-    lines.append("|------|-------|------|----------|-----------|-------------|-------------------|--------------|---------|")
+    lines.append(
+        "| Case | Calls | Meta | Business | Overhead% | Efficiency% | Redundant Browses | Wasted Loads | Ceiling |"
+    )
+    lines.append(
+        "|------|-------|------|----------|-----------|-------------|-------------------|--------------|---------|"
+    )
 
     for r in results:
         wasted_str = ", ".join(r.wasted_loads) if r.wasted_loads else "-"
@@ -1231,8 +1343,10 @@ def format_markdown_report(results: list[BenchmarkResult], include_traces: bool 
     total_redundant = sum(r.redundant_browses for r in results)
     total_wasted = sum(len(r.wasted_loads) for r in results)
 
-    lines.append(f"**Aggregate:** {total_calls_all} calls ({total_meta} meta + {total_business} business) | "
-                 f"Ceiling hits: {ceiling_hits} | Redundant browses: {total_redundant} | Wasted loads: {total_wasted}")
+    lines.append(
+        f"**Aggregate:** {total_calls_all} calls ({total_meta} meta + {total_business} business) | "
+        f"Ceiling hits: {ceiling_hits} | Redundant browses: {total_redundant} | Wasted loads: {total_wasted}"
+    )
     lines.append("")
 
     # Per-case details
@@ -1244,16 +1358,29 @@ def format_markdown_report(results: list[BenchmarkResult], include_traces: bool 
         lines.append(f"- **Status:** {r.status}")
         lines.append(f"- **Duration:** {r.duration_ms}ms")
         lines.append(f"- **Tokens:** {r.total_tokens}")
-        lines.append(f"- **Tool calls:** {r.total_tool_calls} ({r.meta_calls_count} meta + {r.business_calls_count} business)")
-        lines.append(f"- **Meta overhead:** {r.meta_overhead_pct:.0f}% | **Efficiency:** {r.efficiency_ratio:.0f}%")
+        lines.append(
+            f"- **Tool calls:** {r.total_tool_calls} ({r.meta_calls_count} meta + {r.business_calls_count} business)"
+        )
+        lines.append(
+            f"- **Meta overhead:** {r.meta_overhead_pct:.0f}% | **Efficiency:** {r.efficiency_ratio:.0f}%"
+        )
         lines.append(f"- **Hit ceiling:** {r.hit_ceiling}")
         if r.redundant_browses:
             lines.append(f"- **Redundant browses:** {r.redundant_browses}")
         if r.wasted_loads:
             lines.append(f"- **Wasted loads:** {r.wasted_loads}")
-        lines.append(f"- **Meta-calls:** expected={r.meta_calls_expected}, actual={r.meta_calls_actual}")
-        lines.append(f"- **Tools loaded:** expected={r.tools_expected_loaded}, actual={r.tools_actual_loaded}")
-        lines.append(f"- **Tools called:** expected={r.tools_expected_called}, actual={r.tools_actual_called}")
+        lines.append(
+            f"- **Meta-calls:** expected={r.meta_calls_expected}, actual={r.meta_calls_actual}"
+        )
+        lines.append(
+            f"- **Tools loaded:** expected={r.tools_expected_loaded}, actual={r.tools_actual_loaded}"
+        )
+        lines.append(
+            f"- **Tools called:** expected={r.tools_expected_called}, actual={r.tools_actual_called}"
+        )
+        lines.append(
+            f"- **Response content:** score={r.response_score}, missing={r.response_missing_contains}"
+        )
         if r.response_text:
             preview = r.response_text[:200].replace("\n", " ")
             lines.append(f"- **Response:** {preview}...")
@@ -1265,14 +1392,18 @@ def format_markdown_report(results: list[BenchmarkResult], include_traces: bool 
         lines.append("")
         for r in results:
             lines.append(f"<details>")
-            lines.append(f"<summary><b>{r.case_name}</b> [{r.status}] — {r.total_tool_calls} calls</summary>")
+            lines.append(
+                f"<summary><b>{r.case_name}</b> [{r.status}] — {r.total_tool_calls} calls</summary>"
+            )
             lines.append("")
             lines.append("```")
             if r.trace:
                 for entry in r.trace:
                     marker = "META" if entry.is_meta else "    "
                     args_str = _format_args(entry.arguments)
-                    lines.append(f"  {entry.step:>2}. [{marker}] {entry.tool_name}({args_str})")
+                    lines.append(
+                        f"  {entry.step:>2}. [{marker}] {entry.tool_name}({args_str})"
+                    )
                     lines.append(f"       -> {entry.response_summary}")
             else:
                 lines.append("  (no tool calls)")
@@ -1332,7 +1463,9 @@ async def run_benchmark(
         progress = f"[{i}/{len(all_cases)}]"
         _safe_print(f"\n{progress} Running: {case.name} ({case.description[:60]}...)")
 
-        result = await run_case(case, model, verbose=verbose, search_agent_model=search_agent_model)
+        result = await run_case(
+            case, model, verbose=verbose, search_agent_model=search_agent_model
+        )
         results.append(result)
 
         icon = STATUS_ICONS.get(result.status, "[????]")
@@ -1341,6 +1474,7 @@ async def run_benchmark(
             f"protocol={result.protocol_score} "
             f"loading={result.loading_score} "
             f"usage={result.usage_score} "
+            f"response={result.response_score} "
             f"overall={result.overall_score} "
             f"({result.duration_ms}ms)"
         )

@@ -14,7 +14,7 @@ The benchmark measures three dimensions:
 
 **Quick stats**: 13 test cases, 23 mock CRM tools, 6 categories, 2 discovery modes (keyword and semantic search).
 
-Each case runs with real API calls against mock tool functions. Tool responses are deterministic, so all variance comes from the LLM, not the backend.
+Each case runs with real API calls against mock tool functions. Tool responses are mostly deterministic (some create operations generate random UUIDs), so most variance comes from the LLM, not the backend.
 
 ## 2. Running the Benchmark
 
@@ -117,7 +117,7 @@ Every tool call is captured as a `TraceEntry`:
 |------|-----|---------------|-----------------|-----------------|-------|
 | `crm_summary` | smoke | browse, load | `get_crm_summary` | `get_crm_summary` | |
 | `task_creation` | smoke | browse, load | `create_task` | `create_task` | |
-| `calendar_booking` | multi-tool | browse, load | `create_calendar_event` | `create_calendar_event` | Must also check availability |
+| `calendar_booking` | multi-tool | browse, load | `query_calendar`, `create_calendar_event` | `query_calendar`, `create_calendar_event` | Must check availability before creating |
 | `customer_lookup` | smoke | browse, load | ANY: `query_customers` or `get_customer_context` | ANY: same | OR-logic |
 | `deal_creation` | smoke | browse, load | `create_deal` | `create_deal` | |
 | `cross_category` | cross-category | browse, load | `query_calendar`, `create_task` | `query_calendar`, `create_task` | Two categories |
@@ -129,7 +129,7 @@ Every tool call is captured as a `TraceEntry`:
 | `task_cleanup` | cross-category | browse, load | `query_tasks` + ANY: `delete_task`/`update_task` | same | Query then mutate/delete |
 | `session_persistence` | persistence | browse, load | `get_weather` | `get_weather` | Multi-turn, tool persists |
 
-**OR-logic**: Cases with `expect_tools_loaded_any` or `expect_tools_called_any` pass if *any one* tool from the alternatives list is present. This accommodates valid alternative approaches (e.g., looking up a customer via `query_customers` or `get_customer_context`).
+**OR-logic**: `expect_tools_loaded_any` / `expect_tools_called_any` add an OR-group requirement. If strict expected tools are also defined, both must pass: all strict tools must be present **and** at least one tool from the OR-group must be present.
 
 **Multi-turn**: `session_persistence` sends two separate message lists through two `generate()` calls sharing the same `ToolSession`. Turn 2 tests that tools loaded in turn 1 remain available without re-discovery.
 
@@ -142,7 +142,8 @@ Every tool call is captured as a `TraceEntry`:
 | Protocol Score | fraction | `matched_meta / expected_meta` | Did the LLM call the expected meta-tools (e.g., `browse_toolkit` then `load_tools`)? |
 | Loading Score | fraction | `matched_loaded / expected_loaded` | Are the correct business tools in `session.list_active()` at the end? |
 | Usage Score | fraction | `matched_called / expected_called` | Did the LLM actually invoke the correct business tools during the conversation? |
-| Overall Score | fraction | sum of all numerators / sum of all denominators | Composite correctness across all three dimensions. |
+| Response Score | fraction | `matched_response / expected_response` | If `expect_response_contains` is set, are required substrings present in the final response? |
+| Overall Score | fraction | sum of all numerators / sum of all denominators | Composite correctness across protocol, loading, usage, and response checks. |
 | Status | enum | see [Evaluation Methodology](#6-evaluation-methodology) | `pass`, `partial`, `fail`, or `error`. |
 
 ### 5.2 Efficiency Metrics
@@ -178,13 +179,13 @@ Every tool call is captured as a `TraceEntry`:
 
 ### Status Determination
 
-Three independent checks are performed. Status depends on how many pass:
+Three baseline checks are always performed (protocol, loading, usage). A fourth check (response) is added when `expect_response_contains` is non-empty. Status depends on how many applicable checks pass:
 
 | Condition | Status |
 |-----------|--------|
-| All three checks pass (protocol, loading, usage) | `pass` |
-| At least one check passes, but not all | `partial` |
-| All three checks have missing items | `fail` |
+| All applicable checks pass | `pass` |
+| At least one applicable check passes, but not all | `partial` |
+| All applicable checks have missing items | `fail` |
 | Exception raised during execution | `error` |
 
 ### Scoring Details
@@ -192,7 +193,8 @@ Three independent checks are performed. Status depends on how many pass:
 - **Protocol check**: Meta-tool names are extracted from the transcript, deduplicated preserving order. Each `expect_meta_calls` entry is checked for presence.
 - **Loading check**: `session.list_active()` is inspected after the conversation ends. Tools loaded then unloaded would show as missing.
 - **Usage check**: Non-meta tool names are extracted from assistant messages' `tool_calls` field, deduplicated by `call_id` to avoid counting the same call twice.
-- **OR-logic**: When `expect_tools_loaded_any` is set, the check passes if *any one* tool from the list is present. This replaces the strict AND-match.
+- **OR-logic**: OR-groups are additive. Strict expected tools are checked normally, and each OR-group contributes one additional expected item that passes when *any one* candidate tool is present.
+- **Response check**: The benchmark evaluates `expect_response_contains` case-insensitively against the final response text.
 
 ### Ceiling Detection
 
@@ -200,7 +202,6 @@ The agentic loop in `BaseProvider` injects `"[Warning: Max tool iterations (N) r
 
 ### What Is NOT Evaluated
 
-- **Response content correctness**: `expect_response_contains` is defined on cases but not currently checked in `evaluate_case()`. The benchmark verifies *what tools were called*, not whether the LLM's natural language answer is correct.
 - **Argument correctness**: The benchmark does not verify that tool call arguments contain the right values, only that the right tools were called.
 
 ## 7. Discovery Modes
@@ -295,7 +296,6 @@ These thresholds trigger warnings in the efficiency analysis:
 
 | Gap | Description |
 |-----|-------------|
-| Response content scoring | `expect_response_contains` is defined but never evaluated |
 | Token breakdown | Only `total_tokens` is reported; no prompt/completion split |
 | Iteration count | Number of agentic loop passes is not captured (distinct from tool call count) |
 | Per-call latency | No breakdown of time per tool call vs LLM API call |
@@ -308,7 +308,6 @@ These thresholds trigger warnings in the efficiency analysis:
 
 ### Potential Improvements
 
-- Evaluate `expect_response_contains` and add a Response Score to the correctness dimensions
 - Add `--runs N` flag for multiple executions with mean/stddev reporting
 - Add cost estimation via provider pricing tables
 - Surface `ToolSession.get_analytics()` (load/unload/call counts per tool) in reports
