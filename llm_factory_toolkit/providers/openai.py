@@ -132,10 +132,17 @@ class OpenAIAdapter(BaseProvider):
     def _convert_to_responses_api(
         messages: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Convert Chat Completions messages to Responses API format."""
+        """Convert Chat Completions messages to Responses API format.
+
+        When ``_raw_output_items`` are present on a message, they are
+        emitted directly to preserve the exact item structure (including
+        reasoning items required by reasoning models).
+        """
         converted: List[Dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role")
+            raw_items = msg.get("_raw_output_items")
+
             if role == "tool":
                 converted.append(
                     {
@@ -144,6 +151,14 @@ class OpenAIAdapter(BaseProvider):
                         "output": msg.get("content", ""),
                     }
                 )
+            elif raw_items:
+                # Emit preserved raw Responses API items directly
+                converted.extend(raw_items)
+                # If the message itself is a Responses API item (type: message),
+                # emit it too (the raw_items only contain reasoning/function_call)
+                if msg.get("type") == "message":
+                    clean = {k: v for k, v in msg.items() if k != "_raw_output_items"}
+                    converted.append(clean)
             elif role == "assistant" and msg.get("tool_calls"):
                 if msg.get("content"):
                     converted.append({"role": "assistant", "content": msg["content"]})
@@ -165,37 +180,49 @@ class OpenAIAdapter(BaseProvider):
     def _responses_to_chat_messages(
         items: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Convert Responses API output items to Chat Completions format."""
+        """Convert Responses API output items to Chat Completions format.
+
+        Raw Responses API items are preserved as ``_raw_output_items`` on
+        assistant messages so they can be round-tripped in multi-turn
+        conversations (required by reasoning models like o1, o3, gpt-5).
+        """
         result: List[Dict[str, Any]] = []
         pending_content: Optional[str] = None
         pending_tool_calls: List[Dict[str, Any]] = []
+        pending_raw_items: List[Dict[str, Any]] = []
+
+        has_reasoning = False
 
         def _flush() -> None:
-            nonlocal pending_content, pending_tool_calls
+            nonlocal pending_content, pending_tool_calls, pending_raw_items
             if pending_content is not None or pending_tool_calls:
                 msg: Dict[str, Any] = {"role": "assistant"}
                 if pending_content:
                     msg["content"] = pending_content
                 if pending_tool_calls:
                     msg["tool_calls"] = list(pending_tool_calls)
+                # Only store raw items when reasoning items are present
+                if pending_raw_items and has_reasoning:
+                    msg["_raw_output_items"] = list(pending_raw_items)
                 result.append(msg)
                 pending_content = None
                 pending_tool_calls = []
-
-        _SKIP_TYPES = {"reasoning"}
+                pending_raw_items = []
 
         for item in items:
             item_type = item.get("type")
 
-            if item_type in _SKIP_TYPES:
-                continue
+            if item_type == "reasoning":
+                has_reasoning = True
+                pending_raw_items.append(item)
 
-            if item_type == "text":
+            elif item_type == "text":
                 text = item.get("text", "")
                 if pending_content is None:
                     pending_content = text
                 else:
                     pending_content += text
+                pending_raw_items.append(item)
 
             elif item_type == "function_call":
                 if pending_content is None:
@@ -210,6 +237,7 @@ class OpenAIAdapter(BaseProvider):
                         },
                     }
                 )
+                pending_raw_items.append(item)
 
             elif item_type == "function_call_output":
                 _flush()
@@ -221,8 +249,13 @@ class OpenAIAdapter(BaseProvider):
                     }
                 )
 
-            elif item.get("role"):
+            elif item_type == "message" or item.get("role"):
                 _flush()
+                # Attach any pending reasoning items to the message
+                if pending_raw_items and has_reasoning:
+                    item = dict(item)
+                    item["_raw_output_items"] = list(pending_raw_items)
+                    pending_raw_items = []
                 result.append(item)
 
             else:

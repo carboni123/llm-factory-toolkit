@@ -407,3 +407,148 @@ async def test_generate_rejects_file_search_on_non_openai_adapters() -> None:
             model="gemini-2.5-flash",
             file_search={"vector_store_ids": ["vs_1"]},
         )
+
+
+# ------------------------------------------------------------------
+# Reasoning items round-trip (OpenAI reasoning models)
+# ------------------------------------------------------------------
+
+
+class TestResponsesToChatMessagesReasoning:
+    """Verify that reasoning items are preserved through the Chat Completions
+    format for multi-turn round-tripping."""
+
+    def test_reasoning_items_preserved_with_function_calls(self) -> None:
+        """Reasoning + function_call items are stored as _raw_output_items."""
+        items = [
+            {"type": "reasoning", "id": "rs_1", "summary": [{"text": "thinking"}]},
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "search",
+                "arguments": '{"q": "test"}',
+            },
+        ]
+        result = OpenAIAdapter._responses_to_chat_messages(items)
+        assert len(result) == 1
+        msg = result[0]
+        assert msg["role"] == "assistant"
+        assert len(msg["tool_calls"]) == 1
+        assert "_raw_output_items" in msg
+        assert len(msg["_raw_output_items"]) == 2
+        assert msg["_raw_output_items"][0]["type"] == "reasoning"
+        assert msg["_raw_output_items"][1]["type"] == "function_call"
+
+    def test_reasoning_items_preserved_with_message(self) -> None:
+        """Reasoning before a message-type item is attached to it."""
+        items = [
+            {"type": "reasoning", "id": "rs_1", "summary": [{"text": "thinking"}]},
+            {
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello"}],
+            },
+        ]
+        result = OpenAIAdapter._responses_to_chat_messages(items)
+        assert len(result) == 1
+        msg = result[0]
+        assert msg["type"] == "message"
+        assert "_raw_output_items" in msg
+        assert len(msg["_raw_output_items"]) == 1
+        assert msg["_raw_output_items"][0]["type"] == "reasoning"
+
+    def test_no_reasoning_backward_compat(self) -> None:
+        """Without reasoning items, no _raw_output_items key is added."""
+        items = [
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "fn",
+                "arguments": "{}",
+            },
+        ]
+        result = OpenAIAdapter._responses_to_chat_messages(items)
+        msg = result[0]
+        assert "_raw_output_items" not in msg
+
+    def test_multiple_iterations_preserve_reasoning(self) -> None:
+        """Multiple reasoning+function_call pairs preserve all raw items."""
+        items = [
+            {"type": "reasoning", "id": "rs_1", "summary": []},
+            {"type": "function_call", "call_id": "c1", "name": "fn1", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "c1", "output": "ok"},
+            {"type": "reasoning", "id": "rs_2", "summary": []},
+            {"type": "function_call", "call_id": "c2", "name": "fn2", "arguments": "{}"},
+        ]
+        result = OpenAIAdapter._responses_to_chat_messages(items)
+        # First assistant message: reasoning + function_call
+        assert "_raw_output_items" in result[0]
+        assert len(result[0]["_raw_output_items"]) == 2
+        # Tool output
+        assert result[1]["role"] == "tool"
+        # Second assistant message: reasoning + function_call
+        assert "_raw_output_items" in result[2]
+        assert len(result[2]["_raw_output_items"]) == 2
+
+
+class TestConvertToResponsesApiReasoning:
+    """Verify that _raw_output_items are correctly emitted back to the API."""
+
+    def test_raw_items_emitted_for_assistant_with_tool_calls(self) -> None:
+        """Assistant messages with _raw_output_items use raw items directly."""
+        messages = [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "fn", "arguments": "{}"}},
+                ],
+                "_raw_output_items": [
+                    {"type": "reasoning", "id": "rs_1", "summary": []},
+                    {"type": "function_call", "call_id": "c1", "name": "fn", "arguments": "{}"},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "result"},
+        ]
+        result = OpenAIAdapter._convert_to_responses_api(messages)
+        # user, reasoning, function_call, function_call_output
+        assert result[0] == {"role": "user", "content": "hi"}
+        assert result[1]["type"] == "reasoning"
+        assert result[2]["type"] == "function_call"
+        assert result[3]["type"] == "function_call_output"
+
+    def test_raw_items_emitted_for_message_type(self) -> None:
+        """Message-type items with _raw_output_items emit reasoning then message."""
+        messages = [
+            {
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello"}],
+                "_raw_output_items": [
+                    {"type": "reasoning", "id": "rs_1", "summary": []},
+                ],
+            },
+        ]
+        result = OpenAIAdapter._convert_to_responses_api(messages)
+        assert len(result) == 2
+        assert result[0]["type"] == "reasoning"
+        assert result[1]["type"] == "message"
+        assert "_raw_output_items" not in result[1]
+
+    def test_no_raw_items_backward_compat(self) -> None:
+        """Without _raw_output_items, function_calls are reconstructed normally."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "fn", "arguments": "{}"}},
+                ],
+            },
+        ]
+        result = OpenAIAdapter._convert_to_responses_api(messages)
+        assert result[0]["type"] == "function_call"
+        assert len(result) == 1
