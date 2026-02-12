@@ -68,9 +68,10 @@ class TestParseResponse:
         fake_candidate = SimpleNamespace(content=fake_content)
         resp = SimpleNamespace(candidates=[fake_candidate])
 
-        text, tools = GeminiAdapter._parse_response(resp)
+        text, tools, thought_sigs = GeminiAdapter._parse_response(resp)
         assert text == "Hello world"
         assert tools == []
+        assert thought_sigs == {}
 
     def test_function_call_parts(self) -> None:
         fc = SimpleNamespace(name="search", args={"q": "test"})
@@ -79,11 +80,13 @@ class TestParseResponse:
         fake_candidate = SimpleNamespace(content=fake_content)
         resp = SimpleNamespace(candidates=[fake_candidate])
 
-        text, tools = GeminiAdapter._parse_response(resp)
+        text, tools, thought_sigs = GeminiAdapter._parse_response(resp)
         assert text == ""
         assert len(tools) == 1
         assert tools[0].name == "search"
         assert tools[0].call_id.startswith("call_search_")
+        # No thought_signature on this part
+        assert thought_sigs == {}
 
     def test_mixed_parts(self) -> None:
         fc = SimpleNamespace(name="fn", args={})
@@ -95,24 +98,62 @@ class TestParseResponse:
         fake_candidate = SimpleNamespace(content=fake_content)
         resp = SimpleNamespace(candidates=[fake_candidate])
 
-        text, tools = GeminiAdapter._parse_response(resp)
+        text, tools, thought_sigs = GeminiAdapter._parse_response(resp)
         assert text == "Thinking..."
         assert len(tools) == 1
 
     def test_no_candidates(self) -> None:
         resp = SimpleNamespace(candidates=None)
-        text, tools = GeminiAdapter._parse_response(resp)
+        text, tools, thought_sigs = GeminiAdapter._parse_response(resp)
         assert text == ""
         assert tools == []
+        assert thought_sigs == {}
 
     def test_empty_parts(self) -> None:
         fake_content = SimpleNamespace(parts=None)
         fake_candidate = SimpleNamespace(content=fake_content)
         resp = SimpleNamespace(candidates=[fake_candidate])
 
-        text, tools = GeminiAdapter._parse_response(resp)
+        text, tools, thought_sigs = GeminiAdapter._parse_response(resp)
         assert text == ""
         assert tools == []
+        assert thought_sigs == {}
+
+    def test_thought_signature_captured(self) -> None:
+        """Gemini 3+ thinking models attach thought_signature to function_call parts."""
+        sig_bytes = b"\x12\xd0\x03\ntest_signature"
+        fc = SimpleNamespace(name="create_customer", args={"name": "Maria"})
+        fake_part = SimpleNamespace(
+            text=None, function_call=fc, thought_signature=sig_bytes
+        )
+        fake_content = SimpleNamespace(parts=[fake_part])
+        fake_candidate = SimpleNamespace(content=fake_content)
+        resp = SimpleNamespace(candidates=[fake_candidate])
+
+        text, tools, thought_sigs = GeminiAdapter._parse_response(resp)
+        assert len(tools) == 1
+        assert len(thought_sigs) == 1
+        call_id = tools[0].call_id
+        assert thought_sigs[call_id] == sig_bytes
+
+    def test_thought_signature_partial(self) -> None:
+        """Only some function_call parts may have thought_signature."""
+        sig_bytes = b"sig1"
+        fc1 = SimpleNamespace(name="fn1", args={})
+        fc2 = SimpleNamespace(name="fn2", args={})
+        parts = [
+            SimpleNamespace(text=None, function_call=fc1, thought_signature=sig_bytes),
+            SimpleNamespace(text=None, function_call=fc2),  # no thought_signature attr
+        ]
+        fake_content = SimpleNamespace(parts=parts)
+        fake_candidate = SimpleNamespace(content=fake_content)
+        resp = SimpleNamespace(candidates=[fake_candidate])
+
+        text, tools, thought_sigs = GeminiAdapter._parse_response(resp)
+        assert len(tools) == 2
+        assert len(thought_sigs) == 1  # only first has signature
+        assert thought_sigs[tools[0].call_id] == sig_bytes
+        assert tools[1].call_id not in thought_sigs
 
 
 class TestBuildRawMessages:
@@ -133,6 +174,29 @@ class TestBuildRawMessages:
         msg = result[0]
         assert msg["content"] == "text"
         assert len(msg["tool_calls"]) == 1
+
+    def test_thought_signature_embedded(self) -> None:
+        """thought_signature is stored in tool_call dicts for round-tripping."""
+        sig = b"test_sig"
+        tc = ProviderToolCall(call_id="c1", name="fn", arguments="{}")
+        result = GeminiAdapter._build_raw_messages("", [tc], {"c1": sig})
+        tc_dict = result[0]["tool_calls"][0]
+        assert tc_dict["_thought_signature"] == sig
+
+    def test_no_thought_signature_backward_compat(self) -> None:
+        """Without thought_signatures, no _thought_signature key is added."""
+        tc = ProviderToolCall(call_id="c1", name="fn", arguments="{}")
+        result = GeminiAdapter._build_raw_messages("", [tc])
+        tc_dict = result[0]["tool_calls"][0]
+        assert "_thought_signature" not in tc_dict
+
+    def test_thought_signature_partial_match(self) -> None:
+        """Only tool calls with matching IDs get thought_signature."""
+        tc1 = ProviderToolCall(call_id="c1", name="fn1", arguments="{}")
+        tc2 = ProviderToolCall(call_id="c2", name="fn2", arguments="{}")
+        result = GeminiAdapter._build_raw_messages("", [tc1, tc2], {"c1": b"sig"})
+        assert "_thought_signature" in result[0]["tool_calls"][0]
+        assert "_thought_signature" not in result[0]["tool_calls"][1]
 
 
 class TestExtractUsage:

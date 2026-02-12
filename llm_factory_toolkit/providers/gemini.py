@@ -154,7 +154,12 @@ class GeminiAdapter(BaseProvider):
                             name=tc["function"]["name"],
                             args=json.loads(tc["function"]["arguments"]),
                         )
-                        parts.append(types.Part(function_call=function_call))
+                        part_kwargs: Dict[str, Any] = {"function_call": function_call}
+                        # Round-trip thought_signature for Gemini 3+ thinking models
+                        thought_sig = tc.get("_thought_signature")
+                        if thought_sig:
+                            part_kwargs["thought_signature"] = thought_sig
+                        parts.append(types.Part(**part_kwargs))
                 role = "model"
 
             elif role == "tool":
@@ -288,10 +293,18 @@ class GeminiAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_response(response: Any) -> Tuple[str, List[ProviderToolCall]]:
-        """Extract text content and tool calls from a Gemini response."""
+    def _parse_response(
+        response: Any,
+    ) -> Tuple[str, List[ProviderToolCall], Dict[str, bytes]]:
+        """Extract text content, tool calls, and thought signatures from a Gemini response.
+
+        Returns ``(text, tool_calls, thought_signatures)`` where
+        *thought_signatures* maps call-IDs to opaque signature bytes
+        required by Gemini 3+ thinking models for multi-turn tool use.
+        """
         assistant_content = ""
         tool_calls: List[ProviderToolCall] = []
+        thought_signatures: Dict[str, bytes] = {}
 
         candidates = getattr(response, "candidates", None)
         if candidates and candidates[0].content and candidates[0].content.parts:
@@ -308,19 +321,32 @@ class GeminiAdapter(BaseProvider):
                             arguments=json.dumps(part.function_call.args),
                         )
                     )
+                    # Gemini 3+ thinking models attach thought_signature to
+                    # function_call parts.  Must be round-tripped for the API
+                    # to accept subsequent turns.
+                    thought_sig = getattr(part, "thought_signature", None)
+                    if thought_sig:
+                        thought_signatures[call_id] = thought_sig
 
-        return assistant_content, tool_calls
+        return assistant_content, tool_calls, thought_signatures
 
     @staticmethod
     def _build_raw_messages(
         content: str,
         tool_calls: List[ProviderToolCall],
+        thought_signatures: Optional[Dict[str, bytes]] = None,
     ) -> List[Dict[str, Any]]:
-        """Build Chat Completions format raw_messages from parsed response."""
+        """Build Chat Completions format raw_messages from parsed response.
+
+        When *thought_signatures* is provided, each tool-call dict gets an
+        extra ``_thought_signature`` key so that :meth:`_convert_messages`
+        can round-trip it back to the Gemini API.
+        """
         msg: Dict[str, Any] = {"role": "assistant", "content": content}
         if tool_calls:
-            msg["tool_calls"] = [
-                {
+            tc_list: List[Dict[str, Any]] = []
+            for tc in tool_calls:
+                tc_dict: Dict[str, Any] = {
                     "id": tc.call_id,
                     "type": "function",
                     "function": {
@@ -328,8 +354,10 @@ class GeminiAdapter(BaseProvider):
                         "arguments": tc.arguments,
                     },
                 }
-                for tc in tool_calls
-            ]
+                if thought_signatures and tc.call_id in thought_signatures:
+                    tc_dict["_thought_signature"] = thought_signatures[tc.call_id]
+                tc_list.append(tc_dict)
+            msg["tool_calls"] = tc_list
         return [msg]
 
     @staticmethod
@@ -392,8 +420,8 @@ class GeminiAdapter(BaseProvider):
         except Exception as e:
             raise ProviderError(f"Google Gemini API error: {e}") from e
 
-        content, tool_calls = self._parse_response(response)
-        raw_messages = self._build_raw_messages(content, tool_calls)
+        content, tool_calls, thought_sigs = self._parse_response(response)
+        raw_messages = self._build_raw_messages(content, tool_calls, thought_sigs)
         usage = self._extract_usage(response)
 
         # Handle structured output parsing
@@ -464,6 +492,7 @@ class GeminiAdapter(BaseProvider):
 
         accumulated_text = ""
         all_tool_calls: List[ProviderToolCall] = []
+        all_thought_sigs: Dict[str, bytes] = {}
         last_usage: Optional[Dict[str, int]] = None
 
         async for chunk in stream:
@@ -482,6 +511,9 @@ class GeminiAdapter(BaseProvider):
                                 arguments=json.dumps(part.function_call.args),
                             )
                         )
+                        thought_sig = getattr(part, "thought_signature", None)
+                        if thought_sig:
+                            all_thought_sigs[call_id] = thought_sig
 
             # Track usage from last chunk
             chunk_usage = self._extract_usage(chunk)
@@ -489,7 +521,9 @@ class GeminiAdapter(BaseProvider):
                 last_usage = chunk_usage
 
         if all_tool_calls:
-            raw_messages = self._build_raw_messages(accumulated_text, all_tool_calls)
+            raw_messages = self._build_raw_messages(
+                accumulated_text, all_tool_calls, all_thought_sigs
+            )
             yield ProviderResponse(
                 content=accumulated_text,
                 tool_calls=all_tool_calls,
