@@ -291,15 +291,17 @@ class ToolFactory:
             )
 
     def register_meta_tools(self) -> None:
-        """Register ``browse_toolkit``, ``load_tools``, ``load_tool_group``, and ``unload_tools``."""
+        """Register ``browse_toolkit``, ``load_tools``, ``load_tool_group``, ``unload_tool_group``, and ``unload_tools``."""
         from .meta_tools import (
             BROWSE_TOOLKIT_PARAMETERS,
             LOAD_TOOL_GROUP_PARAMETERS,
             LOAD_TOOLS_PARAMETERS,
+            UNLOAD_TOOL_GROUP_PARAMETERS,
             UNLOAD_TOOLS_PARAMETERS,
             browse_toolkit,
             load_tool_group,
             load_tools,
+            unload_tool_group,
             unload_tools,
         )
 
@@ -342,6 +344,18 @@ class ToolFactory:
             tags=["meta", "loading", "group"],
         )
         self.register_tool(
+            function=unload_tool_group,
+            name="unload_tool_group",
+            description=(
+                "Unload all tools in a group by prefix in one call. "
+                "For example, group='crm' unloads all crm.contacts and crm.pipeline tools. "
+                "Core tools and meta-tools are protected and cannot be unloaded."
+            ),
+            parameters=UNLOAD_TOOL_GROUP_PARAMETERS,
+            category="system",
+            tags=["meta", "unloading", "group"],
+        )
+        self.register_tool(
             function=unload_tools,
             name="unload_tools",
             description=(
@@ -353,7 +367,8 @@ class ToolFactory:
             tags=["meta", "unloading"],
         )
         module_logger.info(
-            "Registered meta-tools: browse_toolkit, load_tools, load_tool_group, unload_tools"
+            "Registered meta-tools: browse_toolkit, load_tools, load_tool_group, "
+            "unload_tool_group, unload_tools"
         )
 
     def register_find_tools(self) -> None:
@@ -583,6 +598,15 @@ class ToolFactory:
         """Return a copy of all tool registrations."""
 
         return dict(self._registry)
+
+    def list_groups(self) -> List[str]:
+        """Return all unique groups from registered tools, sorted.
+
+        Useful for discovering available groups before catalog construction
+        (e.g. for pre-loading scenarios).
+        """
+        groups = {reg.group for reg in self._registry.values() if reg.group}
+        return sorted(groups)
 
     def _build_definition(
         self, name: str, description: str, parameters: Optional[Dict[str, Any]]

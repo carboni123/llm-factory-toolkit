@@ -59,14 +59,14 @@ This library uses **native provider adapters** with a shared agentic loop:
 | `providers/xai.py` | `XAIAdapter` -- thin OpenAI subclass with custom base_url | ~50 |
 | `exceptions.py` | Exception hierarchy: `LLMToolkitError` > `ConfigurationError`, `ProviderError`, `ToolError`, `UnsupportedFeatureError`, `RetryExhaustedError` | ~40 |
 | `models.py` | `ModelInfo`, `MODEL_CATALOG`, `list_models()`, `get_model_info()` -- model metadata registry | ~290 |
-| `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`), dispatch, context injection, mock mode, usage tracking, meta-tools, `register_find_tools` | ~640 |
+| `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`), dispatch, context injection, mock mode, usage tracking, meta-tools, `register_find_tools`, `list_groups()` | ~850 |
 | `tools/base_tool.py` | `BaseTool` ABC for class-based tools (includes `CATEGORY`, `TAGS` class attrs) | ~45 |
 | `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
 | `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking | ~190 |
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` (category `"utility"`) | ~60 |
-| `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, majority-match search, group-to-category fallback, offset/pagination | ~520 |
+| `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, majority-match search, group-to-category fallback, offset/pagination, `get_tools_in_group()` | ~550 |
 | `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation, analytics tracking | ~250 |
-| `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tools`, `find_tools` -- meta-tools for dynamic discovery with pagination and semantic search (category `"system"`) | ~630 |
+| `tools/meta_tools.py` | `browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tool_group`, `unload_tools`, `find_tools` -- meta-tools for dynamic discovery with pagination, group operations, and semantic search (category `"system"`) | ~765 |
 | `__init__.py` | Public exports (`ModelInfo`, `list_models`, `get_model_info`, etc.), `.env` loading, `clean_json_string()`, `extract_json_from_markdown()` | ~170 |
 
 ### Data Flow
@@ -143,21 +143,21 @@ Two modes of operation:
 1. **Simplified** (`LLMClient` constructor): Set `dynamic_tool_loading=True` and `core_tools=[...]`. The client auto-builds the catalog, registers meta-tools, and creates a fresh `ToolSession` per `generate()` call.
 2. **Manual**: Build catalog, register meta-tools, create session yourself, pass `tool_session` to `generate()`.
 
-When a `tool_session` is active, the agentic loop recomputes visible tools each iteration from `session.list_active()`. Meta-tools (`browse_toolkit`, `load_tools`, `unload_tools`) modify the session mid-loop so newly loaded tools appear in the next LLM call, and unloaded tools are removed.
+When a `tool_session` is active, the agentic loop recomputes visible tools each iteration from `session.list_active()`. Meta-tools (`browse_toolkit`, `load_tools`, `load_tool_group`, `unload_tool_group`, `unload_tools`) modify the session mid-loop so newly loaded tools appear in the next LLM call, and unloaded tools are removed. Group-level operations (`load_tool_group`, `unload_tool_group`) target all tools matching a dotted group prefix (e.g. `"crm"` matches `"crm.contacts"` and `"crm.pipeline"`). `unload_tool_group` protects core tools and meta-tools from removal.
 
 **Semantic search** (`find_tools`): Pass a model string to `dynamic_tool_loading` (e.g. `dynamic_tool_loading="openai/gpt-4o-mini"`) to use `find_tools` instead of `browse_toolkit`. This meta-tool uses a cheap sub-agent LLM to interpret natural-language intent and find matching tools. The sub-agent receives the full catalog (names + descriptions + tags only, no parameter schemas) and returns matching tool names in a single LLM call. Only one discovery tool is loaded per session — `browse_toolkit` for `True`, `find_tools` for a model string.
 
 Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Context injection passes `tool_session`, `tool_catalog`, and `_search_agent` to meta-tools without LLM visibility.
 
 ### Tool Registration Pipeline
-`register_tool()` accepts `category` and `tags` which are stored in the `ToolRegistration` dataclass. `register_tool_class()` reads `CATEGORY`/`TAGS` from `BaseTool` subclasses via `getattr()`. `InMemoryToolCatalog._build_from_factory()` reads category/tags from `factory.registrations` property, so catalogs auto-populate without needing `add_metadata()` calls.
+`register_tool()` accepts `category`, `tags`, and `group` which are stored in the `ToolRegistration` dataclass. `register_tool_class()` reads `CATEGORY`/`TAGS`/`GROUP` from `BaseTool` subclasses via `getattr()`. `InMemoryToolCatalog._build_from_factory()` reads category/tags/group from `factory.registrations` property, so catalogs auto-populate without needing `add_metadata()` calls. Before catalog construction, `factory.list_groups()` returns all unique groups from registered tools.
 
 ### Strict Mode (OpenAI)
 `OpenAIAdapter._build_tool_definitions()` sets `strict: True` on function tools. This requires ALL properties listed in the `required` array -- not just the ones you want to be required. This is an OpenAI Responses API constraint.
 
 ## Testing
 
-### Unit Tests (no API keys, 592 tests)
+### Unit Tests (no API keys, 632 tests)
 - `test_builtin_tools.py` -- built-in tool functions + category metadata
 - `test_client_unit.py` -- LLMClient generate/intent/error wrapping
 - `test_dynamic_loading_unit.py` -- `core_tools`/`dynamic_tool_loading` constructor feature
@@ -175,7 +175,7 @@ Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Contex
 - `test_tool_session.py` -- load/unload, limits, serialisation
 - `test_toolfactory_context_injection.py` -- context injection
 - `test_toolfactory_usage_counts_unit.py` -- usage tracking + tuple unpacking
-- `test_tool_groups.py` -- group namespacing, prefix filtering, `load_tool_group` meta-tool (52 tests)
+- `test_tool_groups.py` -- group namespacing, prefix filtering, `load_tool_group`/`unload_tool_group` meta-tools, `factory.list_groups()`, `catalog.get_tools_in_group()` (79 tests)
 - `test_relevance_score.py` -- relevance scoring, search sorting, min_score filtering (28 tests)
 - `test_compact_mode.py` -- nested description removal, token reduction, round-trip dispatch (28 tests)
 - `test_compact_provider_integration.py` -- compact mode through provider loop (16 tests)

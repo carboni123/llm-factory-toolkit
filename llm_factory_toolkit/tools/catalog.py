@@ -291,6 +291,21 @@ class ToolCatalog(ABC):
         """Return all available groups, sorted."""
 
     @abstractmethod
+    def get_tools_in_group(self, group: str) -> List[str]:
+        """Return tool names whose group matches *group* exactly or by prefix.
+
+        For example, ``get_tools_in_group("crm")`` returns tools in both
+        ``"crm.contacts"`` and ``"crm.pipeline"`` groups, while
+        ``get_tools_in_group("crm.contacts")`` returns only that subgroup.
+
+        Args:
+            group: Group name or prefix to match.
+
+        Returns:
+            Sorted list of matching tool names.
+        """
+
+    @abstractmethod
     def list_all(self) -> List[ToolCatalogEntry]:
         """Return every entry in the catalog."""
 
@@ -492,6 +507,16 @@ class InMemoryToolCatalog(ToolCatalog):
     def list_groups(self) -> List[str]:
         groups = {e.group for e in self._entries.values() if e.group}
         return sorted(groups)
+
+    def get_tools_in_group(self, group: str) -> List[str]:
+        group_prefix = group + "."
+        names: List[str] = []
+        for entry in self._entries.values():
+            if entry.group is not None and (
+                entry.group == group or entry.group.startswith(group_prefix)
+            ):
+                names.append(entry.name)
+        return sorted(names)
 
     def list_all(self) -> List[ToolCatalogEntry]:
         return list(self._entries.values())

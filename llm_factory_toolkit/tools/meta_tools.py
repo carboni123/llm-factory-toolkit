@@ -321,12 +321,98 @@ def load_tool_group(
 
 
 # ------------------------------------------------------------------
+# unload_tool_group
+# ------------------------------------------------------------------
+
+
+def unload_tool_group(
+    group: str,
+    *,
+    tool_catalog: Optional[ToolCatalog] = None,
+    tool_session: Optional[ToolSession] = None,
+    core_tools: Optional[List[str]] = None,
+) -> ToolExecutionResult:
+    """Unload all tools matching a group prefix in one call.
+
+    Symmetric with :func:`load_tool_group`.  Looks up every tool in the
+    catalog whose ``group`` starts with the given prefix and removes them
+    from the active session.  Core tools and meta-tools are protected
+    and cannot be unloaded.
+
+    Args:
+        group: Group prefix to match (e.g. ``"crm"`` or ``"crm.contacts"``).
+        tool_catalog: Injected -- the catalog to search.
+        tool_session: Injected -- session to modify.
+        core_tools: Injected -- tool names that must stay active.
+    """
+    if tool_session is None:
+        return ToolExecutionResult(
+            content=json.dumps({"error": "Tool session not available."}),
+            error="No session configured",
+        )
+
+    if tool_catalog is None:
+        return ToolExecutionResult(
+            content=json.dumps({"error": "Tool catalog not configured."}),
+            error="No catalog configured",
+        )
+
+    # Find all tools in the group
+    tool_names = tool_catalog.get_tools_in_group(group)
+
+    protected = _META_TOOL_NAMES | set(core_tools or [])
+
+    unloaded: List[str] = []
+    not_active: List[str] = []
+    refused: List[str] = []
+
+    for name in tool_names:
+        if name in protected:
+            refused.append(name)
+            continue
+        if name not in tool_session.active_tools:
+            not_active.append(name)
+            continue
+        unloaded.append(name)
+
+    if unloaded:
+        tool_session.unload(unloaded)
+
+    response: Dict[str, Any] = {
+        "group": group,
+        "unloaded": unloaded,
+        "not_active": not_active,
+        "refused_protected": refused,
+        "active_count": len(tool_session.active_tools),
+    }
+
+    # Include budget snapshot when available
+    if tool_session.token_budget is not None:
+        budget_info = tool_session.get_budget_usage()
+        response["budget"] = budget_info
+        response["compact_mode"] = budget_info["warning"] and tool_session.auto_compact
+
+    return ToolExecutionResult(
+        content=json.dumps(response, indent=2),
+        payload=response,
+        metadata={"group": group, "requested": tool_names},
+    )
+
+
+# ------------------------------------------------------------------
 # unload_tools
 # ------------------------------------------------------------------
 
 #: Tool names that cannot be unloaded (meta-tools themselves).
 _META_TOOL_NAMES = frozenset(
-    {"browse_toolkit", "load_tools", "load_tool_group", "unload_tools", "find_tools"}
+    {
+        "browse_toolkit",
+        "load_tools",
+        "load_tool_group",
+        "unload_tool_group",
+        "unload_tools",
+        "find_tools",
+    }
 )
 
 
@@ -442,6 +528,17 @@ LOAD_TOOL_GROUP_PARAMETERS: Dict[str, Any] = {
         "group": {
             "type": "string",
             "description": "Group prefix to load. All tools whose group starts with this prefix will be loaded (e.g. 'crm' loads crm.contacts and crm.pipeline tools).",
+        },
+    },
+    "required": ["group"],
+}
+
+UNLOAD_TOOL_GROUP_PARAMETERS: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "group": {
+            "type": "string",
+            "description": "Group prefix to unload. All active tools whose group starts with this prefix will be removed (e.g. 'crm' unloads crm.contacts and crm.pipeline tools).",
         },
     },
     "required": ["group"],

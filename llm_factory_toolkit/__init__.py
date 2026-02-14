@@ -59,12 +59,28 @@ demand instead of sending all definitions to the LLM at once::
 The agent uses ``browse_toolkit`` to search the catalog by keyword/category
 and ``load_tools`` to activate tools mid-conversation.
 
+Tool grouping
+~~~~~~~~~~~~~
+Tools can be organised into dotted groups (e.g. ``"crm.contacts"``,
+``"crm.pipeline"``).  Group-level operations let agents load or unload
+entire namespaces in a single call:
+
+- ``load_tool_group(group="crm")`` -- loads all ``crm.*`` tools at once.
+- ``unload_tool_group(group="crm")`` -- unloads all ``crm.*`` tools
+  (core tools and meta-tools are protected).
+- ``browse_toolkit(group="crm")`` -- filters results by group prefix.
+
+Before building a catalog, ``factory.list_groups()`` returns all unique
+groups from registered tools.  On the catalog, ``catalog.get_tools_in_group("crm")``
+returns matching tool names directly without a full search.
+
 Key classes
 -----------
 - :class:`LLMClient` — main entry point; wraps generation, tool registration,
   and dynamic loading setup.
 - :class:`ToolFactory` — registers tools (function or class-based), dispatches
-  calls, injects context, tracks usage.
+  calls, injects context, tracks usage.  ``list_groups()`` exposes available
+  groups before catalog construction.
 - :class:`GenerationResult` — returned by ``generate()``;  holds ``content``,
   ``payloads``, ``tool_messages``, ``messages``.  Supports tuple unpacking:
   ``content, payloads = result``.
@@ -72,6 +88,7 @@ Key classes
   via ``to_dict()`` / ``from_dict()`` for persistence.
 - :class:`InMemoryToolCatalog` — searchable tool index built from a
   ``ToolFactory``; used by the ``browse_toolkit`` meta-tool.
+  ``get_tools_in_group(group)`` returns tool names matching a group prefix.
 - :class:`BaseTool` — ABC for class-based tools with ``execute()`` /
   ``mock_execute()`` and optional ``CATEGORY`` / ``TAGS``.
 

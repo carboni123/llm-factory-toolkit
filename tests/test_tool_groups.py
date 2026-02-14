@@ -8,7 +8,11 @@ from llm_factory_toolkit.tools.catalog import (
     InMemoryToolCatalog,
     ToolCatalogEntry,
 )
-from llm_factory_toolkit.tools.meta_tools import browse_toolkit, load_tool_group
+from llm_factory_toolkit.tools.meta_tools import (
+    browse_toolkit,
+    load_tool_group,
+    unload_tool_group,
+)
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.session import ToolSession
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
@@ -700,3 +704,289 @@ class TestLoadToolGroupRegistration:
         body = json.loads(result.content)
         assert "load_tool_group" in body["refused_protected"]
         assert session.is_active("load_tool_group")
+
+
+# ------------------------------------------------------------------
+# catalog.get_tools_in_group()
+# ------------------------------------------------------------------
+
+
+class TestGetToolsInGroup:
+    """Tests for the get_tools_in_group convenience method."""
+
+    @pytest.fixture
+    def catalog(self) -> InMemoryToolCatalog:
+        _, cat = _build_grouped_catalog(50)
+        return cat
+
+    def test_exact_group_match(self, catalog: InMemoryToolCatalog) -> None:
+        names = catalog.get_tools_in_group("crm.contacts")
+        assert len(names) == 10
+        for name in names:
+            entry = catalog.get_entry(name)
+            assert entry is not None
+            assert entry.group == "crm.contacts"
+
+    def test_prefix_match(self, catalog: InMemoryToolCatalog) -> None:
+        names = catalog.get_tools_in_group("crm")
+        assert len(names) == 20  # crm.contacts + crm.pipeline
+
+    def test_returns_sorted(self, catalog: InMemoryToolCatalog) -> None:
+        names = catalog.get_tools_in_group("sales")
+        assert names == sorted(names)
+
+    def test_nonexistent_group_returns_empty(self, catalog: InMemoryToolCatalog) -> None:
+        names = catalog.get_tools_in_group("nonexistent")
+        assert names == []
+
+    def test_partial_prefix_no_false_positive(self) -> None:
+        """'crm.con' should not match 'crm.contacts'."""
+        factory = ToolFactory()
+        factory.register_tool(
+            function=_noop, name="t1", description="d", group="crm.contacts"
+        )
+        catalog = InMemoryToolCatalog(factory)
+        assert catalog.get_tools_in_group("crm.con") == []
+
+    def test_tools_without_group_excluded(self) -> None:
+        factory = ToolFactory()
+        factory.register_tool(function=_noop, name="grouped", description="d", group="a.b")
+        factory.register_tool(function=_noop, name="ungrouped", description="d")
+        catalog = InMemoryToolCatalog(factory)
+        assert catalog.get_tools_in_group("a") == ["grouped"]
+
+    def test_all_groups_covered(self, catalog: InMemoryToolCatalog) -> None:
+        """Every tool with a group should be reachable via get_tools_in_group."""
+        all_names: set[str] = set()
+        for group in GROUPS:
+            all_names.update(catalog.get_tools_in_group(group))
+        assert len(all_names) == 50
+
+
+# ------------------------------------------------------------------
+# unload_tool_group meta-tool
+# ------------------------------------------------------------------
+
+
+class TestUnloadToolGroup:
+    """Tests for the unload_tool_group meta-tool."""
+
+    @pytest.fixture
+    def catalog(self) -> InMemoryToolCatalog:
+        _, cat = _build_grouped_catalog(50)
+        return cat
+
+    @pytest.fixture
+    def session(self) -> ToolSession:
+        s = ToolSession()
+        s.load([
+            "browse_toolkit", "load_tools", "load_tool_group",
+            "unload_tool_group", "unload_tools",
+        ])
+        return s
+
+    def test_unloads_exact_group(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        # First load the group
+        load_tool_group(group="crm.contacts", tool_catalog=catalog, tool_session=session)
+        assert session.is_active("tool_000")
+
+        result = unload_tool_group(
+            group="crm.contacts", tool_catalog=catalog, tool_session=session
+        )
+        body = json.loads(result.content)
+        assert len(body["unloaded"]) == 10
+        assert not session.is_active("tool_000")
+
+    def test_unloads_by_prefix(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        load_tool_group(group="crm", tool_catalog=catalog, tool_session=session)
+        result = unload_tool_group(
+            group="crm", tool_catalog=catalog, tool_session=session
+        )
+        body = json.loads(result.content)
+        assert len(body["unloaded"]) == 20
+
+    def test_response_includes_group_field(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        result = unload_tool_group(
+            group="crm", tool_catalog=catalog, tool_session=session
+        )
+        body = json.loads(result.content)
+        assert body["group"] == "crm"
+
+    def test_not_active_tools_reported(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        """Tools in the group that aren't loaded appear in not_active."""
+        result = unload_tool_group(
+            group="crm.contacts", tool_catalog=catalog, tool_session=session
+        )
+        body = json.loads(result.content)
+        assert len(body["not_active"]) == 10
+        assert body["unloaded"] == []
+
+    def test_protects_meta_tools(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        """Meta-tools in the group should be refused."""
+        # Register a tool in system group that collides with meta-tool name pattern
+        # Instead, directly check that if a meta-tool name appeared in the group
+        # it would be refused. We test via core_tools protection.
+        session.load(["tool_000"])
+        result = unload_tool_group(
+            group="crm.contacts",
+            tool_catalog=catalog,
+            tool_session=session,
+            core_tools=["tool_000"],
+        )
+        body = json.loads(result.content)
+        assert "tool_000" in body["refused_protected"]
+        assert session.is_active("tool_000")
+
+    def test_empty_group_returns_empty(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        result = unload_tool_group(
+            group="nonexistent", tool_catalog=catalog, tool_session=session
+        )
+        body = json.loads(result.content)
+        assert body["unloaded"] == []
+        assert body["not_active"] == []
+        assert body["group"] == "nonexistent"
+
+    def test_no_session_returns_error(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
+        result = unload_tool_group(group="crm", tool_catalog=catalog)
+        assert result.error is not None
+
+    def test_no_catalog_returns_error(self) -> None:
+        session = ToolSession()
+        result = unload_tool_group(group="crm", tool_session=session)
+        assert result.error is not None
+
+    def test_active_count_accurate(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        load_tool_group(group="crm.contacts", tool_catalog=catalog, tool_session=session)
+        meta_count = len(session.active_tools)  # 5 meta + 10 crm.contacts
+        assert meta_count == 15
+
+        result = unload_tool_group(
+            group="crm.contacts", tool_catalog=catalog, tool_session=session
+        )
+        body = json.loads(result.content)
+        assert body["active_count"] == 5  # only meta-tools remain
+
+    def test_budget_snapshot_in_response(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
+        session = ToolSession(token_budget=100_000)
+        session.load([
+            "browse_toolkit", "load_tools", "load_tool_group",
+            "unload_tool_group", "unload_tools",
+        ])
+        load_tool_group(group="crm.contacts", tool_catalog=catalog, tool_session=session)
+        result = unload_tool_group(
+            group="crm.contacts", tool_catalog=catalog, tool_session=session
+        )
+        body = json.loads(result.content)
+        assert "budget" in body
+
+    def test_metadata_includes_group(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        result = unload_tool_group(
+            group="sales", tool_catalog=catalog, tool_session=session
+        )
+        assert result.metadata is not None
+        assert result.metadata["group"] == "sales"
+
+    def test_load_then_unload_round_trip(
+        self, catalog: InMemoryToolCatalog, session: ToolSession
+    ) -> None:
+        """Load and unload the same group; session returns to original state."""
+        original = set(session.active_tools)
+        load_tool_group(group="sales", tool_catalog=catalog, tool_session=session)
+        assert len(session.active_tools) > len(original)
+        unload_tool_group(group="sales", tool_catalog=catalog, tool_session=session)
+        assert session.active_tools == original
+
+
+# ------------------------------------------------------------------
+# unload_tool_group registration
+# ------------------------------------------------------------------
+
+
+class TestUnloadToolGroupRegistration:
+    def test_register_meta_tools_includes_unload_tool_group(self) -> None:
+        factory = ToolFactory()
+        factory.register_meta_tools()
+        assert "unload_tool_group" in factory.available_tool_names
+
+    def test_unload_tool_group_has_system_category(self) -> None:
+        factory = ToolFactory()
+        factory.register_meta_tools()
+        reg = factory.registrations["unload_tool_group"]
+        assert reg.category == "system"
+        assert "meta" in reg.tags
+        assert "group" in reg.tags
+
+    def test_unload_tool_group_definition_has_group_param(self) -> None:
+        factory = ToolFactory()
+        factory.register_meta_tools()
+        defn = factory.registrations["unload_tool_group"].definition
+        params = defn["function"]["parameters"]
+        assert "group" in params["properties"]
+        assert "group" in params["required"]
+
+    def test_unload_tool_group_cannot_be_unloaded(self) -> None:
+        """unload_tool_group is a meta-tool and should be protected."""
+        from llm_factory_toolkit.tools.meta_tools import unload_tools
+
+        session = ToolSession()
+        session.load([
+            "browse_toolkit", "load_tools", "load_tool_group",
+            "unload_tool_group", "unload_tools",
+        ])
+        result = unload_tools(
+            tool_names=["unload_tool_group"],
+            tool_session=session,
+        )
+        body = json.loads(result.content)
+        assert "unload_tool_group" in body["refused_protected"]
+        assert session.is_active("unload_tool_group")
+
+
+# ------------------------------------------------------------------
+# factory.list_groups()
+# ------------------------------------------------------------------
+
+
+class TestFactoryListGroups:
+    def test_returns_sorted_unique(self) -> None:
+        factory = _build_grouped_factory(50)
+        groups = factory.list_groups()
+        assert groups == sorted(GROUPS)
+        assert len(groups) == 5
+
+    def test_empty_when_no_groups(self) -> None:
+        factory = ToolFactory()
+        factory.register_tool(function=_noop, name="t", description="d")
+        assert factory.list_groups() == []
+
+    def test_excludes_none(self) -> None:
+        factory = ToolFactory()
+        factory.register_tool(function=_noop, name="t1", description="d", group="a.b")
+        factory.register_tool(function=_noop, name="t2", description="d")
+        assert factory.list_groups() == ["a.b"]
+
+    def test_matches_catalog_list_groups(self) -> None:
+        """Factory and catalog should return the same groups."""
+        factory = _build_grouped_factory(50)
+        catalog = InMemoryToolCatalog(factory)
+        assert factory.list_groups() == catalog.list_groups()
