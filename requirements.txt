@@ -55,7 +55,7 @@ mypy==1.19.1
     # via -r requirements.in
 mypy-extensions==1.1.0
     # via mypy
-openai==2.17.0
+openai==2.21.0
     # via -r requirements.in
 packaging==25.0
     # via pytest
