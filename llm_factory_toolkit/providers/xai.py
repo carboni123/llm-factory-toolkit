@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from ..tools.tool_factory import ToolFactory
 from .openai import OpenAIAdapter
@@ -39,3 +39,32 @@ class XAIAdapter(OpenAIAdapter):
 
     def _supports_reasoning_effort(self, model: str) -> bool:
         return False
+
+    def _build_tool_definitions(
+        self, definitions: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Convert tool definitions to xAI-compatible format.
+
+        xAI does not support OpenAI's ``strict: True`` mode or forced
+        ``additionalProperties: False`` in tool parameter schemas.  Sending
+        these fields causes xAI to silently ignore all tool definitions,
+        making the model respond in plain text instead of calling tools.
+        """
+        tools_list: List[Dict[str, Any]] = []
+
+        for tool in definitions:
+            if tool.get("type") == "function":
+                func = tool.get("function", {})
+                params = func.get("parameters", {}) or {}
+                tools_list.append(
+                    {
+                        "type": "function",
+                        "name": func.get("name"),
+                        "description": func.get("description"),
+                        "parameters": params,
+                    }
+                )
+            else:
+                tools_list.append(tool)
+
+        return tools_list
