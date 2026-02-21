@@ -437,12 +437,17 @@ class BaseProvider(abc.ABC):
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-    ) -> Tuple[List[ToolResultMessage], List[Dict[str, Any]]]:
-        """Dispatch tool calls and return ``(tool_results, payloads)``.
+        max_concurrent_tools: Optional[int] = None,
+        max_tool_output_chars: Optional[int] = None,
+    ) -> Tuple[
+        List[ToolResultMessage], List[Dict[str, Any]], List[Tuple[str, str, bool]]
+    ]:
+        """Dispatch tool calls and return ``(tool_results, payloads, call_info)``.
 
         This is the single, unified dispatch path used by all adapters.
         Returns :class:`ToolResultMessage` objects that each adapter can
-        format into its native message format.
+        format into its native message format, plus per-call error tracking
+        info as ``(tool_name, arguments_json, is_error)`` tuples.
         """
         assert self.tool_factory is not None
         factory = self.tool_factory
@@ -451,17 +456,21 @@ class BaseProvider(abc.ABC):
 
         async def _handle_one(
             tc: ProviderToolCall,
-        ) -> Tuple[ToolResultMessage, Optional[Dict[str, Any]]]:
+        ) -> Tuple[ToolResultMessage, Optional[Dict[str, Any]], bool]:
             if tc.name:
                 factory.increment_tool_usage(tc.name)
 
             if not tc.name or not tc.call_id:
                 logger.error("Malformed tool call: ID=%s, Name=%s", tc.call_id, tc.name)
-                return ToolResultMessage(
-                    call_id=tc.call_id or "unknown",
-                    name=tc.name or "unknown",
-                    content=json.dumps({"error": "Malformed tool call received."}),
-                ), None
+                return (
+                    ToolResultMessage(
+                        call_id=tc.call_id or "unknown",
+                        name=tc.name or "unknown",
+                        content=json.dumps({"error": "Malformed tool call received."}),
+                    ),
+                    None,
+                    True,
+                )
 
             try:
                 result: ToolExecutionResult = await factory.dispatch_tool(
@@ -470,6 +479,7 @@ class BaseProvider(abc.ABC):
                     tool_execution_context=tool_execution_context,
                     use_mock=mock_tools,
                 )
+                is_error = result.error is not None
                 payload: Dict[str, Any] = {
                     "tool_name": tc.name,
                     "metadata": result.metadata or {},
@@ -477,19 +487,27 @@ class BaseProvider(abc.ABC):
                 if result.payload is not None:
                     payload["payload"] = result.payload
 
-                return ToolResultMessage(
-                    call_id=tc.call_id,
-                    name=tc.name,
-                    content=result.content,
-                ), payload
+                return (
+                    ToolResultMessage(
+                        call_id=tc.call_id,
+                        name=tc.name,
+                        content=result.content,
+                    ),
+                    payload,
+                    is_error,
+                )
 
             except ToolError as e:
                 logger.error("Tool error for %s (%s): %s", tc.name, tc.call_id, e)
-                return ToolResultMessage(
-                    call_id=tc.call_id,
-                    name=tc.name,
-                    content=json.dumps({"error": str(e)}),
-                ), None
+                return (
+                    ToolResultMessage(
+                        call_id=tc.call_id,
+                        name=tc.name,
+                        content=json.dumps({"error": str(e)}),
+                    ),
+                    None,
+                    True,
+                )
 
             except Exception as e:
                 logger.error(
@@ -499,23 +517,64 @@ class BaseProvider(abc.ABC):
                     e,
                     exc_info=True,
                 )
-                return ToolResultMessage(
-                    call_id=tc.call_id,
-                    name=tc.name,
-                    content=json.dumps({"error": f"Unexpected error: {e}"}),
-                ), None
+                return (
+                    ToolResultMessage(
+                        call_id=tc.call_id,
+                        name=tc.name,
+                        content=json.dumps({"error": f"Unexpected error: {e}"}),
+                    ),
+                    None,
+                    True,
+                )
 
         if parallel_tools:
-            pairs = await asyncio.gather(*[_handle_one(tc) for tc in tool_calls])
+            if max_concurrent_tools and max_concurrent_tools > 0:
+                semaphore = asyncio.Semaphore(max_concurrent_tools)
+
+                async def _bounded(
+                    tc: ProviderToolCall,
+                ) -> Tuple[ToolResultMessage, Optional[Dict[str, Any]], bool]:
+                    async with semaphore:
+                        return await _handle_one(tc)
+
+                pairs = await asyncio.gather(*[_bounded(tc) for tc in tool_calls])
+            else:
+                pairs = await asyncio.gather(*[_handle_one(tc) for tc in tool_calls])
         else:
             pairs = [await _handle_one(tc) for tc in tool_calls]
 
-        for msg, payload in pairs:
+        call_error_info: List[Tuple[str, str, bool]] = []
+        for (msg, payload, is_error), tc in zip(pairs, tool_calls):
+            # Truncate oversized tool output
+            if (
+                max_tool_output_chars is not None
+                and len(msg.content) > max_tool_output_chars
+            ):
+                original_len = len(msg.content)
+                truncated = msg.content[:max_tool_output_chars]
+                warning = (
+                    f"\n\n[TRUNCATED: Output was {original_len:,} chars, "
+                    f"limit is {max_tool_output_chars:,}. "
+                    "Refine your query for smaller results.]"
+                )
+                msg = ToolResultMessage(
+                    call_id=msg.call_id,
+                    name=msg.name,
+                    content=truncated + warning,
+                )
+                logger.warning(
+                    "Truncated output from tool '%s': %d -> %d chars",
+                    tc.name,
+                    original_len,
+                    max_tool_output_chars,
+                )
+
             results_list.append(msg)
             if payload:
                 collected_payloads.append(payload)
+            call_error_info.append((tc.name, tc.arguments or "{}", is_error))
 
-        return results_list, collected_payloads
+        return results_list, collected_payloads, call_error_info
 
     # ------------------------------------------------------------------
     # Tool definition helpers
@@ -635,6 +694,9 @@ class BaseProvider(abc.ABC):
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         compact_tools: bool = False,
+        repetition_threshold: int = 3,
+        max_tool_output_chars: Optional[int] = None,
+        max_concurrent_tools: Optional[int] = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, executing tool calls iteratively."""
@@ -659,6 +721,7 @@ class BaseProvider(abc.ABC):
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        _failed_call_counts: Dict[Tuple[str, str], int] = {}
 
         while iteration_count < max_tool_iterations:
             effective_tools = self._get_effective_tools(use_tools, tool_session)
@@ -745,11 +808,13 @@ class BaseProvider(abc.ABC):
                     "Received tool calls from LLM but no ToolFactory is configured."
                 )
 
-            results, payloads = await self._dispatch_tool_calls(
+            results, payloads, call_error_info = await self._dispatch_tool_calls(
                 response.tool_calls,
                 tool_execution_context=tool_execution_context,
                 mock_tools=mock_tools,
                 parallel_tools=parallel_tools,
+                max_concurrent_tools=max_concurrent_tools,
+                max_tool_output_chars=max_tool_output_chars,
             )
 
             # Feed tool results back into conversation
@@ -761,6 +826,75 @@ class BaseProvider(abc.ABC):
             tool_result_messages.extend(copy.deepcopy(chat_msgs))
             collected_payloads.extend(payloads)
             iteration_count += 1
+
+            # --- Repetitive loop detection ---
+            _hard_stop = False
+            if repetition_threshold > 0:
+                for tc_name, tc_args, tc_error in call_error_info:
+                    tc_key = (tc_name, tc_args)
+                    if tc_error:
+                        _failed_call_counts[tc_key] = (
+                            _failed_call_counts.get(tc_key, 0) + 1
+                        )
+                        tc_count = _failed_call_counts[tc_key]
+                        hard_limit = repetition_threshold * 2
+
+                        if tc_count >= hard_limit:
+                            logger.warning(
+                                "Repetitive failing tool call (hard stop): "
+                                "'%s' failed %d times with identical args. "
+                                "Breaking loop.",
+                                tc_name,
+                                tc_count,
+                            )
+                            _hard_stop = True
+                            break
+                        elif tc_count == repetition_threshold:
+                            logger.warning(
+                                "Repetitive failing tool call (soft warning): "
+                                "'%s' failed %d times with identical args. "
+                                "Injecting warning.",
+                                tc_name,
+                                tc_count,
+                            )
+                            current_messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        f"SYSTEM: The tool '{tc_name}' has "
+                                        f"failed {tc_count} times with "
+                                        "identical arguments and the same "
+                                        "error. Do NOT retry this exact call. "
+                                        "Try different arguments, a different "
+                                        "tool, or respond to the user without "
+                                        "using tools."
+                                    ),
+                                }
+                            )
+                    else:
+                        # Successful call clears failure counter
+                        _failed_call_counts.pop(tc_key, None)
+
+            if _hard_stop:
+                final_content = self._aggregate_final_content(
+                    current_messages, max_tool_iterations
+                )
+                warning = (
+                    "\n\n[Warning: Loop terminated \u2014 repetitive failing "
+                    f"tool call detected (same call failed "
+                    f"{repetition_threshold * 2} times).]"
+                )
+                if final_content:
+                    final_content += warning
+                else:
+                    final_content = warning.strip()
+                return GenerationResult(
+                    content=final_content,
+                    payloads=list(collected_payloads),
+                    tool_messages=copy.deepcopy(tool_result_messages),
+                    messages=copy.deepcopy(current_messages),
+                    usage=accumulated_usage,
+                )
 
             # Auto-compact on budget pressure
             compact_tools = self._check_and_enable_auto_compact(
@@ -796,6 +930,9 @@ class BaseProvider(abc.ABC):
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         compact_tools: bool = False,
+        repetition_threshold: int = 3,
+        max_tool_output_chars: Optional[int] = None,
+        max_concurrent_tools: Optional[int] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, handling tool calls transparently."""
@@ -811,6 +948,7 @@ class BaseProvider(abc.ABC):
 
         current_messages = copy.deepcopy(input)
         iteration_count = 0
+        _failed_call_counts: Dict[Tuple[str, str], int] = {}
 
         while iteration_count < max_tool_iterations:
             effective_tools = self._get_effective_tools(use_tools, tool_session)
@@ -856,15 +994,73 @@ class BaseProvider(abc.ABC):
                         "Received tool calls but no ToolFactory is configured."
                     )
 
-                results, _ = await self._dispatch_tool_calls(
+                results, _, call_error_info = await self._dispatch_tool_calls(
                     pending_response.tool_calls,
                     tool_execution_context=tool_execution_context,
                     mock_tools=mock_tools,
                     parallel_tools=parallel_tools,
+                    max_concurrent_tools=max_concurrent_tools,
+                    max_tool_output_chars=max_tool_output_chars,
                 )
                 tool_msgs = self._format_tool_results_for_conversation(results)
                 current_messages.extend(tool_msgs)
                 iteration_count += 1
+
+                # --- Repetitive loop detection ---
+                _hard_stop = False
+                if repetition_threshold > 0:
+                    for tc_name, tc_args, tc_error in call_error_info:
+                        tc_key = (tc_name, tc_args)
+                        if tc_error:
+                            _failed_call_counts[tc_key] = (
+                                _failed_call_counts.get(tc_key, 0) + 1
+                            )
+                            tc_count = _failed_call_counts[tc_key]
+                            hard_limit = repetition_threshold * 2
+
+                            if tc_count >= hard_limit:
+                                logger.warning(
+                                    "Repetitive failing tool call (hard stop): "
+                                    "'%s' failed %d times with identical args. "
+                                    "Breaking loop.",
+                                    tc_name,
+                                    tc_count,
+                                )
+                                _hard_stop = True
+                                break
+                            elif tc_count == repetition_threshold:
+                                logger.warning(
+                                    "Repetitive failing tool call "
+                                    "(soft warning): '%s' failed %d times "
+                                    "with identical args. Injecting warning.",
+                                    tc_name,
+                                    tc_count,
+                                )
+                                current_messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            f"SYSTEM: The tool '{tc_name}' has "
+                                            f"failed {tc_count} times with "
+                                            "identical arguments and the same "
+                                            "error. Do NOT retry this exact "
+                                            "call. Try different arguments, a "
+                                            "different tool, or respond to the "
+                                            "user without using tools."
+                                        ),
+                                    }
+                                )
+                        else:
+                            _failed_call_counts.pop(tc_key, None)
+
+                if _hard_stop:
+                    warning = (
+                        "\n\n[Warning: Loop terminated \u2014 repetitive failing "
+                        f"tool call detected (same call failed "
+                        f"{repetition_threshold * 2} times).]"
+                    )
+                    yield StreamChunk(content=warning, done=True)
+                    return
 
                 compact_tools = self._check_and_enable_auto_compact(
                     tool_session, compact_tools

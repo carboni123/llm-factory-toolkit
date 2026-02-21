@@ -37,12 +37,13 @@ sys.path.insert(0, _REPO_ROOT)
 sys.path.insert(0, os.path.join(_REPO_ROOT, "tests"))
 
 from llm_factory_toolkit import LLMClient
+from llm_factory_toolkit.exceptions import ToolError
 from llm_factory_toolkit.tools import (
     InMemoryToolCatalog,
     ToolFactory,
     ToolSession,
 )
-from llm_factory_toolkit.tools.models import GenerationResult
+from llm_factory_toolkit.tools.models import GenerationResult, ToolExecutionResult
 
 # Import the CRM simulation helpers from the test suite.
 from test_simulation_crm import ALL_TOOLS, SYSTEM_PROMPT, _build_simulation  # noqa: E402
@@ -93,11 +94,14 @@ class BenchmarkCase:
     ]  # Substrings in final response (case-insensitive)
     tags: list[str]
     max_tool_iterations: int = 25
+    repetition_threshold: int = 3
     # For multi-turn: messages is a list of message lists.
     multi_turn: bool = False
     # For alternative expectations (OR logic):
     expect_tools_loaded_any: list[str] | None = None  # At least ONE must be loaded
     expect_tools_called_any: list[str] | None = None  # At least ONE must be called
+    # For loop detection: use a custom simulation builder
+    simulation_builder: str | None = None  # "loop_detection" for failing-tool sim
 
 
 @dataclass
@@ -137,6 +141,9 @@ class BenchmarkResult:
     redundant_browses: int = 0
     # Tool call trace
     trace: list[TraceEntry] = field(default_factory=list)
+    # Repetitive loop detection
+    repetition_detected: bool = False
+    soft_warning_injected: bool = False
 
 
 @dataclass
@@ -192,6 +199,69 @@ def _build_persistence_simulation() -> tuple[
         },
         category="data",
         tags=["weather", "temperature"],
+    )
+
+    catalog = InMemoryToolCatalog(factory)
+    factory.set_catalog(catalog)
+    factory.register_meta_tools()
+
+    session = ToolSession()
+    session.load(["browse_toolkit", "load_tools"])
+
+    return factory, catalog, session
+
+
+def _build_loop_detection_simulation() -> tuple[
+    ToolFactory, InMemoryToolCatalog, ToolSession
+]:
+    """Build the standard CRM simulation plus a deliberately failing tool.
+
+    The ``query_crm_analytics`` tool always raises ToolError to trigger
+    repetitive retry loops in less capable models.
+    """
+    factory = ToolFactory()
+
+    for func, name, description, params, category, tags in ALL_TOOLS:
+        factory.register_tool(
+            function=func,
+            name=name,
+            description=description,
+            parameters=params,
+            category=category,
+            tags=tags,
+        )
+
+    # Deliberately failing tool
+    def query_crm_analytics(report_type: str, period: str = "Q1 2026") -> ToolExecutionResult:
+        """Pull CRM analytics reports including revenue, conversion rates, and customer growth."""
+        raise ToolError(
+            "Service unavailable: analytics database is offline for maintenance. "
+            "Try again later or use get_crm_summary for basic metrics."
+        )
+
+    factory.register_tool(
+        function=query_crm_analytics,
+        name="query_crm_analytics",
+        description=(
+            "Pull detailed CRM analytics reports including revenue metrics, "
+            "conversion rates, customer growth, and pipeline health."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "report_type": {
+                    "type": "string",
+                    "description": "Type of report: revenue, conversion, growth, pipeline.",
+                },
+                "period": {
+                    "type": "string",
+                    "description": "Time period for the report (e.g. Q1 2026, 2025-H2).",
+                },
+            },
+            "required": ["report_type"],
+        },
+        category="crm",
+        tags=["analytics", "reports", "revenue", "metrics"],
     )
 
     catalog = InMemoryToolCatalog(factory)
@@ -528,6 +598,79 @@ def build_cases() -> list[BenchmarkCase]:
         )
     )
 
+    # 14. repetition_loop_detection (loop-detection)
+    # The system prompt encourages retries. Smart models may self-correct after
+    # a few failures; less capable ones will hit the soft warning (threshold=3)
+    # and possibly the hard stop (threshold*2=6).  Success = the model eventually
+    # stops retrying, whether via self-correction or loop detection intervention.
+    cases.append(
+        BenchmarkCase(
+            name="repetition_loop_detection",
+            description="Agent calls a failing tool. Loop detection should prevent infinite retries.",
+            system_prompt=(
+                "You are a CRM assistant. You have browse_toolkit and load_tools available.\n\n"
+                "Protocol:\n"
+                "1. browse_toolkit to discover relevant tools\n"
+                "2. load_tools to activate the tools you need\n"
+                "3. Call the loaded tools to complete the task\n\n"
+                "Important: if a tool fails, try calling it again with the same arguments."
+            ),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Pull the CRM analytics report. I need the revenue report for Q1 2026."
+                    ),
+                }
+            ],
+            expect_tools_loaded=["query_crm_analytics"],
+            expect_tools_called=["query_crm_analytics"],
+            expect_meta_calls=["browse_toolkit", "load_tools"],
+            expect_response_contains=["analytics"],
+            max_tool_iterations=15,
+            repetition_threshold=3,
+            simulation_builder="loop_detection",
+            tags=["loop-detection"],
+        )
+    )
+
+    # 15. repetition_recovery (loop-detection)
+    cases.append(
+        BenchmarkCase(
+            name="repetition_recovery",
+            description="Agent hits a failing tool, gets warned, and should recover by using get_crm_summary.",
+            system_prompt=(
+                "You are a CRM assistant. You have browse_toolkit and load_tools available.\n\n"
+                "Protocol:\n"
+                "1. browse_toolkit to discover relevant tools\n"
+                "2. load_tools to activate the tools you need\n"
+                "3. Call the loaded tools to complete the task\n\n"
+                "If a tool fails repeatedly, look for alternative tools that can "
+                "provide similar information. For example, get_crm_summary provides "
+                "basic CRM metrics if the analytics tool is unavailable."
+            ),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "I need CRM analytics — revenue and customer metrics for Q1 2026. "
+                        "If the detailed analytics tool is unavailable, a CRM summary works too."
+                    ),
+                }
+            ],
+            expect_tools_loaded=[],
+            expect_tools_called=[],
+            expect_meta_calls=["browse_toolkit", "load_tools"],
+            expect_response_contains=[],
+            expect_tools_loaded_any=["query_crm_analytics", "get_crm_summary"],
+            expect_tools_called_any=["query_crm_analytics", "get_crm_summary"],
+            max_tool_iterations=15,
+            repetition_threshold=2,
+            simulation_builder="loop_detection",
+            tags=["loop-detection"],
+        )
+    )
+
     return cases
 
 
@@ -843,7 +986,9 @@ async def run_case(
     start = time.time()
     try:
         # Build simulation (fresh per case)
-        if case.name == "session_persistence":
+        if case.simulation_builder == "loop_detection":
+            factory, catalog, session = _build_loop_detection_simulation()
+        elif case.name == "session_persistence":
             factory, catalog, session = _build_persistence_simulation()
         else:
             factory, catalog, session = _build_simulation()
@@ -881,6 +1026,7 @@ async def run_case(
                     tool_session=session,
                     tool_execution_context=tool_execution_context,
                     max_tool_iterations=case.max_tool_iterations,
+                    repetition_threshold=case.repetition_threshold,
                 )
                 all_tool_names_called.extend(extract_tool_names(result.messages or []))
                 all_messages.extend(result.messages or [])
@@ -900,6 +1046,7 @@ async def run_case(
                 tool_session=session,
                 tool_execution_context=tool_execution_context,
                 max_tool_iterations=case.max_tool_iterations,
+                repetition_threshold=case.repetition_threshold,
             )
             all_tool_names_called = extract_tool_names(result.messages or [])
             all_messages = result.messages or []
@@ -912,6 +1059,15 @@ async def run_case(
         # Detect ceiling hit from the warning marker injected by BaseProvider
         hit_ceiling = "[Warning: Max tool iterations" in last_content
 
+        # Detect repetitive loop detection
+        repetition_detected = "[Warning: Loop terminated" in last_content
+        soft_warning_injected = any(
+            msg.get("role") == "user"
+            and isinstance(msg.get("content"), str)
+            and "SYSTEM: The tool" in msg["content"]
+            for msg in all_messages
+        )
+
         # Extract tool call trace
         trace = extract_tool_trace(all_messages)
 
@@ -921,6 +1077,9 @@ async def run_case(
             _safe_print(f"  [verbose] Tools called: {unique_called}")
             _safe_print(f"  [verbose] Total calls: {len(all_tool_names_called)}")
             _safe_print(f"  [verbose] Hit ceiling: {hit_ceiling}")
+            if repetition_detected or soft_warning_injected:
+                _safe_print(f"  [verbose] Repetition detected: {repetition_detected}")
+                _safe_print(f"  [verbose] Soft warning injected: {soft_warning_injected}")
             _safe_print(f"  [verbose] Response: {last_content[:300]}")
 
         bench_result = evaluate_case(
@@ -934,6 +1093,8 @@ async def run_case(
             hit_ceiling,
         )
         bench_result.trace = trace
+        bench_result.repetition_detected = repetition_detected
+        bench_result.soft_warning_injected = soft_warning_injected
         return bench_result
 
     except Exception as e:
@@ -1073,7 +1234,7 @@ def format_summary_table(results: list[BenchmarkResult]) -> str:
     header = (
         f"  {'Status':<8} {'Case':<22} {'Protocol':<10} {'Loading':<10} "
         f"{'Usage':<10} {'Response':<10} {'Overall':<10} {'Calls':>6} {'Meta%':>6} "
-        f"{'Eff%':>6} {'Ceil':>4} {'Time':>8} {'Tokens':>8}"
+        f"{'Eff%':>6} {'Ceil':>4} {'Loop':>4} {'Time':>8} {'Tokens':>8}"
     )
     lines.append(header)
     lines.append("  " + "-" * (len(header) - 2))
@@ -1083,11 +1244,12 @@ def format_summary_table(results: list[BenchmarkResult]) -> str:
         time_str = f"{r.duration_ms}ms"
         tokens_str = str(r.total_tokens) if r.total_tokens else "-"
         ceil_str = "YES" if r.hit_ceiling else "-"
+        loop_str = "STOP" if r.repetition_detected else ("WARN" if r.soft_warning_injected else "-")
         row = (
             f"  {icon:<8} {r.case_name:<22} {r.protocol_score:<10} "
             f"{r.loading_score:<10} {r.usage_score:<10} {r.response_score:<10} {r.overall_score:<10} "
             f"{r.total_tool_calls:>6} {r.meta_overhead_pct:>5.0f}% "
-            f"{r.efficiency_ratio:>5.0f}% {ceil_str:>4} "
+            f"{r.efficiency_ratio:>5.0f}% {ceil_str:>4} {loop_str:>4} "
             f"{time_str:>8} {tokens_str:>8}"
         )
         lines.append(row)

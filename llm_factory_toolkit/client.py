@@ -228,6 +228,7 @@ class LLMClient:
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
+        exclude_params: Optional[List[str]] = None,
     ) -> None:
         """Register a Python function as a tool for the LLM.
 
@@ -236,10 +237,14 @@ class LLMClient:
             name: Tool name.  Defaults to ``function.__name__``.
             description: Tool description.  Defaults to the docstring.
             parameters: JSON Schema for the function's parameters.
+                When ``None``, the schema is auto-generated from the
+                function's type hints.
             category: Category for catalog discovery.
             tags: Tags for catalog search.
             group: Dotted namespace for group-based filtering
                 (e.g. ``"crm.contacts"``).
+            exclude_params: Parameter names to exclude from the
+                auto-generated schema (e.g. context-injected params).
         """
         if name is None:
             name = function.__name__
@@ -260,6 +265,7 @@ class LLMClient:
             category=category,
             tags=tags,
             group=group,
+            exclude_params=exclude_params,
         )
         logger.info("Tool '%s' registered.", name)
 
@@ -285,6 +291,9 @@ class LLMClient:
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         compact_tools: Optional[bool] = None,
+        repetition_threshold: int = 3,
+        max_tool_output_chars: Optional[int] = None,
+        max_concurrent_tools: Optional[int] = None,
         **kwargs: Any,
     ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
         """Generate a response from the configured LLM.
@@ -364,6 +373,21 @@ class LLMClient:
                 for this call.  ``True`` strips nested descriptions and
                 defaults from non-core tool definitions.  ``None`` (default)
                 inherits from the constructor.
+            repetition_threshold: Number of identical-argument failures
+                before intervention.  After this many, a ``SYSTEM:``
+                warning is injected telling the model to stop retrying.
+                At ``2x`` this value, the loop terminates with a warning
+                in the result content.  Set to ``0`` to disable.
+                Default ``3``.
+            max_tool_output_chars: Maximum character length for tool
+                output sent back to the model.  Outputs exceeding this
+                limit are truncated with a ``[TRUNCATED]`` warning.
+                ``None`` (default) means no limit.
+            max_concurrent_tools: Maximum number of tool calls executed
+                concurrently when ``parallel_tools=True``.  Controls an
+                ``asyncio.Semaphore`` to prevent overwhelming external
+                services.  ``None`` (default) means no limit.  Ignored
+                when ``parallel_tools=False``.
             **kwargs: Forwarded to the underlying provider (e.g.
                 ``reasoning_effort``, ``thinking``, ``top_p``).
 
@@ -467,6 +491,9 @@ class LLMClient:
             "web_search": web_search,
             "tool_session": tool_session,
             "compact_tools": effective_compact,
+            "repetition_threshold": repetition_threshold,
+            "max_tool_output_chars": max_tool_output_chars,
+            "max_concurrent_tools": max_concurrent_tools,
             **kwargs,
         }
         # Filter None values but keep meaningful None/empty (use_tools,

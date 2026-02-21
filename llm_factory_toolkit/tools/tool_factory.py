@@ -144,6 +144,7 @@ class ToolFactory:
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
+        exclude_params: Optional[List[str]] = None,
     ) -> None:
         """Register a callable tool the LLM can invoke during generation.
 
@@ -153,6 +154,10 @@ class ToolFactory:
         in the schema but present in the function signature will be filled
         from ``tool_execution_context`` at dispatch time (context injection).
 
+        When ``parameters`` is ``None``, the schema is **auto-generated**
+        from the function's type hints.  Use ``exclude_params`` to omit
+        context-injected parameters from the generated schema.
+
         Args:
             function: The callable to execute.  May be sync or async.
                 Must return a :class:`ToolExecutionResult` (or a plain dict/
@@ -160,7 +165,8 @@ class ToolFactory:
             name: Unique tool name the model uses to invoke it.
             description: Human-readable description shown to the model.
             parameters: JSON Schema for the arguments the **model** provides.
-                Context-injected params must NOT appear here.
+                Context-injected params must NOT appear here.  When ``None``,
+                the schema is auto-generated from type hints.
             mock_function: Optional alternative callable used when
                 ``mock_tools=True``.
             category: Optional category string (e.g. ``"communication"``,
@@ -169,6 +175,10 @@ class ToolFactory:
                 for catalog search.
             group: Optional dotted namespace (e.g. ``"crm.contacts"``,
                 ``"sales.pipeline"``) for group-based filtering.
+            exclude_params: Parameter names to exclude from the
+                auto-generated schema (e.g. context-injected params like
+                ``["user_id", "db"]``).  Ignored when ``parameters`` is
+                provided explicitly.
 
         Example::
 
@@ -192,7 +202,14 @@ class ToolFactory:
         if name in self._registry:
             module_logger.warning("Tool '%s' is already registered. Overwriting.", name)
 
-        definition = self._build_definition(name, description, parameters)
+        # Auto-generate schema when parameters is not provided
+        effective_parameters = parameters
+        if effective_parameters is None:
+            effective_parameters = self._auto_generate_schema(
+                function, name, exclude_params
+            )
+
+        definition = self._build_definition(name, description, effective_parameters)
         mock_executor = self._select_mock_executor(name, function, mock_function)
 
         self._registry[name] = ToolRegistration(
@@ -217,6 +234,7 @@ class ToolFactory:
         category_override: Optional[str] = None,
         tags_override: Optional[List[str]] = None,
         group_override: Optional[str] = None,
+        exclude_params: Optional[List[str]] = None,
     ) -> None:
         """Register a :class:`BaseTool` subclass by wiring wrappers for execution."""
 
@@ -259,6 +277,7 @@ class ToolFactory:
             category=category,
             tags=tags,
             group=group,
+            exclude_params=exclude_params,
         )
         module_logger.info(
             "Registered tool class: %s as '%s'", tool_class.__name__, name
@@ -628,6 +647,40 @@ class ToolFactory:
             definition["function"]["parameters"] = parameters
 
         return definition
+
+    def _auto_generate_schema(
+        self,
+        function: ToolHandler,
+        name: str,
+        exclude_params: Optional[List[str]],
+    ) -> Optional[Dict[str, Any]]:
+        """Auto-generate JSON Schema from function type hints.
+
+        Returns ``None`` when the function has no LLM-visible parameters.
+        """
+        try:
+            from ._schema_gen import generate_schema_from_function
+
+            schema = generate_schema_from_function(
+                function,
+                exclude_params=set(exclude_params or []),
+            )
+            if not schema.get("properties"):
+                return None
+            module_logger.info(
+                "Auto-generated schema for tool '%s': %d properties",
+                name,
+                len(schema["properties"]),
+            )
+            return schema
+        except Exception as exc:
+            module_logger.warning(
+                "Failed to auto-generate schema for tool '%s': %s. "
+                "Tool will be registered without parameters.",
+                name,
+                exc,
+            )
+            return None
 
     def _select_mock_executor(
         self,
