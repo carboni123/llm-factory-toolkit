@@ -48,9 +48,9 @@ This library uses **native provider adapters** with a shared agentic loop:
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading` (`bool` or model string), history merging | ~750 |
+| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading` (`bool` or model string), history merging | ~760 |
 | `providers/__init__.py` | Package exports: `ProviderRouter`, `BaseProvider`, normalised types | ~10 |
-| `providers/_base.py` | `BaseProvider` ABC -- shared agentic loop, tool dispatch, compact mode, auto-compact, repetitive loop detection, tool output truncation, bounded concurrency | ~1130 |
+| `providers/_base.py` | `BaseProvider` ABC -- shared agentic loop, tool dispatch, compact mode, auto-compact, repetitive loop detection, tool output truncation, bounded concurrency, tool timeout | ~1140 |
 | `providers/_registry.py` | `ProviderRouter` -- model prefix routing, lazy adapter caching | ~150 |
 | `providers/_util.py` | `bare_model_name()`, `strip_urls()` | ~25 |
 | `providers/openai.py` | `OpenAIAdapter` -- OpenAI Responses API, strict mode, file/web search | ~430 |
@@ -59,11 +59,11 @@ This library uses **native provider adapters** with a shared agentic loop:
 | `providers/xai.py` | `XAIAdapter` -- thin OpenAI subclass with custom base_url | ~50 |
 | `exceptions.py` | Exception hierarchy: `LLMToolkitError` > `ConfigurationError`, `ProviderError`, `ToolError`, `UnsupportedFeatureError`, `RetryExhaustedError` | ~40 |
 | `models.py` | `ModelInfo`, `MODEL_CATALOG`, `list_models()`, `get_model_info()` -- model metadata registry | ~290 |
-| `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`), dispatch, context injection, mock mode, usage tracking, meta-tools, `register_find_tools`, `list_groups()`, auto-schema | ~900 |
+| `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`/`blocking`), dispatch, context injection, mock mode, usage tracking, meta-tools, `register_find_tools`, `list_groups()`, auto-schema, blocking handler offload, tool timeout | ~930 |
 | `tools/_schema_gen.py` | `generate_schema_from_function()` -- auto-generates JSON Schema from function type hints for `register_tool(parameters=None)` | ~190 |
-| `tools/base_tool.py` | `BaseTool` ABC for class-based tools (includes `CATEGORY`, `TAGS` class attrs) | ~45 |
+| `tools/base_tool.py` | `BaseTool` ABC for class-based tools (includes `CATEGORY`, `TAGS`, `BLOCKING` class attrs) | ~46 |
 | `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
-| `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking | ~190 |
+| `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking, bounded concurrency, tool timeout | ~215 |
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` (category `"utility"`) | ~60 |
 | `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, majority-match search, group-to-category fallback, offset/pagination, `get_tools_in_group()` | ~550 |
 | `tools/session.py` | `ToolSession` -- mutable active-tool set with serialisation, analytics tracking | ~250 |
@@ -151,24 +151,26 @@ When a `tool_session` is active, the agentic loop recomputes visible tools each 
 Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Context injection passes `tool_session`, `tool_catalog`, and `_search_agent` to meta-tools without LLM visibility.
 
 ### Tool Registration Pipeline
-`register_tool()` accepts `category`, `tags`, `group`, and `exclude_params` which are stored in the `ToolRegistration` dataclass. When `parameters=None`, the schema is auto-generated from function type hints (see Auto-Schema Generation below). `register_tool_class()` reads `CATEGORY`/`TAGS`/`GROUP` from `BaseTool` subclasses via `getattr()` and also accepts `exclude_params`. `InMemoryToolCatalog._build_from_factory()` reads category/tags/group from `factory.registrations` property, so catalogs auto-populate without needing `add_metadata()` calls. Before catalog construction, `factory.list_groups()` returns all unique groups from registered tools.
+`register_tool()` accepts `category`, `tags`, `group`, `exclude_params`, and `blocking` which are stored in the `ToolRegistration` dataclass. When `parameters=None`, the schema is auto-generated from function type hints (see Auto-Schema Generation below). `register_tool_class()` reads `CATEGORY`/`TAGS`/`GROUP`/`BLOCKING` from `BaseTool` subclasses via `getattr()` and also accepts `exclude_params`. `InMemoryToolCatalog._build_from_factory()` reads category/tags/group from `factory.registrations` property, so catalogs auto-populate without needing `add_metadata()` calls. Before catalog construction, `factory.list_groups()` returns all unique groups from registered tools.
 
 ### Auto-Schema Generation
 When `register_tool(parameters=None)`, `ToolFactory._auto_generate_schema()` inspects the function's type hints via `tools/_schema_gen.py`. Supported types: `str`, `int`, `float`, `bool`, `Optional[X]`, `List[X]`, `Dict`, `Literal`, `Enum`, Pydantic `BaseModel`. Parameters with defaults become optional; those without become required. Use `exclude_params=["user_id", "db"]` to omit context-injected parameters from the generated schema. Falls back gracefully (registers tool without parameters) if schema generation fails.
 
 ### Agentic Loop Safety
-`BaseProvider.generate()` and `generate_stream()` include three safety mechanisms:
+`BaseProvider.generate()` and `generate_stream()` include five safety mechanisms:
 
 1. **Repetitive loop detection** (`repetition_threshold`): Tracks `(tool_name, arguments_json)` pairs that return errors. At threshold (default 3), injects a `SYSTEM:` warning message. At 2x threshold, terminates the loop with a warning in the result. Successful calls clear the counter.
 2. **Tool output truncation** (`max_tool_output_chars`): Truncates oversized tool output before feeding back to the LLM. Appends a `[TRUNCATED]` warning with original/limit sizes. Payloads are NOT truncated.
 3. **Bounded concurrency** (`max_concurrent_tools`): When `parallel_tools=True`, limits concurrent tool execution via `asyncio.Semaphore`. `None` means no limit.
+4. **Blocking handler offload** (`blocking=True`): Sync tool handlers marked `blocking=True` are dispatched via `asyncio.to_thread()` so they do not block the event loop. Async handlers ignore this flag. Set via `register_tool(blocking=True)` or `BaseTool.BLOCKING = True`.
+5. **Tool timeout** (`tool_timeout`): Per-tool execution time limit in seconds. Uses `asyncio.wait_for()` around the handler coroutine. On timeout, returns a `ToolExecutionResult` with error status `"timeout"`. Flows from `LLMClient.generate()` through `BaseProvider._dispatch_tool_calls()` to `ToolFactory.dispatch_tool()`. Also supported in `ToolRuntime.call_tool()` and `ToolRuntime.call_tools()`. **Note**: `asyncio.wait_for` cancels the awaitable on timeout, but for `blocking=True` handlers running in a thread via `asyncio.to_thread()`, the underlying thread is not interrupted (Python limitation).
 
 ### Strict Mode (OpenAI)
 `OpenAIAdapter._build_tool_definitions()` sets `strict: True` on function tools. This requires ALL properties listed in the `required` array -- not just the ones you want to be required. This is an OpenAI Responses API constraint.
 
 ## Testing
 
-### Unit Tests (no API keys, 697 tests)
+### Unit Tests (no API keys, 708 tests)
 - `test_builtin_tools.py` -- built-in tool functions + category metadata
 - `test_client_unit.py` -- LLMClient generate/intent/error wrapping
 - `test_dynamic_loading_unit.py` -- `core_tools`/`dynamic_tool_loading` constructor feature
@@ -202,6 +204,7 @@ When `register_tool(parameters=None)`, `ToolFactory._auto_generate_schema()` ins
 - `test_tool_output_truncation.py` -- oversized output truncation, payload preservation, per-call limits (6 tests)
 - `test_bounded_concurrency.py` -- semaphore limits, no-limit mode, sequential fallback (5 tests)
 - `test_auto_schema.py` -- type-to-schema mapping, exclude_params, registration integration, dispatch round-trip (27 tests)
+- `test_async_safety.py` -- blocking handler offload, tool timeout, ToolRuntime bounded concurrency (11 tests)
 
 ### Integration Tests (require API keys, 54 tests)
 - `test_llmcall.py` -- basic generation (OpenAI)

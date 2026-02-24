@@ -15,6 +15,7 @@ class BaseTool(ABC):
     CATEGORY: Optional[str] = None  # Category for catalog discovery
     TAGS: Optional[List[str]] = None  # Tags for catalog search
     GROUP: Optional[str] = None  # Dotted namespace for group filtering
+    BLOCKING: bool = False  # Offload sync execute() to a thread
 
     @abstractmethod
     def execute(self, **kwargs: Any) -> ToolExecutionResult:

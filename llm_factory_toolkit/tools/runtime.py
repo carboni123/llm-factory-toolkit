@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Sequence
 
 from ..exceptions import ToolError
 from .models import ToolExecutionResult
@@ -93,6 +93,7 @@ class ToolRuntime:
         json_arguments: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         use_mock: Optional[bool] = None,
+        tool_timeout: Optional[float] = None,
     ) -> ToolExecutionResult:
         """Invoke another registered tool and return its execution result.
 
@@ -103,6 +104,8 @@ class ToolRuntime:
                 ``arguments``.
             context: Additional context entries injected only for this call.
             use_mock: Override the default mock behaviour for this invocation.
+            tool_timeout: Maximum seconds the tool may run before being
+                cancelled with a timeout error.  ``None`` means no limit.
 
         Returns:
             ToolExecutionResult: The outcome of the nested tool execution.
@@ -137,6 +140,7 @@ class ToolRuntime:
             tool_execution_context=combined_context,
             use_mock=child_runtime._use_mock,
             runtime=child_runtime,
+            tool_timeout=tool_timeout,
         )
 
     async def call_tools(
@@ -144,16 +148,23 @@ class ToolRuntime:
         calls: Sequence[Dict[str, Any]],
         *,
         parallel: bool = False,
+        max_concurrent: Optional[int] = None,
         shared_context: Optional[Dict[str, Any]] = None,
         use_mock: Optional[bool] = None,
+        tool_timeout: Optional[float] = None,
     ) -> List[ToolExecutionResult]:
         """Invoke multiple tools, optionally executing them concurrently.
 
         Args:
             calls: Iterable of mappings with ``name`` and ``arguments`` keys.
             parallel: Whether the calls should be awaited concurrently.
+            max_concurrent: Maximum concurrent tool executions when
+                ``parallel=True``.  Uses ``asyncio.Semaphore``.  ``None``
+                means no limit.  Ignored when ``parallel=False``.
             shared_context: Context merged into every invocation in ``calls``.
             use_mock: Override default mock behaviour for all invocations.
+            tool_timeout: Maximum seconds each tool may run before being
+                cancelled with a timeout error.  ``None`` means no limit.
 
         Returns:
             list[ToolExecutionResult]: Results in the order provided.
@@ -177,6 +188,7 @@ class ToolRuntime:
                     json_arguments=json_arguments,
                     context=individual_context or None,
                     use_mock=use_mock,
+                    tool_timeout=tool_timeout,
                 )
             )
 
@@ -186,5 +198,16 @@ class ToolRuntime:
                 results.append(await task)
             return results
 
-        gathered = await asyncio.gather(*tasks)
+        if max_concurrent and max_concurrent > 0:
+            semaphore = asyncio.Semaphore(max_concurrent)
+
+            async def _bounded(
+                coro: Awaitable[ToolExecutionResult],
+            ) -> ToolExecutionResult:
+                async with semaphore:
+                    return await coro
+
+            gathered = await asyncio.gather(*[_bounded(t) for t in tasks])
+        else:
+            gathered = await asyncio.gather(*tasks)
         return list(gathered)

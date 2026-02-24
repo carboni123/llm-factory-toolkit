@@ -229,6 +229,7 @@ class LLMClient:
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
         exclude_params: Optional[List[str]] = None,
+        blocking: bool = False,
     ) -> None:
         """Register a Python function as a tool for the LLM.
 
@@ -245,6 +246,9 @@ class LLMClient:
                 (e.g. ``"crm.contacts"``).
             exclude_params: Parameter names to exclude from the
                 auto-generated schema (e.g. context-injected params).
+            blocking: When ``True`` and the handler is synchronous,
+                dispatch runs it via ``asyncio.to_thread()`` to avoid
+                blocking the event loop.
         """
         if name is None:
             name = function.__name__
@@ -266,6 +270,7 @@ class LLMClient:
             tags=tags,
             group=group,
             exclude_params=exclude_params,
+            blocking=blocking,
         )
         logger.info("Tool '%s' registered.", name)
 
@@ -294,6 +299,7 @@ class LLMClient:
         repetition_threshold: int = 3,
         max_tool_output_chars: Optional[int] = None,
         max_concurrent_tools: Optional[int] = None,
+        tool_timeout: Optional[float] = None,
         **kwargs: Any,
     ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
         """Generate a response from the configured LLM.
@@ -388,6 +394,9 @@ class LLMClient:
                 ``asyncio.Semaphore`` to prevent overwhelming external
                 services.  ``None`` (default) means no limit.  Ignored
                 when ``parallel_tools=False``.
+            tool_timeout: Maximum seconds a single tool execution may
+                take before being cancelled with a timeout error.
+                ``None`` (default) means no limit.
             **kwargs: Forwarded to the underlying provider (e.g.
                 ``reasoning_effort``, ``thinking``, ``top_p``).
 
@@ -494,6 +503,7 @@ class LLMClient:
             "repetition_threshold": repetition_threshold,
             "max_tool_output_chars": max_tool_output_chars,
             "max_concurrent_tools": max_concurrent_tools,
+            "tool_timeout": tool_timeout,
             **kwargs,
         }
         # Filter None values but keep meaningful None/empty (use_tools,

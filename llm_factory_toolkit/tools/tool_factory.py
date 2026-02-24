@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib
 import inspect
 import json
@@ -31,6 +32,7 @@ class ToolRegistration:
     category: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     group: Optional[str] = None
+    blocking: bool = False
 
 
 BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
@@ -145,6 +147,7 @@ class ToolFactory:
         tags: Optional[List[str]] = None,
         group: Optional[str] = None,
         exclude_params: Optional[List[str]] = None,
+        blocking: bool = False,
     ) -> None:
         """Register a callable tool the LLM can invoke during generation.
 
@@ -179,6 +182,9 @@ class ToolFactory:
                 auto-generated schema (e.g. context-injected params like
                 ``["user_id", "db"]``).  Ignored when ``parameters`` is
                 provided explicitly.
+            blocking: When ``True`` and the handler is synchronous,
+                dispatch runs it via ``asyncio.to_thread()`` to avoid
+                blocking the event loop.  Async handlers ignore this flag.
 
         Example::
 
@@ -220,6 +226,7 @@ class ToolFactory:
             category=category,
             tags=tags if tags is not None else [],
             group=group,
+            blocking=blocking,
         )
         self.tool_usage_counts[name] = 0
         module_logger.info("Registered tool: %s", name)
@@ -249,6 +256,7 @@ class ToolFactory:
         category = category_override or getattr(tool_class, "CATEGORY", None)
         tags = tags_override or getattr(tool_class, "TAGS", None)
         group = group_override or getattr(tool_class, "GROUP", None)
+        blocking = getattr(tool_class, "BLOCKING", False)
 
         if not name or not description:
             raise ToolError(
@@ -278,6 +286,7 @@ class ToolFactory:
             tags=tags,
             group=group,
             exclude_params=exclude_params,
+            blocking=blocking,
         )
         module_logger.info(
             "Registered tool class: %s as '%s'", tool_class.__name__, name
@@ -505,6 +514,7 @@ class ToolFactory:
         tool_execution_context: Optional[Dict[str, Any]] = None,
         use_mock: bool = False,
         runtime: Optional[ToolRuntime] = None,
+        tool_timeout: Optional[float] = None,
     ) -> ToolExecutionResult:
         """Execute a registered tool and return its :class:`ToolExecutionResult`."""
 
@@ -547,7 +557,17 @@ class ToolFactory:
                 final_arguments,
                 use_mock,
             )
-            raw_result = await self._call_handler(handler, final_arguments)
+            coro = self._call_handler(
+                handler, final_arguments, blocking=registration.blocking
+            )
+            if tool_timeout is not None:
+                raw_result = await asyncio.wait_for(coro, timeout=tool_timeout)
+            else:
+                raw_result = await coro
+        except asyncio.TimeoutError:
+            error_msg = f"Tool '{function_name}' timed out after {tool_timeout}s."
+            module_logger.error(error_msg)
+            return self._build_error_result(error_msg, "timeout")
         except Exception as exc:  # noqa: BLE001 - propagate sanitized error result
             error_msg = (
                 f"Execution failed unexpectedly within tool '{function_name}': {exc}"
@@ -800,10 +820,17 @@ class ToolFactory:
         return parsed
 
     async def _call_handler(
-        self, handler: ToolHandler, arguments: Dict[str, Any]
+        self,
+        handler: ToolHandler,
+        arguments: Dict[str, Any],
+        *,
+        blocking: bool = False,
     ) -> Any:
         if asyncio.iscoroutinefunction(handler):
             return await handler(**arguments)
+
+        if blocking:
+            return await asyncio.to_thread(functools.partial(handler, **arguments))
 
         result = handler(**arguments)
         if asyncio.iscoroutine(result):

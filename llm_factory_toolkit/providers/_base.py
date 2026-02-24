@@ -439,6 +439,7 @@ class BaseProvider(abc.ABC):
         parallel_tools: bool = False,
         max_concurrent_tools: Optional[int] = None,
         max_tool_output_chars: Optional[int] = None,
+        tool_timeout: Optional[float] = None,
     ) -> Tuple[
         List[ToolResultMessage], List[Dict[str, Any]], List[Tuple[str, str, bool]]
     ]:
@@ -478,6 +479,7 @@ class BaseProvider(abc.ABC):
                     tc.arguments or "{}",
                     tool_execution_context=tool_execution_context,
                     use_mock=mock_tools,
+                    tool_timeout=tool_timeout,
                 )
                 is_error = result.error is not None
                 payload: Dict[str, Any] = {
@@ -697,6 +699,7 @@ class BaseProvider(abc.ABC):
         repetition_threshold: int = 3,
         max_tool_output_chars: Optional[int] = None,
         max_concurrent_tools: Optional[int] = None,
+        tool_timeout: Optional[float] = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, executing tool calls iteratively."""
@@ -815,6 +818,7 @@ class BaseProvider(abc.ABC):
                 parallel_tools=parallel_tools,
                 max_concurrent_tools=max_concurrent_tools,
                 max_tool_output_chars=max_tool_output_chars,
+                tool_timeout=tool_timeout,
             )
 
             # Feed tool results back into conversation
@@ -933,6 +937,7 @@ class BaseProvider(abc.ABC):
         repetition_threshold: int = 3,
         max_tool_output_chars: Optional[int] = None,
         max_concurrent_tools: Optional[int] = None,
+        tool_timeout: Optional[float] = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, handling tool calls transparently."""
@@ -1001,6 +1006,7 @@ class BaseProvider(abc.ABC):
                     parallel_tools=parallel_tools,
                     max_concurrent_tools=max_concurrent_tools,
                     max_tool_output_chars=max_tool_output_chars,
+                    tool_timeout=tool_timeout,
                 )
                 tool_msgs = self._format_tool_results_for_conversation(results)
                 current_messages.extend(tool_msgs)
