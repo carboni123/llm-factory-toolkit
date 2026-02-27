@@ -481,6 +481,15 @@ class OpenAIAdapter(BaseProvider):
         assistant_text = getattr(completion, "output_text", "") or ""
         output_items = getattr(completion, "output", [])
 
+        # Extract already-parsed structured output when using text_format
+        parsed_content: Optional[BaseModel] = None
+        if (
+            response_format is not None
+            and isinstance(response_format, type)
+            and issubclass(response_format, BaseModel)
+        ):
+            parsed_content = getattr(completion, "output_parsed", None)
+
         tool_calls: List[ProviderToolCall] = []
         for item in output_items:
             item_type = getattr(item, "type", None)
@@ -504,6 +513,13 @@ class OpenAIAdapter(BaseProvider):
             dump = item.model_dump()
             dump.pop("parsed_arguments", None)
             dump.pop("status", None)
+            # Strip SDK-internal 'parsed' fields from ParsedResponseOutputText
+            # to avoid Pydantic serialization warnings when text_format is used
+            content_list = dump.get("content")
+            if isinstance(content_list, list):
+                for entry in content_list:
+                    if isinstance(entry, dict):
+                        entry.pop("parsed", None)
             raw_items.append(dump)
         chat_messages = self._responses_to_chat_messages(raw_items)
 
@@ -512,6 +528,7 @@ class OpenAIAdapter(BaseProvider):
             tool_calls=tool_calls,
             raw_messages=chat_messages,
             usage=usage,
+            parsed_content=parsed_content,
         )
 
     # ------------------------------------------------------------------
