@@ -407,27 +407,42 @@ class BaseProvider(abc.ABC):
         return content
 
     @staticmethod
-    @staticmethod
     def _check_repetitive_calls(
         call_error_info: List[Tuple[str, str, bool]],
         failed_call_counts: Dict[Tuple[str, str], int],
         repetition_threshold: int,
         current_messages: List[Dict[str, Any]],
+        *,
+        all_call_counts: Optional[Dict[Tuple[str, str], int]] = None,
     ) -> bool:
-        """Process tool call results for repetitive failure detection.
+        """Process tool call results for repetitive call detection.
 
-        Updates *failed_call_counts* in place and may append a soft-warning
-        message to *current_messages*.
+        Tracks both failed and successful identical calls:
+        - **Failed calls**: soft-warn at *repetition_threshold*, hard-stop
+          at *2 × threshold*.
+        - **All calls** (regardless of success): soft-warn at
+          *2 × threshold*, hard-stop at *3 × threshold*.  This catches
+          infinite loops where mock/stub tools always return ``error=None``
+          but the LLM keeps retrying the same call.
+
+        Updates *failed_call_counts* and *all_call_counts* in place and may
+        append soft-warning messages to *current_messages*.
 
         Returns:
-            ``True`` if the hard-stop limit was reached (caller should
+            ``True`` if any hard-stop limit was reached (caller should
             terminate the loop), ``False`` otherwise.
         """
         if repetition_threshold <= 0:
             return False
 
+        # De-duplicate within one iteration so parallel calls to the same
+        # tool+args in a single LLM response count as one occurrence.
+        _seen_this_iteration: set[Tuple[str, str]] = set()
+
         for tc_name, tc_args, tc_error in call_error_info:
             tc_key = (tc_name, tc_args)
+
+            # --- Failed-call tracking (original behaviour) ---
             if tc_error:
                 failed_call_counts[tc_key] = failed_call_counts.get(tc_key, 0) + 1
                 tc_count = failed_call_counts[tc_key]
@@ -467,6 +482,49 @@ class BaseProvider(abc.ABC):
             else:
                 # Successful call clears failure counter
                 failed_call_counts.pop(tc_key, None)
+
+            # --- All-call tracking (catches loops with successful mocks) ---
+            # Only count each unique (name, args) pair once per iteration
+            # (a single LLM response may legitimately call the same tool
+            # multiple times in parallel, e.g. bounded concurrency tests).
+            if all_call_counts is not None and tc_key not in _seen_this_iteration:
+                _seen_this_iteration.add(tc_key)
+                all_call_counts[tc_key] = all_call_counts.get(tc_key, 0) + 1
+                all_count = all_call_counts[tc_key]
+                all_hard = repetition_threshold * 3
+                all_soft = repetition_threshold * 2
+
+                if all_count >= all_hard:
+                    logger.warning(
+                        "Repetitive tool call (hard stop): "
+                        "'%s' called %d times with identical args. "
+                        "Breaking loop.",
+                        tc_name,
+                        all_count,
+                    )
+                    return True
+                elif all_count == all_soft:
+                    logger.warning(
+                        "Repetitive tool call (soft warning): "
+                        "'%s' called %d times with identical args. "
+                        "Injecting warning.",
+                        tc_name,
+                        all_count,
+                    )
+                    current_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"SYSTEM: The tool '{tc_name}' has been "
+                                f"called {all_count} times with identical "
+                                "arguments. The tool is returning the "
+                                "same result each time. Stop retrying "
+                                "this call. Either try a completely "
+                                "different approach or respond to the "
+                                "user explaining what you found."
+                            ),
+                        }
+                    )
 
         return False
 
@@ -792,6 +850,7 @@ class BaseProvider(abc.ABC):
             "total_tokens": 0,
         }
         _failed_call_counts: Dict[Tuple[str, str], int] = {}
+        _all_call_counts: Dict[Tuple[str, str], int] = {}
 
         while iteration_count < max_tool_iterations:
             effective_tools = self._get_effective_tools(use_tools, tool_session)
@@ -904,6 +963,7 @@ class BaseProvider(abc.ABC):
                 _failed_call_counts,
                 repetition_threshold,
                 current_messages,
+                all_call_counts=_all_call_counts,
             )
 
             if _hard_stop:
@@ -912,8 +972,7 @@ class BaseProvider(abc.ABC):
                 )
                 warning = (
                     "\n\n[Warning: Loop terminated \u2014 repetitive failing "
-                    f"tool call detected (same call failed "
-                    f"{repetition_threshold * 2} times).]"
+                    "tool call detected.]"
                 )
                 if final_content:
                     final_content += warning
@@ -981,6 +1040,7 @@ class BaseProvider(abc.ABC):
         current_messages = copy.deepcopy(input)
         iteration_count = 0
         _failed_call_counts: Dict[Tuple[str, str], int] = {}
+        _all_call_counts: Dict[Tuple[str, str], int] = {}
 
         while iteration_count < max_tool_iterations:
             effective_tools = self._get_effective_tools(use_tools, tool_session)
@@ -1045,13 +1105,13 @@ class BaseProvider(abc.ABC):
                     _failed_call_counts,
                     repetition_threshold,
                     current_messages,
+                    all_call_counts=_all_call_counts,
                 )
 
                 if _hard_stop:
                     warning = (
                         "\n\n[Warning: Loop terminated \u2014 repetitive failing "
-                        f"tool call detected (same call failed "
-                        f"{repetition_threshold * 2} times).]"
+                        "tool call detected.]"
                     )
                     yield StreamChunk(content=warning, done=True)
                     return

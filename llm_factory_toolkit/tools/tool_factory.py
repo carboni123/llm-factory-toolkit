@@ -344,6 +344,10 @@ class ToolFactory:
             unload_tools,
         )
 
+        # Meta-tools operate on catalog/session metadata with no external
+        # side effects, so they should always run the real implementation
+        # even in mock mode (mock_function=function).  This lets the LLM
+        # discover and load tools correctly in sandbox/testing contexts.
         self.register_tool(
             function=browse_toolkit,
             name="browse_toolkit",
@@ -354,6 +358,7 @@ class ToolFactory:
                 "Do not re-browse for tools you have already seen or loaded."
             ),
             parameters=BROWSE_TOOLKIT_PARAMETERS,
+            mock_function=browse_toolkit,
             category="system",
             tags=["meta", "discovery"],
         )
@@ -367,6 +372,7 @@ class ToolFactory:
                 "Loaded tools stay active — do not re-browse or re-load."
             ),
             parameters=LOAD_TOOLS_PARAMETERS,
+            mock_function=load_tools,
             category="system",
             tags=["meta", "loading"],
         )
@@ -379,6 +385,7 @@ class ToolFactory:
                 "Respects token budget and max_tools limits."
             ),
             parameters=LOAD_TOOL_GROUP_PARAMETERS,
+            mock_function=load_tool_group,
             category="system",
             tags=["meta", "loading", "group"],
         )
@@ -391,6 +398,7 @@ class ToolFactory:
                 "Core tools and meta-tools are protected and cannot be unloaded."
             ),
             parameters=UNLOAD_TOOL_GROUP_PARAMETERS,
+            mock_function=unload_tool_group,
             category="system",
             tags=["meta", "unloading", "group"],
         )
@@ -402,6 +410,7 @@ class ToolFactory:
                 "Core tools and meta-tools cannot be unloaded."
             ),
             parameters=UNLOAD_TOOLS_PARAMETERS,
+            mock_function=unload_tools,
             category="system",
             tags=["meta", "unloading"],
         )
@@ -431,6 +440,7 @@ class ToolFactory:
                 "via browse_toolkit returns no results."
             ),
             parameters=FIND_TOOLS_PARAMETERS,
+            mock_function=find_tools,
             category="system",
             tags=["meta", "discovery", "semantic"],
         )
