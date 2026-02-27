@@ -210,7 +210,13 @@ class LLMClient:
             discovery = "find_tools"
         else:
             discovery = "browse_toolkit"
-        meta = [discovery, "load_tools", "unload_tools"]
+        meta = [
+            discovery,
+            "load_tools",
+            "load_tool_group",
+            "unload_tool_group",
+            "unload_tools",
+        ]
         initial = list(dict.fromkeys(self.core_tools + meta))
         session.load(initial)
         return session
