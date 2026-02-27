@@ -320,6 +320,19 @@ def load_tool_group(
     )
 
 
+#: Tool names that cannot be unloaded (meta-tools themselves).
+_META_TOOL_NAMES = frozenset(
+    {
+        "browse_toolkit",
+        "load_tools",
+        "load_tool_group",
+        "unload_tool_group",
+        "unload_tools",
+        "find_tools",
+    }
+)
+
+
 # ------------------------------------------------------------------
 # unload_tool_group
 # ------------------------------------------------------------------
@@ -402,18 +415,6 @@ def unload_tool_group(
 # ------------------------------------------------------------------
 # unload_tools
 # ------------------------------------------------------------------
-
-#: Tool names that cannot be unloaded (meta-tools themselves).
-_META_TOOL_NAMES = frozenset(
-    {
-        "browse_toolkit",
-        "load_tools",
-        "load_tool_group",
-        "unload_tool_group",
-        "unload_tools",
-        "find_tools",
-    }
-)
 
 
 def unload_tools(
