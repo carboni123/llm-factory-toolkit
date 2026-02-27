@@ -9,11 +9,24 @@ import inspect
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    cast,
+)
 
 from ..exceptions import ToolError
 from .models import ToolExecutionResult
 from .runtime import ToolRuntime
+
+if TYPE_CHECKING:
+    from .catalog import ToolCatalog
 
 module_logger = logging.getLogger(__name__)
 
@@ -102,14 +115,14 @@ class ToolFactory:
     def __init__(self) -> None:
         self._registry: Dict[str, ToolRegistration] = {}
         self.tool_usage_counts: Dict[str, int] = {}
-        self._catalog: Optional[Any] = None
+        self._catalog: Optional[ToolCatalog] = None
         module_logger.info("ToolFactory initialized.")
 
-    def set_catalog(self, catalog: Any) -> None:
+    def set_catalog(self, catalog: ToolCatalog) -> None:
         """Attach a :class:`ToolCatalog` for dynamic tool loading."""
         self._catalog = catalog
 
-    def get_catalog(self) -> Optional[Any]:
+    def get_catalog(self) -> Optional[ToolCatalog]:
         """Return the attached catalog, if any."""
         return self._catalog
 
