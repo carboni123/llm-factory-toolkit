@@ -52,6 +52,6 @@ def read_local_file(file_path: str, format: str = "text") -> ToolExecutionResult
             parsed = json.loads(content)
             return ToolExecutionResult(content=json.dumps(parsed), payload=parsed)
         return ToolExecutionResult(content=content, payload=content)
-    except Exception as e:  # pylint: disable=broad-except
+    except Exception as e:
         error_msg = f"File read error: {e}"
         return ToolExecutionResult(content=error_msg, error=error_msg)
