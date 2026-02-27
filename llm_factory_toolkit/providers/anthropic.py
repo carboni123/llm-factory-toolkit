@@ -393,9 +393,10 @@ class AnthropicAdapter(BaseProvider):
                         ]
                         content_text = tc.arguments
                         break
-                    except Exception:
+                    except (json.JSONDecodeError, ValueError, TypeError):
                         logger.warning(
-                            "Failed to parse structured output from Anthropic"
+                            "Failed to parse structured output from Anthropic",
+                            exc_info=True,
                         )
 
         raw_messages = self._build_raw_messages(content_text, tool_calls)

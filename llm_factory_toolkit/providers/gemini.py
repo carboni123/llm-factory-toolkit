@@ -435,10 +435,11 @@ class GeminiAdapter(BaseProvider):
             try:
                 parsed = json.loads(content)
                 parsed_content = response_format.model_validate(parsed)
-            except Exception:
+            except (json.JSONDecodeError, ValueError, TypeError):
                 logger.warning(
                     "Failed to parse Gemini response as %s",
                     response_format.__name__,
+                    exc_info=True,
                 )
 
         return ProviderResponse(

@@ -856,7 +856,7 @@ class BaseProvider(abc.ABC):
                                 messages=copy.deepcopy(current_messages),
                                 usage=accumulated_usage,
                             )
-                        except Exception:
+                        except (json.JSONDecodeError, ValueError, TypeError):
                             logger.warning(
                                 "Failed to parse response as %s, returning raw content.",
                                 response_format.__name__,

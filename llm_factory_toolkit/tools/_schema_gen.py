@@ -47,7 +47,7 @@ def generate_schema_from_function(
     # Resolve string annotations from ``from __future__ import annotations``
     try:
         hints = get_type_hints(func)
-    except Exception:
+    except (NameError, AttributeError, TypeError):
         hints = {}
 
     sig = inspect.signature(func)
