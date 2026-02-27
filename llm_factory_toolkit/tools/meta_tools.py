@@ -28,7 +28,7 @@ def _suggest_similar_names(
     """
     name_lower = invalid_name.lower()
     tokens = set(name_lower.replace("-", "_").split("_"))
-    scored: list[tuple[str, int]] = []
+    scored: List[tuple[str, int]] = []
     for entry in catalog.list_all():
         entry_lower = entry.name.lower()
         entry_tokens = set(entry_lower.replace("-", "_").split("_"))
