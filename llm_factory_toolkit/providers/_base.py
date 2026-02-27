@@ -407,6 +407,70 @@ class BaseProvider(abc.ABC):
         return content
 
     @staticmethod
+    @staticmethod
+    def _check_repetitive_calls(
+        call_error_info: List[Tuple[str, str, bool]],
+        failed_call_counts: Dict[Tuple[str, str], int],
+        repetition_threshold: int,
+        current_messages: List[Dict[str, Any]],
+    ) -> bool:
+        """Process tool call results for repetitive failure detection.
+
+        Updates *failed_call_counts* in place and may append a soft-warning
+        message to *current_messages*.
+
+        Returns:
+            ``True`` if the hard-stop limit was reached (caller should
+            terminate the loop), ``False`` otherwise.
+        """
+        if repetition_threshold <= 0:
+            return False
+
+        for tc_name, tc_args, tc_error in call_error_info:
+            tc_key = (tc_name, tc_args)
+            if tc_error:
+                failed_call_counts[tc_key] = failed_call_counts.get(tc_key, 0) + 1
+                tc_count = failed_call_counts[tc_key]
+                hard_limit = repetition_threshold * 2
+
+                if tc_count >= hard_limit:
+                    logger.warning(
+                        "Repetitive failing tool call (hard stop): "
+                        "'%s' failed %d times with identical args. "
+                        "Breaking loop.",
+                        tc_name,
+                        tc_count,
+                    )
+                    return True
+                elif tc_count == repetition_threshold:
+                    logger.warning(
+                        "Repetitive failing tool call (soft warning): "
+                        "'%s' failed %d times with identical args. "
+                        "Injecting warning.",
+                        tc_name,
+                        tc_count,
+                    )
+                    current_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"SYSTEM: The tool '{tc_name}' has "
+                                f"failed {tc_count} times with "
+                                "identical arguments and the same "
+                                "error. Do NOT retry this exact call. "
+                                "Try different arguments, a different "
+                                "tool, or respond to the user without "
+                                "using tools."
+                            ),
+                        }
+                    )
+            else:
+                # Successful call clears failure counter
+                failed_call_counts.pop(tc_key, None)
+
+        return False
+
+    @staticmethod
     def _aggregate_final_content(
         messages: List[Dict[str, Any]], max_iterations: int
     ) -> Optional[str]:
@@ -832,52 +896,12 @@ class BaseProvider(abc.ABC):
             iteration_count += 1
 
             # --- Repetitive loop detection ---
-            _hard_stop = False
-            if repetition_threshold > 0:
-                for tc_name, tc_args, tc_error in call_error_info:
-                    tc_key = (tc_name, tc_args)
-                    if tc_error:
-                        _failed_call_counts[tc_key] = (
-                            _failed_call_counts.get(tc_key, 0) + 1
-                        )
-                        tc_count = _failed_call_counts[tc_key]
-                        hard_limit = repetition_threshold * 2
-
-                        if tc_count >= hard_limit:
-                            logger.warning(
-                                "Repetitive failing tool call (hard stop): "
-                                "'%s' failed %d times with identical args. "
-                                "Breaking loop.",
-                                tc_name,
-                                tc_count,
-                            )
-                            _hard_stop = True
-                            break
-                        elif tc_count == repetition_threshold:
-                            logger.warning(
-                                "Repetitive failing tool call (soft warning): "
-                                "'%s' failed %d times with identical args. "
-                                "Injecting warning.",
-                                tc_name,
-                                tc_count,
-                            )
-                            current_messages.append(
-                                {
-                                    "role": "user",
-                                    "content": (
-                                        f"SYSTEM: The tool '{tc_name}' has "
-                                        f"failed {tc_count} times with "
-                                        "identical arguments and the same "
-                                        "error. Do NOT retry this exact call. "
-                                        "Try different arguments, a different "
-                                        "tool, or respond to the user without "
-                                        "using tools."
-                                    ),
-                                }
-                            )
-                    else:
-                        # Successful call clears failure counter
-                        _failed_call_counts.pop(tc_key, None)
+            _hard_stop = self._check_repetitive_calls(
+                call_error_info,
+                _failed_call_counts,
+                repetition_threshold,
+                current_messages,
+            )
 
             if _hard_stop:
                 final_content = self._aggregate_final_content(
@@ -1013,51 +1037,12 @@ class BaseProvider(abc.ABC):
                 iteration_count += 1
 
                 # --- Repetitive loop detection ---
-                _hard_stop = False
-                if repetition_threshold > 0:
-                    for tc_name, tc_args, tc_error in call_error_info:
-                        tc_key = (tc_name, tc_args)
-                        if tc_error:
-                            _failed_call_counts[tc_key] = (
-                                _failed_call_counts.get(tc_key, 0) + 1
-                            )
-                            tc_count = _failed_call_counts[tc_key]
-                            hard_limit = repetition_threshold * 2
-
-                            if tc_count >= hard_limit:
-                                logger.warning(
-                                    "Repetitive failing tool call (hard stop): "
-                                    "'%s' failed %d times with identical args. "
-                                    "Breaking loop.",
-                                    tc_name,
-                                    tc_count,
-                                )
-                                _hard_stop = True
-                                break
-                            elif tc_count == repetition_threshold:
-                                logger.warning(
-                                    "Repetitive failing tool call "
-                                    "(soft warning): '%s' failed %d times "
-                                    "with identical args. Injecting warning.",
-                                    tc_name,
-                                    tc_count,
-                                )
-                                current_messages.append(
-                                    {
-                                        "role": "user",
-                                        "content": (
-                                            f"SYSTEM: The tool '{tc_name}' has "
-                                            f"failed {tc_count} times with "
-                                            "identical arguments and the same "
-                                            "error. Do NOT retry this exact "
-                                            "call. Try different arguments, a "
-                                            "different tool, or respond to the "
-                                            "user without using tools."
-                                        ),
-                                    }
-                                )
-                        else:
-                            _failed_call_counts.pop(tc_key, None)
+                _hard_stop = self._check_repetitive_calls(
+                    call_error_info,
+                    _failed_call_counts,
+                    repetition_threshold,
+                    current_messages,
+                )
 
                 if _hard_stop:
                     warning = (
