@@ -422,7 +422,7 @@ class AnthropicAdapter(BaseProvider):
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
