@@ -514,7 +514,10 @@ class BaseProvider(abc.ABC):
         format into its native message format, plus per-call error tracking
         info as ``(tool_name, arguments_json, is_error)`` tuples.
         """
-        assert self.tool_factory is not None
+        if self.tool_factory is None:
+            raise UnsupportedFeatureError(
+                "Received tool calls but no ToolFactory is configured."
+            )
         factory = self.tool_factory
         results_list: List[ToolResultMessage] = []
         collected_payloads: List[Dict[str, Any]] = []

@@ -13,6 +13,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    cast,
 )
 
 from pydantic import BaseModel
@@ -384,10 +385,8 @@ class AnthropicAdapter(BaseProvider):
                 if tc.name == structured_tool_name:
                     try:
                         args = json.loads(tc.arguments)
-                        assert isinstance(response_format, type) and issubclass(
-                            response_format, BaseModel
-                        )
-                        parsed_content = response_format.model_validate(args)
+                        pydantic_cls = cast(Type[BaseModel], response_format)
+                        parsed_content = pydantic_cls.model_validate(args)
                         # Remove the synthetic tool call and return as content
                         tool_calls = [
                             t for t in tool_calls if t.name != structured_tool_name
