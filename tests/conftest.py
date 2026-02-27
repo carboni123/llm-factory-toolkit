@@ -17,7 +17,7 @@ _DEFAULT_SUPPORTED_MODEL = "openai/gpt-4.1-mini"
 _DEFAULT_UNSUPPORTED_MODEL = "openai/gpt-5-mini"
 _DEFAULT_GOOGLE_MODEL = "gemini/gemini-2.5-flash"
 _DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-sonnet-4-20250514"
-_DEFAULT_XAI_MODEL = "xai/grok-3-mini"
+_DEFAULT_XAI_MODEL = "xai/grok-4-1-fast-non-reasoning"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

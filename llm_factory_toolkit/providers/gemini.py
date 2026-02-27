@@ -195,6 +195,38 @@ class GeminiAdapter(BaseProvider):
     # Tool definition building
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert JSON Schema nullable types to Gemini-compatible format.
+
+        Gemini SDK rejects type arrays like ``["string", "null"]``. Convert to
+        ``{"type": "string", "nullable": true}`` which Gemini understands.
+        """
+        schema = {**schema}  # shallow copy
+
+        # Convert type arrays: ["string", "null"] → "string" + nullable
+        t = schema.get("type")
+        if isinstance(t, list):
+            non_null = [x for x in t if x != "null"]
+            if len(non_null) == 1:
+                schema["type"] = non_null[0]
+                schema["nullable"] = True
+
+        # Recurse into properties
+        if "properties" in schema:
+            schema["properties"] = {
+                k: GeminiAdapter._normalize_schema_for_gemini(v)
+                for k, v in schema["properties"].items()
+            }
+
+        # Recurse into items (arrays)
+        if "items" in schema and isinstance(schema["items"], dict):
+            schema["items"] = GeminiAdapter._normalize_schema_for_gemini(
+                schema["items"]
+            )
+
+        return schema
+
     def _build_tool_definitions(
         self, definitions: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -208,12 +240,15 @@ class GeminiAdapter(BaseProvider):
         for tool_def in definitions:
             if tool_def.get("type") == "function":
                 func_def = tool_def.get("function", {})
+                parameters = func_def.get("parameters")
+                if parameters:
+                    parameters = self._normalize_schema_for_gemini(parameters)
                 tools.append(
                     {
                         "_gemini_func": True,
                         "name": func_def.get("name"),
                         "description": func_def.get("description"),
-                        "parameters": func_def.get("parameters"),
+                        "parameters": parameters,
                     }
                 )
         return tools

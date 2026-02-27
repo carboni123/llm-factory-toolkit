@@ -36,6 +36,55 @@ class TestExtractSystemInstruction:
         assert remaining == msgs
 
 
+class TestNormalizeSchemaForGemini:
+    def test_string_null_array(self) -> None:
+        schema = {"type": ["string", "null"]}
+        result = GeminiAdapter._normalize_schema_for_gemini(schema)
+        assert result == {"type": "string", "nullable": True}
+
+    def test_null_first_order(self) -> None:
+        schema = {"type": ["null", "integer"]}
+        result = GeminiAdapter._normalize_schema_for_gemini(schema)
+        assert result == {"type": "integer", "nullable": True}
+
+    def test_plain_type_unchanged(self) -> None:
+        schema = {"type": "string"}
+        result = GeminiAdapter._normalize_schema_for_gemini(schema)
+        assert result == {"type": "string"}
+
+    def test_nested_properties(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": ["integer", "null"]},
+            },
+        }
+        result = GeminiAdapter._normalize_schema_for_gemini(schema)
+        assert result["properties"]["name"] == {"type": "string"}
+        assert result["properties"]["age"] == {"type": "integer", "nullable": True}
+
+    def test_nested_items(self) -> None:
+        schema = {
+            "type": "array",
+            "items": {"type": ["string", "null"]},
+        }
+        result = GeminiAdapter._normalize_schema_for_gemini(schema)
+        assert result["items"] == {"type": "string", "nullable": True}
+
+    def test_original_not_mutated(self) -> None:
+        schema = {"type": ["string", "null"], "properties": {"a": {"type": ["int", "null"]}}}
+        GeminiAdapter._normalize_schema_for_gemini(schema)
+        assert schema["type"] == ["string", "null"]
+        assert schema["properties"]["a"]["type"] == ["int", "null"]
+
+    def test_multi_type_union_unchanged(self) -> None:
+        """Unions with more than one non-null type are left as-is."""
+        schema = {"type": ["string", "integer", "null"]}
+        result = GeminiAdapter._normalize_schema_for_gemini(schema)
+        assert result["type"] == ["string", "integer", "null"]
+
+
 class TestBuildToolDefinitions:
     def test_function_type(self) -> None:
         adapter = GeminiAdapter(api_key="k")
@@ -59,6 +108,27 @@ class TestBuildToolDefinitions:
         defs = [{"type": "web_search"}]
         result = adapter._build_tool_definitions(defs)  # noqa: SLF001
         assert result == []
+
+    def test_nullable_params_normalized(self) -> None:
+        adapter = GeminiAdapter(api_key="k")
+        defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "browse",
+                    "description": "Browse",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": ["string", "null"]},
+                        },
+                    },
+                },
+            }
+        ]
+        result = adapter._build_tool_definitions(defs)  # noqa: SLF001
+        params = result[0]["parameters"]
+        assert params["properties"]["query"] == {"type": "string", "nullable": True}
 
 
 class TestParseResponse:
