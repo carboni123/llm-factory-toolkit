@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import (
     Any,
     AsyncGenerator,
@@ -507,20 +508,28 @@ class OpenAIAdapter(BaseProvider):
                     )
                 )
 
-        # Convert output items to Chat Completions format for raw_messages
+        # Convert output items to Chat Completions format for raw_messages.
+        # Suppress Pydantic serialization warnings from ParsedResponseOutputText
+        # whose 'parsed' field holds the deserialized BotResponseBatch — the
+        # OpenAI SDK's generic wrapper class doesn't match the base schema's
+        # expected types, causing harmless but noisy UserWarnings.
         raw_items: List[Dict[str, Any]] = []
-        for item in output_items:
-            dump = item.model_dump()
-            dump.pop("parsed_arguments", None)
-            dump.pop("status", None)
-            # Strip SDK-internal 'parsed' fields from ParsedResponseOutputText
-            # to avoid Pydantic serialization warnings when text_format is used
-            content_list = dump.get("content")
-            if isinstance(content_list, list):
-                for entry in content_list:
-                    if isinstance(entry, dict):
-                        entry.pop("parsed", None)
-            raw_items.append(dump)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+            )
+            for item in output_items:
+                dump = item.model_dump()
+                dump.pop("parsed_arguments", None)
+                dump.pop("status", None)
+                content_list = dump.get("content")
+                if isinstance(content_list, list):
+                    for entry in content_list:
+                        if isinstance(entry, dict):
+                            entry.pop("parsed", None)
+                raw_items.append(dump)
         chat_messages = self._responses_to_chat_messages(raw_items)
 
         return ProviderResponse(
