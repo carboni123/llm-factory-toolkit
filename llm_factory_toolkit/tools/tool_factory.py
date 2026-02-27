@@ -28,7 +28,7 @@ from .runtime import ToolRuntime
 if TYPE_CHECKING:
     from .catalog import ToolCatalog
 
-module_logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 ToolHandler = Callable[..., ToolExecutionResult | Awaitable[ToolExecutionResult]]
@@ -116,7 +116,7 @@ class ToolFactory:
         self._registry: Dict[str, ToolRegistration] = {}
         self.tool_usage_counts: Dict[str, int] = {}
         self._catalog: Optional[ToolCatalog] = None
-        module_logger.info("ToolFactory initialized.")
+        logger.info("ToolFactory initialized.")
 
     def set_catalog(self, catalog: ToolCatalog) -> None:
         """Attach a :class:`ToolCatalog` for dynamic tool loading."""
@@ -219,7 +219,7 @@ class ToolFactory:
         """
 
         if name in self._registry:
-            module_logger.warning("Tool '%s' is already registered. Overwriting.", name)
+            logger.warning("Tool '%s' is already registered. Overwriting.", name)
 
         # Auto-generate schema when parameters is not provided
         effective_parameters = parameters
@@ -242,7 +242,7 @@ class ToolFactory:
             blocking=blocking,
         )
         self.tool_usage_counts[name] = 0
-        module_logger.info("Registered tool: %s", name)
+        logger.info("Registered tool: %s", name)
 
     def register_tool_class(
         self,
@@ -301,9 +301,7 @@ class ToolFactory:
             exclude_params=exclude_params,
             blocking=blocking,
         )
-        module_logger.info(
-            "Registered tool class: %s as '%s'", tool_class.__name__, name
-        )
+        logger.info("Registered tool class: %s as '%s'", tool_class.__name__, name)
 
     def register_builtins(self, names: Optional[Sequence[str]] = None) -> None:
         """Register a selection of built-in tools by name."""
@@ -314,12 +312,12 @@ class ToolFactory:
         for name in selected:
             info = BUILTIN_TOOLS.get(name)
             if not info:
-                module_logger.warning("Built-in tool '%s' not found.", name)
+                logger.warning("Built-in tool '%s' not found.", name)
                 continue
 
             func = getattr(builtins_mod, info["function"].split(".")[-1], None)
             if func is None:
-                module_logger.warning("Function for built-in '%s' not available.", name)
+                logger.warning("Function for built-in '%s' not available.", name)
                 continue
 
             self.register_tool(
@@ -407,7 +405,7 @@ class ToolFactory:
             category="system",
             tags=["meta", "unloading"],
         )
-        module_logger.info(
+        logger.info(
             "Registered meta-tools: browse_toolkit, load_tools, load_tool_group, "
             "unload_tool_group, unload_tools"
         )
@@ -436,7 +434,7 @@ class ToolFactory:
             category="system",
             tags=["meta", "discovery", "semantic"],
         )
-        module_logger.info("Registered semantic meta-tool: find_tools")
+        logger.info("Registered semantic meta-tool: find_tools")
 
     def get_tool_definitions(
         self,
@@ -453,7 +451,7 @@ class ToolFactory:
                 and types are preserved, so dispatch still works.
         """
         if filter_tool_names is None:
-            module_logger.debug("Returning all tool definitions.")
+            logger.debug("Returning all tool definitions.")
             definitions = self.tool_definitions
         else:
             allowed = set(filter_tool_names)
@@ -468,12 +466,12 @@ class ToolFactory:
 
             missing = allowed - set(ordered_names)
             if missing:
-                module_logger.warning(
+                logger.warning(
                     "Requested tools not found in factory: %s. They will be excluded.",
                     list(missing),
                 )
 
-            module_logger.debug(
+            logger.debug(
                 "Returning filtered tool definitions for names: %s",
                 [name for name in ordered_names if name in allowed],
             )
@@ -534,7 +532,7 @@ class ToolFactory:
         registration = self._registry.get(function_name)
         if registration is None:
             error_msg = f"Tool '{function_name}' not found."
-            module_logger.error(error_msg)
+            logger.error(error_msg)
             return self._build_error_result(error_msg, "tool_not_found")
 
         parsed_arguments = self._parse_arguments(function_name, function_args_str)
@@ -564,7 +562,7 @@ class ToolFactory:
             )
 
         try:
-            module_logger.debug(
+            logger.debug(
                 "Executing tool '%s' with final args: %s (mock=%s)",
                 function_name,
                 final_arguments,
@@ -579,19 +577,19 @@ class ToolFactory:
                 raw_result = await coro
         except asyncio.TimeoutError:
             error_msg = f"Tool '{function_name}' timed out after {tool_timeout}s."
-            module_logger.error(error_msg)
+            logger.error(error_msg)
             return self._build_error_result(error_msg, "timeout")
         except Exception as exc:  # noqa: BLE001 - propagate sanitized error result
             error_msg = (
                 f"Execution failed unexpectedly within tool '{function_name}': {exc}"
             )
-            module_logger.exception(
+            logger.exception(
                 "Error during tool execution for %s", function_name, exc_info=True
             )
             return self._build_error_result(error_msg, "execution_error")
 
         result = self._normalize_result(function_name, raw_result)
-        module_logger.debug(
+        logger.debug(
             "Tool '%s' executed. LLM Content: %s (mock=%s)",
             function_name,
             result.content,
@@ -606,13 +604,13 @@ class ToolFactory:
             self.tool_usage_counts[tool_name] = (
                 self.tool_usage_counts.get(tool_name, 0) + 1
             )
-            module_logger.debug(
+            logger.debug(
                 "Incremented usage count for tool '%s'. New count: %s",
                 tool_name,
                 self.tool_usage_counts[tool_name],
             )
         else:
-            module_logger.warning(
+            logger.warning(
                 "Attempted to increment usage for unregistered tool: '%s'. Count not incremented.",
                 tool_name,
             )
@@ -627,14 +625,14 @@ class ToolFactory:
 
         for name in list(self.tool_usage_counts.keys()):
             self.tool_usage_counts[name] = 0
-        module_logger.info("All tool usage counts have been reset.")
+        logger.info("All tool usage counts have been reset.")
 
     def get_and_reset_tool_usage_counts(self) -> Dict[str, int]:
         """Return usage counts and reset them in a single operation."""
 
         counts = dict(self.tool_usage_counts)
         self.reset_tool_usage_counts()
-        module_logger.info(
+        logger.info(
             "Retrieved and reset tool usage counts. Counts returned: %s", counts
         )
         return counts
@@ -673,7 +671,7 @@ class ToolFactory:
 
         if parameters is not None:
             if not isinstance(parameters, dict) or parameters.get("type") != "object":
-                module_logger.warning(
+                logger.warning(
                     "Tool '%s' parameters do not appear to be valid JSON schema objects.",
                     name,
                 )
@@ -700,14 +698,14 @@ class ToolFactory:
             )
             if not schema.get("properties"):
                 return None
-            module_logger.info(
+            logger.info(
                 "Auto-generated schema for tool '%s': %d properties",
                 name,
                 len(schema["properties"]),
             )
             return schema
         except Exception as exc:
-            module_logger.warning(
+            logger.warning(
                 "Failed to auto-generate schema for tool '%s': %s. "
                 "Tool will be registered without parameters.",
                 name,
@@ -819,7 +817,7 @@ class ToolFactory:
                 f"Failed to decode JSON arguments for tool '{function_name}': {exc}. "
                 f"Args: '{actual_args}'"
             )
-            module_logger.error(error_msg)
+            logger.error(error_msg)
             return self._build_error_result(error_msg, "argument_decode_error")
 
         if not isinstance(parsed, dict):
@@ -827,7 +825,7 @@ class ToolFactory:
                 f"Expected JSON object (dict) for arguments of tool '{function_name}', "
                 f"but got {type(parsed)}"
             )
-            module_logger.error(error_msg)
+            logger.error(error_msg)
             return self._build_error_result(error_msg, "argument_type_error")
 
         return parsed
@@ -856,20 +854,20 @@ class ToolFactory:
             return result
 
         if isinstance(result, dict):
-            module_logger.warning(
+            logger.warning(
                 "Tool '%s' returned a raw dict; converting to ToolExecutionResult.",
                 function_name,
             )
             return ToolExecutionResult(content=json.dumps(result), payload=result)
 
         if isinstance(result, str):
-            module_logger.warning(
+            logger.warning(
                 "Tool '%s' returned a raw string; converting to ToolExecutionResult.",
                 function_name,
             )
             return ToolExecutionResult(content=result, payload=result)
 
-        module_logger.error(
+        logger.error(
             "Tool function '%s' returned unexpected type: %s",
             function_name,
             type(result),
@@ -903,7 +901,7 @@ class ToolFactory:
         try:
             signature = inspect.signature(handler)
         except (TypeError, ValueError) as exc:
-            module_logger.error(
+            logger.error(
                 "Could not inspect signature for tool '%s' (handler: %s): %s. Context injection might be incomplete.",
                 tool_name,
                 handler,
@@ -918,7 +916,7 @@ class ToolFactory:
 
         for param_name, param_value in context.items():
             if param_name in arguments:
-                module_logger.warning(
+                logger.warning(
                     "Context parameter '%s' for tool '%s' collides with an LLM-provided argument. Context will NOT override.",
                     param_name,
                     tool_name,
@@ -927,7 +925,7 @@ class ToolFactory:
 
             if param_name in signature.parameters or accepts_var_kw:
                 arguments[param_name] = param_value
-                module_logger.debug(
+                logger.debug(
                     "Injected context param '%s' for tool '%s'", param_name, tool_name
                 )
 
