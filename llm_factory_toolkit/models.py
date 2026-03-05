@@ -36,6 +36,7 @@ _PROVIDER_PREFIXES: dict[str, str] = {
     "anthropic": "anthropic/",
     "gemini": "gemini/",
     "xai": "xai/",
+    "claude_code": "claude-code/",
 }
 
 
@@ -133,10 +134,10 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "reasoning",
         ],
     ),
-    "anthropic/claude-sonnet-4-5": ModelInfo(
-        model_id="anthropic/claude-sonnet-4-5",
+    "anthropic/claude-sonnet-4-6": ModelInfo(
+        model_id="anthropic/claude-sonnet-4-6",
         provider="anthropic",
-        display_name="Claude Sonnet 4.5",
+        display_name="Claude Sonnet 4.6",
         capabilities=[
             "streaming",
             "structured_output",
@@ -235,6 +236,30 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "structured_output",
             "web_search",
             "code",
+        ],
+    ),
+    # ------------------------------------------------------------------
+    # Claude Code (Agent SDK)
+    # ------------------------------------------------------------------
+    "claude-code/claude-sonnet-4-5": ModelInfo(
+        model_id="claude-code/claude-sonnet-4-6",
+        provider="claude_code",
+        display_name="Claude Code Sonnet 4.6",
+        capabilities=[
+            "streaming",
+            "structured_output",
+            "code",
+        ],
+    ),
+    "claude-code/claude-opus-4-6": ModelInfo(
+        model_id="claude-code/claude-opus-4-6",
+        provider="claude_code",
+        display_name="Claude Code Opus 4.6",
+        capabilities=[
+            "streaming",
+            "structured_output",
+            "code",
+            "reasoning",
         ],
     ),
 }

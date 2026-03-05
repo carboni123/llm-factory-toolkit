@@ -34,6 +34,7 @@ _PREFIX_MAP: Dict[str, str] = {
     "gemini/": "gemini",
     "google/": "gemini",
     "xai/": "xai",
+    "claude-code/": "claude_code",
 }
 
 # Bare model name prefix → provider key (no explicit prefix)
@@ -81,7 +82,7 @@ def resolve_provider_key(model: str) -> str:
 
     raise ConfigurationError(
         f"Cannot determine provider for model '{model}'. "
-        f"Use an explicit prefix (openai/, anthropic/, gemini/, xai/) "
+        f"Use an explicit prefix (openai/, anthropic/, gemini/, xai/, claude-code/) "
         f"or a recognised bare model name."
     )
 
@@ -134,6 +135,17 @@ def _create_adapter(
         from .xai import XAIAdapter
 
         return XAIAdapter(
+            api_key=api_key,
+            tool_factory=tool_factory,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_min_wait=retry_min_wait,
+            **kwargs,
+        )
+    elif provider_key == "claude_code":
+        from .claude_code import ClaudeCodeAdapter
+
+        return ClaudeCodeAdapter(
             api_key=api_key,
             tool_factory=tool_factory,
             timeout=timeout,
