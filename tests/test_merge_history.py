@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -46,10 +45,16 @@ async def test_generate_merge_history_combines_adjacent_turns() -> None:
 
     # Verify the provider received the merged messages
     call_kwargs = provider_generate.call_args
-    actual_input = call_kwargs.kwargs.get("input") or call_kwargs.args[0] if call_kwargs.args else None
+    actual_input = (
+        call_kwargs.kwargs.get("input") or call_kwargs.args[0]
+        if call_kwargs.args
+        else None
+    )
     if actual_input is None:
         # Try to get from keyword arguments
-        actual_input = call_kwargs[1].get("input", call_kwargs[0][0] if call_kwargs[0] else None)
+        actual_input = call_kwargs[1].get(
+            "input", call_kwargs[0][0] if call_kwargs[0] else None
+        )
 
     assert actual_input == [
         {"role": "system", "content": "system"},
@@ -72,8 +77,14 @@ async def test_generate_merge_history_default_keeps_sequence() -> None:
     await client.generate(input=messages)
 
     call_kwargs = provider_generate.call_args
-    actual_input = call_kwargs.kwargs.get("input") or call_kwargs.args[0] if call_kwargs.args else None
+    actual_input = (
+        call_kwargs.kwargs.get("input") or call_kwargs.args[0]
+        if call_kwargs.args
+        else None
+    )
     if actual_input is None:
-        actual_input = call_kwargs[1].get("input", call_kwargs[0][0] if call_kwargs[0] else None)
+        actual_input = call_kwargs[1].get(
+            "input", call_kwargs[0][0] if call_kwargs[0] else None
+        )
 
     assert actual_input == messages

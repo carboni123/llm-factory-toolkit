@@ -6,7 +6,6 @@ import os
 
 import pytest
 
-from llm_factory_toolkit import LLMClient
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
@@ -52,7 +51,9 @@ def get_secret_code(vault_id: str) -> ToolExecutionResult:
 
 def get_weather(city: str) -> ToolExecutionResult:
     """Return mock weather for a city."""
-    return ToolExecutionResult(content=f'{{"city": "{city}", "temp_c": 22, "condition": "sunny"}}')
+    return ToolExecutionResult(
+        content=f'{{"city": "{city}", "temp_c": 22, "condition": "sunny"}}'
+    )
 
 
 def multiply(a: int, b: int) -> ToolExecutionResult:

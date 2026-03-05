@@ -22,6 +22,7 @@ def _dummy_handler(**_kw: Any) -> ToolExecutionResult:
 # Helpers
 # ------------------------------------------------------------------
 
+
 def _make_factory(n: int = 3) -> ToolFactory:
     """Create a ToolFactory with *n* registered tools."""
     factory = ToolFactory()
@@ -493,9 +494,7 @@ class TestMetaToolNoResolution:
         # ALL entries should stay unresolved
         for entry in catalog.list_all():
             if isinstance(entry, LazyCatalogEntry):
-                assert not entry.is_resolved, (
-                    f"{entry.name} was resolved unexpectedly"
-                )
+                assert not entry.is_resolved, f"{entry.name} was resolved unexpectedly"
 
     def test_load_tools_invalid_name(self) -> None:
         """Invalid names checked via has_entry() should not resolve anything."""

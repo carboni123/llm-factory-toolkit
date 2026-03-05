@@ -34,6 +34,7 @@ def _safe_print(text: str) -> None:
     except UnicodeEncodeError:
         print(text.encode("ascii", errors="replace").decode())
 
+
 # --- Skip Conditions ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -78,7 +79,11 @@ GET_SECRET_DATA_PARAMS = {
 
 def get_weather(location: str) -> dict:
     """Gets the current weather for a location."""
-    return {"temperature_celsius": WEATHER_TEMP, "location": location, "condition": "sunny"}
+    return {
+        "temperature_celsius": WEATHER_TEMP,
+        "location": location,
+        "condition": "sunny",
+    }
 
 
 GET_WEATHER_PARAMS = {
@@ -179,7 +184,9 @@ async def test_openai_dynamic_browse_load_use(openai_test_model: str) -> None:
 
     Full 3-step agentic flow on the OpenAI Responses API path.
     """
-    api_key_display = f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    api_key_display = (
+        f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    )
     print(f"\n--- Test: OpenAI dynamic browse/load/use (Key: {api_key_display}) ---")
 
     try:
@@ -212,7 +219,9 @@ async def test_openai_dynamic_browse_load_use(openai_test_model: str) -> None:
             tool_session=session,
         )
 
-        _safe_print(f"Response: {result.content[:200] if result.content else 'None'}...")
+        _safe_print(
+            f"Response: {result.content[:200] if result.content else 'None'}..."
+        )
         print(f"Active tools: {session.list_active()}")
         print(f"Tool messages: {len(result.tool_messages)}")
 
@@ -258,7 +267,9 @@ async def test_google_dynamic_browse_load_use(google_test_model: str) -> None:
 
     Full 3-step agentic flow on the Gemini adapter path.
     """
-    api_key_display = f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "N/A"
+    api_key_display = (
+        f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "N/A"
+    )
     print(f"\n--- Test: Google dynamic browse/load/use (Key: {api_key_display}) ---")
 
     try:
@@ -288,7 +299,9 @@ async def test_google_dynamic_browse_load_use(google_test_model: str) -> None:
             tool_session=session,
         )
 
-        _safe_print(f"Response: {result.content[:200] if result.content else 'None'}...")
+        _safe_print(
+            f"Response: {result.content[:200] if result.content else 'None'}..."
+        )
         print(f"Active tools: {session.list_active()}")
 
         assert session.is_active("get_weather"), (
@@ -333,7 +346,9 @@ async def test_openai_dynamic_multi_tool_load(openai_test_model: str) -> None:
     The user asks for both weather data AND to send an email, requiring the
     agent to browse, load both tools, and use them.
     """
-    api_key_display = f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    api_key_display = (
+        f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    )
     print(f"\n--- Test: OpenAI multi-tool discovery (Key: {api_key_display}) ---")
 
     try:
@@ -412,7 +427,9 @@ async def test_openai_session_persistence_across_calls(openai_test_model: str) -
     Call 1: Agent browses + loads get_weather, uses it.
     Call 2: Same session — agent uses get_weather directly (no browse/load needed).
     """
-    api_key_display = f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    api_key_display = (
+        f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    )
     print(f"\n--- Test: OpenAI session persistence (Key: {api_key_display}) ---")
 
     try:
@@ -437,13 +454,20 @@ async def test_openai_session_persistence_across_calls(openai_test_model: str) -
             tool_session=session,
         )
 
-        _safe_print(f"Call 1 response: {result_1.content[:150] if result_1.content else 'None'}...")
-        assert session.is_active("get_weather"), "get_weather should be loaded after call 1"
+        _safe_print(
+            f"Call 1 response: {result_1.content[:150] if result_1.content else 'None'}..."
+        )
+        assert session.is_active("get_weather"), (
+            "get_weather should be loaded after call 1"
+        )
         assert result_1.content is not None
 
         # --- Call 2: Use get_weather directly (already loaded in session) ---
         messages_2 = [
-            {"role": "system", "content": "You have tools available. Call the appropriate tool directly to answer."},
+            {
+                "role": "system",
+                "content": "You have tools available. Call the appropriate tool directly to answer.",
+            },
             {
                 "role": "user",
                 "content": "What is the weather in Tokyo? Use the get_weather tool.",
@@ -457,7 +481,9 @@ async def test_openai_session_persistence_across_calls(openai_test_model: str) -
             tool_session=session,
         )
 
-        _safe_print(f"Call 2 response: {result_2.content[:150] if result_2.content else 'None'}...")
+        _safe_print(
+            f"Call 2 response: {result_2.content[:150] if result_2.content else 'None'}..."
+        )
         assert result_2.content is not None
         assert str(WEATHER_TEMP) in result_2.content or "22" in result_2.content, (
             f"Expected temperature in second call response, got: {result_2.content}"
@@ -491,7 +517,9 @@ async def test_openai_session_persistence_across_calls(openai_test_model: str) -
 @pytest.mark.skipif(skip_google, reason=skip_reason_google)
 async def test_google_session_persistence_across_calls(google_test_model: str) -> None:
     """Same as test 4 but on the Gemini adapter path."""
-    api_key_display = f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "N/A"
+    api_key_display = (
+        f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "N/A"
+    )
     print(f"\n--- Test: Google session persistence (Key: {api_key_display}) ---")
 
     try:
@@ -516,12 +544,19 @@ async def test_google_session_persistence_across_calls(google_test_model: str) -
             tool_session=session,
         )
 
-        _safe_print(f"Call 1 response: {result_1.content[:150] if result_1.content else 'None'}...")
-        assert session.is_active("get_weather"), "get_weather should be loaded after call 1"
+        _safe_print(
+            f"Call 1 response: {result_1.content[:150] if result_1.content else 'None'}..."
+        )
+        assert session.is_active("get_weather"), (
+            "get_weather should be loaded after call 1"
+        )
 
         # --- Call 2: Reuse loaded tool (already in session) ---
         messages_2 = [
-            {"role": "system", "content": "You have tools available. Call the appropriate tool directly to answer."},
+            {
+                "role": "system",
+                "content": "You have tools available. Call the appropriate tool directly to answer.",
+            },
             {
                 "role": "user",
                 "content": "What is the weather in Tokyo? Use the get_weather tool.",
@@ -535,7 +570,9 @@ async def test_google_session_persistence_across_calls(google_test_model: str) -
             tool_session=session,
         )
 
-        _safe_print(f"Call 2 response: {result_2.content[:150] if result_2.content else 'None'}...")
+        _safe_print(
+            f"Call 2 response: {result_2.content[:150] if result_2.content else 'None'}..."
+        )
         assert result_2.content is not None
         assert str(WEATHER_TEMP) in result_2.content or "22" in result_2.content, (
             f"Expected temperature in second call, got: {result_2.content}"
@@ -569,7 +606,9 @@ async def test_google_session_persistence_across_calls(google_test_model: str) -
 @pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_openai_browse_by_category(openai_test_model: str) -> None:
     """Agent browses by category instead of keyword, then loads and uses the tool."""
-    api_key_display = f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    api_key_display = (
+        f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    )
     print(f"\n--- Test: OpenAI browse by category (Key: {api_key_display}) ---")
 
     try:
@@ -596,7 +635,9 @@ async def test_openai_browse_by_category(openai_test_model: str) -> None:
             tool_session=session,
         )
 
-        _safe_print(f"Response: {result.content[:200] if result.content else 'None'}...")
+        _safe_print(
+            f"Response: {result.content[:200] if result.content else 'None'}..."
+        )
 
         assert session.is_active("send_email"), (
             f"send_email should be active. Active: {session.list_active()}"
@@ -631,7 +672,9 @@ async def test_openai_browse_by_category(openai_test_model: str) -> None:
 @pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_openai_dynamic_tool_payloads(openai_test_model: str) -> None:
     """Payloads from dynamically loaded tools are collected in GenerationResult."""
-    api_key_display = f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    api_key_display = (
+        f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    )
     print(f"\n--- Test: OpenAI dynamic tool payloads (Key: {api_key_display}) ---")
 
     try:
@@ -639,9 +682,15 @@ async def test_openai_dynamic_tool_payloads(openai_test_model: str) -> None:
 
         def lookup_product(product_id: str) -> dict:
             from llm_factory_toolkit.tools.models import ToolExecutionResult
+
             return ToolExecutionResult(
                 content=f"Product {product_id}: Widget Pro, $49.99, in stock.",
-                payload={"product_id": product_id, "name": "Widget Pro", "price": 49.99, "in_stock": True},
+                payload={
+                    "product_id": product_id,
+                    "name": "Widget Pro",
+                    "price": 49.99,
+                    "in_stock": True,
+                },
             )
 
         factory.register_tool(
@@ -661,7 +710,11 @@ async def test_openai_dynamic_tool_payloads(openai_test_model: str) -> None:
         )
 
         catalog = InMemoryToolCatalog(factory)
-        catalog.add_metadata("lookup_product", category="commerce", tags=["product", "catalog", "inventory"])
+        catalog.add_metadata(
+            "lookup_product",
+            category="commerce",
+            tags=["product", "catalog", "inventory"],
+        )
         factory.set_catalog(catalog)
         factory.register_meta_tools()
 
@@ -687,7 +740,9 @@ async def test_openai_dynamic_tool_payloads(openai_test_model: str) -> None:
             tool_session=session,
         )
 
-        _safe_print(f"Response: {result.content[:200] if result.content else 'None'}...")
+        _safe_print(
+            f"Response: {result.content[:200] if result.content else 'None'}..."
+        )
         _safe_print(f"Payloads: {result.payloads}")
 
         assert session.is_active("lookup_product"), (
@@ -700,8 +755,7 @@ async def test_openai_dynamic_tool_payloads(openai_test_model: str) -> None:
 
         # Find the product lookup payload
         product_payloads = [
-            p for p in result.payloads
-            if p.get("tool_name") == "lookup_product"
+            p for p in result.payloads if p.get("tool_name") == "lookup_product"
         ]
         assert len(product_payloads) >= 1, (
             f"Expected at least one payload from lookup_product, got: {result.payloads}"
@@ -741,8 +795,12 @@ async def test_openai_no_session_backward_compat(openai_test_model: str) -> None
     This confirms backward compatibility: a factory with meta-tools
     registered but no session passed means the agent sees everything.
     """
-    api_key_display = f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
-    print(f"\n--- Test: OpenAI backward compat (no session) (Key: {api_key_display}) ---")
+    api_key_display = (
+        f"{OPENAI_API_KEY[:5]}...{OPENAI_API_KEY[-4:]}" if OPENAI_API_KEY else "N/A"
+    )
+    print(
+        f"\n--- Test: OpenAI backward compat (no session) (Key: {api_key_display}) ---"
+    )
 
     try:
         factory, catalog = _build_factory_and_catalog()
@@ -750,7 +808,10 @@ async def test_openai_no_session_backward_compat(openai_test_model: str) -> None
         client = LLMClient(model=openai_test_model, tool_factory=factory)
 
         messages = [
-            {"role": "system", "content": "You are a helpful assistant with access to tools."},
+            {
+                "role": "system",
+                "content": "You are a helpful assistant with access to tools.",
+            },
             {
                 "role": "user",
                 "content": "What's the weather in Tokyo?",
@@ -764,7 +825,9 @@ async def test_openai_no_session_backward_compat(openai_test_model: str) -> None
             temperature=0.0,
         )
 
-        _safe_print(f"Response: {result.content[:200] if result.content else 'None'}...")
+        _safe_print(
+            f"Response: {result.content[:200] if result.content else 'None'}..."
+        )
 
         assert result.content is not None
         assert str(WEATHER_TEMP) in result.content or "22" in result.content, (

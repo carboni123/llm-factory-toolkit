@@ -183,9 +183,7 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
         )
 
         # 2. Instantiate the LLMClient with the factory containing all tools
-        client = LLMClient(
-            model=openai_test_model, tool_factory=tool_factory
-        )
+        client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
         assert client is not None
         assert client.tool_factory is tool_factory
         print(
@@ -218,8 +216,7 @@ async def test_openai_three_tool_calls_combined_secret(openai_test_model: str) -
         assert len(generation_result.tool_messages) >= 3
         # All tool messages use normalised Chat Completions format
         assert all(
-            message.get("role") == "tool"
-            for message in generation_result.tool_messages
+            message.get("role") == "tool" for message in generation_result.tool_messages
         )
 
         # **Crucial Assertion**: Check if the COMBINED secret is present in the final response

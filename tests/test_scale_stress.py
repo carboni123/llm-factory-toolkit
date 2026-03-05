@@ -11,14 +11,16 @@ import sys
 import time
 from typing import Any, Dict
 
-import pytest
 
 from llm_factory_toolkit.tools.catalog import (
     InMemoryToolCatalog,
     LazyCatalogEntry,
-    ToolCatalogEntry,
 )
-from llm_factory_toolkit.tools.meta_tools import browse_toolkit, load_tools, unload_tools
+from llm_factory_toolkit.tools.meta_tools import (
+    browse_toolkit,
+    load_tools,
+    unload_tools,
+)
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.session import ToolSession
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
@@ -169,7 +171,7 @@ class TestSearchPerformance200:
             catalog.search(query="crm", limit=10)
         elapsed = time.perf_counter() - start
         per_search = elapsed / 50
-        assert per_search < 0.01, f"Search took {per_search*1000:.1f}ms avg"
+        assert per_search < 0.01, f"Search took {per_search * 1000:.1f}ms avg"
 
     def test_category_search_under_10ms(self) -> None:
         _, catalog = _build_stress_catalog(200)
@@ -178,7 +180,7 @@ class TestSearchPerformance200:
             catalog.search(category="analytics", limit=10)
         elapsed = time.perf_counter() - start
         per_search = elapsed / 50
-        assert per_search < 0.01, f"Category search took {per_search*1000:.1f}ms avg"
+        assert per_search < 0.01, f"Category search took {per_search * 1000:.1f}ms avg"
 
     def test_group_prefix_search(self) -> None:
         _, catalog = _build_stress_catalog(200)
@@ -195,7 +197,7 @@ class TestSearchPerformance200:
             catalog.search(query="action", category="sales", limit=10)
         elapsed = time.perf_counter() - start
         per_search = elapsed / 50
-        assert per_search < 0.01, f"Combined search took {per_search*1000:.1f}ms avg"
+        assert per_search < 0.01, f"Combined search took {per_search * 1000:.1f}ms avg"
 
     def test_search_with_scoring_under_20ms(self) -> None:
         """Relevance scoring adds overhead; still must be fast."""
@@ -205,7 +207,7 @@ class TestSearchPerformance200:
             catalog.search(query="contacts pipeline", limit=10, min_score=0.1)
         elapsed = time.perf_counter() - start
         per_search = elapsed / 50
-        assert per_search < 0.02, f"Scored search took {per_search*1000:.1f}ms avg"
+        assert per_search < 0.02, f"Scored search took {per_search * 1000:.1f}ms avg"
 
 
 # ------------------------------------------------------------------
@@ -325,7 +327,9 @@ class TestSessionScale200:
             active = session.list_active()
             assert len(active) == 200
         elapsed = time.perf_counter() - start
-        assert elapsed < 0.05, f"Recomputation took {elapsed:.4f}s for {iterations} iterations"
+        assert elapsed < 0.05, (
+            f"Recomputation took {elapsed:.4f}s for {iterations} iterations"
+        )
 
     def test_analytics_with_heavy_usage(self) -> None:
         session = ToolSession(max_tools=200)

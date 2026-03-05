@@ -9,7 +9,11 @@ import pytest
 from pydantic import BaseModel
 
 from llm_factory_toolkit.exceptions import ConfigurationError, UnsupportedFeatureError
-from llm_factory_toolkit.providers import BaseProvider, ProviderResponse, ProviderToolCall
+from llm_factory_toolkit.providers import (
+    BaseProvider,
+    ProviderResponse,
+    ProviderToolCall,
+)
 from llm_factory_toolkit.providers._registry import resolve_provider_key
 from llm_factory_toolkit.providers.openai import OpenAIAdapter
 from llm_factory_toolkit.providers.gemini import GeminiAdapter
@@ -257,7 +261,7 @@ def test_responses_to_chat_messages_conversion() -> None:
         {"type": "reasoning", "summary": "hidden"},
         {"type": "text", "text": "Hello"},
         {"type": "function_call", "call_id": "c1", "name": "echo", "arguments": "{}"},
-        {"type": "function_call_output", "call_id": "c1", "output": "{\"ok\":true}"},
+        {"type": "function_call_output", "call_id": "c1", "output": '{"ok":true}'},
     ]
 
     messages = OpenAIAdapter._responses_to_chat_messages(items)  # noqa: SLF001
@@ -282,7 +286,7 @@ def test_convert_messages_for_responses_api_conversion() -> None:
                 }
             ],
         },
-        {"role": "tool", "tool_call_id": "c1", "content": "{\"ok\":true}"},
+        {"role": "tool", "tool_call_id": "c1", "content": '{"ok":true}'},
     ]
 
     converted = OpenAIAdapter._convert_to_responses_api(messages)  # noqa: SLF001
@@ -339,7 +343,9 @@ async def test_generate_recomputes_visible_tools_from_tool_session(
         # First call: LLM wants to call "activate"
         ProviderResponse(
             content="",
-            tool_calls=[ProviderToolCall(call_id="call-1", name="activate", arguments="{}")],
+            tool_calls=[
+                ProviderToolCall(call_id="call-1", name="activate", arguments="{}")
+            ],
             raw_messages=[
                 {
                     "role": "assistant",
@@ -476,10 +482,20 @@ class TestResponsesToChatMessagesReasoning:
         """Multiple reasoning+function_call pairs preserve all raw items."""
         items = [
             {"type": "reasoning", "id": "rs_1", "summary": []},
-            {"type": "function_call", "call_id": "c1", "name": "fn1", "arguments": "{}"},
+            {
+                "type": "function_call",
+                "call_id": "c1",
+                "name": "fn1",
+                "arguments": "{}",
+            },
             {"type": "function_call_output", "call_id": "c1", "output": "ok"},
             {"type": "reasoning", "id": "rs_2", "summary": []},
-            {"type": "function_call", "call_id": "c2", "name": "fn2", "arguments": "{}"},
+            {
+                "type": "function_call",
+                "call_id": "c2",
+                "name": "fn2",
+                "arguments": "{}",
+            },
         ]
         result = OpenAIAdapter._responses_to_chat_messages(items)
         # First assistant message: reasoning + function_call
@@ -503,11 +519,20 @@ class TestConvertToResponsesApiReasoning:
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {"id": "c1", "type": "function", "function": {"name": "fn", "arguments": "{}"}},
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "fn", "arguments": "{}"},
+                    },
                 ],
                 "_raw_output_items": [
                     {"type": "reasoning", "id": "rs_1", "summary": []},
-                    {"type": "function_call", "call_id": "c1", "name": "fn", "arguments": "{}"},
+                    {
+                        "type": "function_call",
+                        "call_id": "c1",
+                        "name": "fn",
+                        "arguments": "{}",
+                    },
                 ],
             },
             {"role": "tool", "tool_call_id": "c1", "content": "result"},
@@ -545,7 +570,11 @@ class TestConvertToResponsesApiReasoning:
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {"id": "c1", "type": "function", "function": {"name": "fn", "arguments": "{}"}},
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "fn", "arguments": "{}"},
+                    },
                 ],
             },
         ]

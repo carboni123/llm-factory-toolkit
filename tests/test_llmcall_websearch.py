@@ -89,7 +89,9 @@ async def test_openai_web_search_call(openai_test_model: str) -> None:
             .replace("−", "-")
         )
         has_score = re.search(r"\b\d+\s*-\s*\d+\b", normalized) is not None
-        assert has_score, f"Expected a score pattern in response, got: {response_content}"
+        assert has_score, (
+            f"Expected a score pattern in response, got: {response_content}"
+        )
 
         print("OpenAI LLMClient web_search call test successful.")
 
@@ -170,7 +172,9 @@ async def test_google_genai_web_search_call(google_test_model: str) -> None:
             .replace("−", "-")
         )
         has_score = re.search(r"\b\d+\s*-\s*\d+\b", normalized) is not None
-        assert has_score, f"Expected a score pattern in response, got: {response_content}"
+        assert has_score, (
+            f"Expected a score pattern in response, got: {response_content}"
+        )
 
         print("Google GenAI LLMClient web_search call test successful.")
 

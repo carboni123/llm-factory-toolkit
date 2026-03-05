@@ -111,7 +111,10 @@ async def test_system_prompt(claude_code_test_model: str) -> None:
     client = LLMClient(model=claude_code_test_model)
     result = await client.generate(
         input=[
-            {"role": "system", "content": "You are a pirate. Always say 'Arrr' in your response."},
+            {
+                "role": "system",
+                "content": "You are a pirate. Always say 'Arrr' in your response.",
+            },
             {"role": "user", "content": "Greet me."},
         ],
     )

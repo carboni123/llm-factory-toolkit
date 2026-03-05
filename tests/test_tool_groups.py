@@ -57,7 +57,9 @@ def _build_grouped_factory(num_tools: int = 50) -> ToolFactory:
     return factory
 
 
-def _build_grouped_catalog(num_tools: int = 50) -> tuple[ToolFactory, InMemoryToolCatalog]:
+def _build_grouped_catalog(
+    num_tools: int = 50,
+) -> tuple[ToolFactory, InMemoryToolCatalog]:
     factory = _build_grouped_factory(num_tools)
     catalog = InMemoryToolCatalog(factory)
     return factory, catalog
@@ -66,6 +68,7 @@ def _build_grouped_catalog(num_tools: int = 50) -> tuple[ToolFactory, InMemoryTo
 # ------------------------------------------------------------------
 # ToolRegistration.group
 # ------------------------------------------------------------------
+
 
 class TestToolRegistrationGroup:
     def test_group_stored_on_registration(self) -> None:
@@ -94,11 +97,10 @@ class TestToolRegistrationGroup:
 # ToolCatalogEntry.group
 # ------------------------------------------------------------------
 
+
 class TestToolCatalogEntryGroup:
     def test_entry_has_group_field(self) -> None:
-        entry = ToolCatalogEntry(
-            name="test", description="desc", group="crm.contacts"
-        )
+        entry = ToolCatalogEntry(name="test", description="desc", group="crm.contacts")
         assert entry.group == "crm.contacts"
 
     def test_entry_group_defaults_to_none(self) -> None:
@@ -109,6 +111,7 @@ class TestToolCatalogEntryGroup:
 # ------------------------------------------------------------------
 # Catalog auto-build propagates group
 # ------------------------------------------------------------------
+
 
 class TestCatalogGroupPropagation:
     def test_group_flows_from_factory_to_catalog(self) -> None:
@@ -150,6 +153,7 @@ class TestCatalogGroupPropagation:
 # Catalog search by group prefix
 # ------------------------------------------------------------------
 
+
 class TestSearchByGroup:
     @pytest.fixture
     def catalog(self) -> InMemoryToolCatalog:
@@ -184,7 +188,9 @@ class TestSearchByGroup:
         results = catalog.search(group="nonexistent", limit=50)
         assert len(results) == 0
 
-    def test_search_group_combined_with_query(self, catalog: InMemoryToolCatalog) -> None:
+    def test_search_group_combined_with_query(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
         """Group filter combined with query narrows results."""
         # tool_000 is in crm.contacts, query for "000" should find it
         results = catalog.search(group="crm.contacts", query="000", limit=50)
@@ -192,7 +198,9 @@ class TestSearchByGroup:
         assert results[0].name == "tool_000"
         assert results[0].group == "crm.contacts"
 
-    def test_search_group_combined_with_category(self, catalog: InMemoryToolCatalog) -> None:
+    def test_search_group_combined_with_category(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
         """Group + category together."""
         results = catalog.search(group="crm.contacts", category="crm", limit=50)
         assert len(results) == 10
@@ -200,7 +208,9 @@ class TestSearchByGroup:
             assert entry.group == "crm.contacts"
             assert entry.category == "crm"
 
-    def test_search_no_group_filter_returns_all(self, catalog: InMemoryToolCatalog) -> None:
+    def test_search_no_group_filter_returns_all(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
         """Omitting group returns tools regardless of group."""
         results = catalog.search(limit=100)
         assert len(results) == 50
@@ -208,11 +218,11 @@ class TestSearchByGroup:
     def test_search_none_group_backward_compatible(self) -> None:
         """Tools without group are excluded when group filter is set."""
         factory = ToolFactory()
+        factory.register_tool(function=_noop, name="no_group", description="no group")
         factory.register_tool(
-            function=_noop, name="no_group", description="no group"
-        )
-        factory.register_tool(
-            function=_noop, name="has_group", description="has group",
+            function=_noop,
+            name="has_group",
+            description="has group",
             group="crm.contacts",
         )
         catalog = InMemoryToolCatalog(factory)
@@ -236,6 +246,7 @@ class TestSearchByGroup:
 # list_groups()
 # ------------------------------------------------------------------
 
+
 class TestListGroups:
     def test_list_groups_returns_sorted_unique(self) -> None:
         _, catalog = _build_grouped_catalog(50)
@@ -251,12 +262,8 @@ class TestListGroups:
 
     def test_list_groups_excludes_none(self) -> None:
         factory = ToolFactory()
-        factory.register_tool(
-            function=_noop, name="t1", description="d", group="a.b"
-        )
-        factory.register_tool(
-            function=_noop, name="t2", description="d"
-        )
+        factory.register_tool(function=_noop, name="t1", description="d", group="a.b")
+        factory.register_tool(function=_noop, name="t2", description="d")
         catalog = InMemoryToolCatalog(factory)
         assert catalog.list_groups() == ["a.b"]
 
@@ -264,6 +271,7 @@ class TestListGroups:
 # ------------------------------------------------------------------
 # browse_toolkit with group
 # ------------------------------------------------------------------
+
 
 class TestBrowseToolkitGroup:
     @pytest.fixture
@@ -330,8 +338,11 @@ class TestBrowseToolkitGroup:
         self, catalog: InMemoryToolCatalog, session: ToolSession
     ) -> None:
         result = browse_toolkit(
-            group="crm.pipeline", category="crm", limit=50,
-            tool_catalog=catalog, tool_session=session,
+            group="crm.pipeline",
+            category="crm",
+            limit=50,
+            tool_catalog=catalog,
+            tool_session=session,
         )
         body = json.loads(result.content)
         assert body["total_found"] == 10
@@ -344,15 +355,14 @@ class TestBrowseToolkitGroup:
 # Large-scale: 50+ tools across 5 groups
 # ------------------------------------------------------------------
 
+
 class TestLargeScaleGroups:
     def test_50_tools_across_5_groups(self) -> None:
         """Core scale requirement: 50+ tools across 5 groups."""
         _, catalog = _build_grouped_catalog(55)
         groups = catalog.list_groups()
         assert len(groups) == 5
-        total = sum(
-            len(catalog.search(group=g, limit=100)) for g in groups
-        )
+        total = sum(len(catalog.search(group=g, limit=100)) for g in groups)
         assert total == 55
 
     def test_group_distribution(self) -> None:
@@ -449,7 +459,14 @@ class TestLoadToolGroup:
             group="crm", tool_catalog=catalog, tool_session=session
         )
         body = json.loads(result.content)
-        expected_keys = {"group", "loaded", "already_active", "invalid", "failed_limit", "active_count"}
+        expected_keys = {
+            "group",
+            "loaded",
+            "already_active",
+            "invalid",
+            "failed_limit",
+            "active_count",
+        }
         assert expected_keys.issubset(set(body.keys()))
 
     def test_already_active_tools_reported(
@@ -465,12 +482,12 @@ class TestLoadToolGroup:
         assert "tool_000" in body["already_active"]
         assert "tool_000" not in body["loaded"]
 
-    def test_respects_max_tools_limit(
-        self, catalog: InMemoryToolCatalog
-    ) -> None:
+    def test_respects_max_tools_limit(self, catalog: InMemoryToolCatalog) -> None:
         """When max_tools is reached, excess tools appear in failed_limit."""
         session = ToolSession(max_tools=8)
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
         # 4 meta-tools loaded, room for 4 more out of 10 in crm.contacts
         result = load_tool_group(
             group="crm.contacts", tool_catalog=catalog, tool_session=session
@@ -479,13 +496,13 @@ class TestLoadToolGroup:
         assert len(body["loaded"]) == 4
         assert len(body["failed_limit"]) == 6
 
-    def test_respects_token_budget(
-        self, catalog: InMemoryToolCatalog
-    ) -> None:
+    def test_respects_token_budget(self, catalog: InMemoryToolCatalog) -> None:
         """When token budget would be exceeded, excess tools appear in failed_limit."""
         # Each tool has a token count from estimate_token_count; let's set a very small budget
         session = ToolSession(token_budget=1)
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
         result = load_tool_group(
             group="crm.contacts", tool_catalog=catalog, tool_session=session
         )
@@ -494,12 +511,12 @@ class TestLoadToolGroup:
         assert len(body["loaded"]) == 0
         assert len(body["failed_limit"]) == 10
 
-    def test_budget_snapshot_in_response(
-        self, catalog: InMemoryToolCatalog
-    ) -> None:
+    def test_budget_snapshot_in_response(self, catalog: InMemoryToolCatalog) -> None:
         """When token_budget is set, response includes budget info."""
         session = ToolSession(token_budget=100_000)
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
         result = load_tool_group(
             group="crm.contacts", tool_catalog=catalog, tool_session=session
         )
@@ -529,9 +546,7 @@ class TestLoadToolGroup:
         assert body["loaded"] == []
         assert body["group"] == "nonexistent"
 
-    def test_no_session_returns_error(
-        self, catalog: InMemoryToolCatalog
-    ) -> None:
+    def test_no_session_returns_error(self, catalog: InMemoryToolCatalog) -> None:
         """Without a session, returns an error."""
         result = load_tool_group(group="crm", tool_catalog=catalog)
         assert result.error is not None
@@ -590,7 +605,9 @@ class TestLoadToolGroupLargeScale:
         """Load each of 5 groups one by one, ending with all 55 tools active."""
         _, catalog = _build_grouped_catalog(55)
         session = ToolSession(max_tools=200)
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
 
         total_loaded = 0
         for group in GROUPS:
@@ -606,7 +623,9 @@ class TestLoadToolGroupLargeScale:
         """Loading prefix 'crm' then 'crm.contacts' reports already_active."""
         _, catalog = _build_grouped_catalog(50)
         session = ToolSession(max_tools=200)
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
 
         # Load all CRM tools
         result1 = load_tool_group(
@@ -627,7 +646,9 @@ class TestLoadToolGroupLargeScale:
         """With 55 tools and max_tools=30, not all fit."""
         _, catalog = _build_grouped_catalog(55)
         session = ToolSession(max_tools=30)
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
 
         total_loaded = 0
         total_failed = 0
@@ -652,7 +673,9 @@ class TestLoadToolGroupLargeScale:
         budget = per_tool * 5 + 1  # room for ~5 tools
 
         session = ToolSession(max_tools=200, token_budget=budget)
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
 
         result = load_tool_group(
             group="crm", tool_catalog=catalog, tool_session=session
@@ -696,7 +719,9 @@ class TestLoadToolGroupRegistration:
         from llm_factory_toolkit.tools.meta_tools import unload_tools
 
         session = ToolSession()
-        session.load(["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"])
+        session.load(
+            ["browse_toolkit", "load_tools", "load_tool_group", "unload_tools"]
+        )
         result = unload_tools(
             tool_names=["load_tool_group"],
             tool_session=session,
@@ -735,7 +760,9 @@ class TestGetToolsInGroup:
         names = catalog.get_tools_in_group("sales")
         assert names == sorted(names)
 
-    def test_nonexistent_group_returns_empty(self, catalog: InMemoryToolCatalog) -> None:
+    def test_nonexistent_group_returns_empty(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
         names = catalog.get_tools_in_group("nonexistent")
         assert names == []
 
@@ -750,7 +777,9 @@ class TestGetToolsInGroup:
 
     def test_tools_without_group_excluded(self) -> None:
         factory = ToolFactory()
-        factory.register_tool(function=_noop, name="grouped", description="d", group="a.b")
+        factory.register_tool(
+            function=_noop, name="grouped", description="d", group="a.b"
+        )
         factory.register_tool(function=_noop, name="ungrouped", description="d")
         catalog = InMemoryToolCatalog(factory)
         assert catalog.get_tools_in_group("a") == ["grouped"]
@@ -779,17 +808,24 @@ class TestUnloadToolGroup:
     @pytest.fixture
     def session(self) -> ToolSession:
         s = ToolSession()
-        s.load([
-            "browse_toolkit", "load_tools", "load_tool_group",
-            "unload_tool_group", "unload_tools",
-        ])
+        s.load(
+            [
+                "browse_toolkit",
+                "load_tools",
+                "load_tool_group",
+                "unload_tool_group",
+                "unload_tools",
+            ]
+        )
         return s
 
     def test_unloads_exact_group(
         self, catalog: InMemoryToolCatalog, session: ToolSession
     ) -> None:
         # First load the group
-        load_tool_group(group="crm.contacts", tool_catalog=catalog, tool_session=session)
+        load_tool_group(
+            group="crm.contacts", tool_catalog=catalog, tool_session=session
+        )
         assert session.is_active("tool_000")
 
         result = unload_tool_group(
@@ -858,9 +894,7 @@ class TestUnloadToolGroup:
         assert body["not_active"] == []
         assert body["group"] == "nonexistent"
 
-    def test_no_session_returns_error(
-        self, catalog: InMemoryToolCatalog
-    ) -> None:
+    def test_no_session_returns_error(self, catalog: InMemoryToolCatalog) -> None:
         result = unload_tool_group(group="crm", tool_catalog=catalog)
         assert result.error is not None
 
@@ -872,7 +906,9 @@ class TestUnloadToolGroup:
     def test_active_count_accurate(
         self, catalog: InMemoryToolCatalog, session: ToolSession
     ) -> None:
-        load_tool_group(group="crm.contacts", tool_catalog=catalog, tool_session=session)
+        load_tool_group(
+            group="crm.contacts", tool_catalog=catalog, tool_session=session
+        )
         meta_count = len(session.active_tools)  # 5 meta + 10 crm.contacts
         assert meta_count == 15
 
@@ -882,15 +918,20 @@ class TestUnloadToolGroup:
         body = json.loads(result.content)
         assert body["active_count"] == 5  # only meta-tools remain
 
-    def test_budget_snapshot_in_response(
-        self, catalog: InMemoryToolCatalog
-    ) -> None:
+    def test_budget_snapshot_in_response(self, catalog: InMemoryToolCatalog) -> None:
         session = ToolSession(token_budget=100_000)
-        session.load([
-            "browse_toolkit", "load_tools", "load_tool_group",
-            "unload_tool_group", "unload_tools",
-        ])
-        load_tool_group(group="crm.contacts", tool_catalog=catalog, tool_session=session)
+        session.load(
+            [
+                "browse_toolkit",
+                "load_tools",
+                "load_tool_group",
+                "unload_tool_group",
+                "unload_tools",
+            ]
+        )
+        load_tool_group(
+            group="crm.contacts", tool_catalog=catalog, tool_session=session
+        )
         result = unload_tool_group(
             group="crm.contacts", tool_catalog=catalog, tool_session=session
         )
@@ -949,10 +990,15 @@ class TestUnloadToolGroupRegistration:
         from llm_factory_toolkit.tools.meta_tools import unload_tools
 
         session = ToolSession()
-        session.load([
-            "browse_toolkit", "load_tools", "load_tool_group",
-            "unload_tool_group", "unload_tools",
-        ])
+        session.load(
+            [
+                "browse_toolkit",
+                "load_tools",
+                "load_tool_group",
+                "unload_tool_group",
+                "unload_tools",
+            ]
+        )
         result = unload_tools(
             tool_names=["unload_tool_group"],
             tool_session=session,

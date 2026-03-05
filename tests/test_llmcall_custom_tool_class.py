@@ -6,8 +6,6 @@ Requires OPENAI_API_KEY environment variable.
 
 import os
 import pytest
-import asyncio
-import json
 import logging
 from typing import Any, Dict
 

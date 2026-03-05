@@ -6,7 +6,6 @@ as gaps in the test coverage audit.
 
 from __future__ import annotations
 
-import pytest
 
 from llm_factory_toolkit.providers._util import strip_urls as _strip_urls
 

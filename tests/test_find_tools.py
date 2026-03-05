@@ -6,8 +6,7 @@ All tests run without API keys — the sub-agent LLM call is mocked.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import List
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,6 +26,7 @@ from llm_factory_toolkit.tools.tool_factory import ToolFactory
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
 
 def _make_factory() -> ToolFactory:
     """Factory with three dummy tools registered."""
@@ -204,7 +204,7 @@ class TestFindTools:
         session.load(["browse_toolkit", "load_tools", "create_customer"])
         agent = _mock_search_agent(["query_customers"])
 
-        result = await find_tools(
+        await find_tools(
             intent="find customers",
             tool_catalog=catalog,
             tool_session=session,
@@ -225,7 +225,13 @@ class TestFindTools:
         catalog = _make_catalog(factory)
         session = ToolSession()
         session.load(
-            ["browse_toolkit", "load_tools", "create_customer", "query_customers", "send_email"]
+            [
+                "browse_toolkit",
+                "load_tools",
+                "create_customer",
+                "query_customers",
+                "send_email",
+            ]
         )
 
         agent = _mock_search_agent(["create_customer"])

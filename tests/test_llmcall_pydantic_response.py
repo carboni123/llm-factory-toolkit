@@ -147,7 +147,9 @@ async def test_google_genai_pydantic_response_format(google_test_model: str) -> 
     api_key_display = (
         f"{GEMINI_API_KEY[:5]}...{GEMINI_API_KEY[-4:]}" if GEMINI_API_KEY else "Not Set"
     )
-    print(f"\n--- Starting Test: Google GenAI Pydantic Response Format (Key: {api_key_display}) ---")
+    print(
+        f"\n--- Starting Test: Google GenAI Pydantic Response Format (Key: {api_key_display}) ---"
+    )
 
     try:
         # 1. Initialize LLMClient
@@ -199,7 +201,9 @@ async def test_google_genai_pydantic_response_format(google_test_model: str) -> 
         pytest.fail(f"ConfigurationError during LLMClient initialization: {e}")
     except ProviderError as e:
         if "authentication" in str(e).lower() or "api key" in str(e).lower():
-            pytest.fail(f"Google GenAI Provider Authentication Error: {e}. Check API key.")
+            pytest.fail(
+                f"Google GenAI Provider Authentication Error: {e}. Check API key."
+            )
         elif "rate limit" in str(e).lower() or "quota" in str(e).lower():
             pytest.skip(f"Google GenAI Provider Rate Limit/Quota Error: {e}.")
         else:

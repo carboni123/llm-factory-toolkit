@@ -15,7 +15,6 @@ from llm_factory_toolkit.tools.models import (
     ToolExecutionResult,
     ToolIntentOutput,
 )
-from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
 
 def test_register_tool_uses_default_description_when_docstring_missing() -> None:

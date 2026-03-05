@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 from llm_factory_toolkit.tools.catalog import InMemoryToolCatalog
 from llm_factory_toolkit.tools.meta_tools import browse_toolkit
@@ -80,7 +80,7 @@ class TestCatalogSearchOffset:
     def test_offset_with_category_filter(self) -> None:
         factory = _make_factory(20)
         catalog = InMemoryToolCatalog(factory)
-        all_results = catalog.search(category="testing", limit=100)
+        catalog.search(category="testing", limit=100)
         page = catalog.search(category="testing", limit=3, offset=3)
         assert len(page) == 3
         for entry in page:
@@ -122,9 +122,7 @@ class TestBrowseToolkitPagination:
         catalog = InMemoryToolCatalog(factory)
         session = ToolSession()
 
-        result = browse_toolkit(
-            tool_catalog=catalog, tool_session=session, limit=5
-        )
+        result = browse_toolkit(tool_catalog=catalog, tool_session=session, limit=5)
         body = json.loads(result.content)
         assert body["total_found"] == 5
         assert len(body["results"]) == 5

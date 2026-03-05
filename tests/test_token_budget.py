@@ -110,11 +110,14 @@ class TestEstimateTokenCount:
 
     def test_formula_chars_per_token_ratio(self) -> None:
         """4 chars/token is the documented ratio."""
-        defn = _make_definition("test", params={
-            "type": "object",
-            "properties": {"x": {"type": "string"}},
-            "required": ["x"],
-        })
+        defn = _make_definition(
+            "test",
+            params={
+                "type": "object",
+                "properties": {"x": {"type": "string"}},
+                "required": ["x"],
+            },
+        )
         raw = json.dumps(defn, separators=(",", ":"))
         expected = max(1, int(len(raw) / 4.0 + 0.5))
         assert estimate_token_count(defn) == expected

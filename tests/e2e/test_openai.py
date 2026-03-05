@@ -22,7 +22,9 @@ async def test_simple_generation(openai_test_model: str) -> None:
     assert "4" in result.content
 
 
-async def test_single_tool_call(openai_test_model: str, tool_factory: ToolFactory) -> None:
+async def test_single_tool_call(
+    openai_test_model: str, tool_factory: ToolFactory
+) -> None:
     client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
     result = await client.generate(
         input=[
@@ -33,7 +35,9 @@ async def test_single_tool_call(openai_test_model: str, tool_factory: ToolFactor
     assert SECRET.lower() in result.content.lower()
 
 
-async def test_multi_tool_calls(openai_test_model: str, tool_factory: ToolFactory) -> None:
+async def test_multi_tool_calls(
+    openai_test_model: str, tool_factory: ToolFactory
+) -> None:
     client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
     result = await client.generate(
         input=[
@@ -74,7 +78,9 @@ async def test_streaming(openai_test_model: str) -> None:
     assert "3" in text
 
 
-async def test_tool_with_streaming(openai_test_model: str, tool_factory: ToolFactory) -> None:
+async def test_tool_with_streaming(
+    openai_test_model: str, tool_factory: ToolFactory
+) -> None:
     client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
     chunks: list[str] = []
     stream = await client.generate(

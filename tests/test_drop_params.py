@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-import pytest
 
 from llm_factory_toolkit.providers._base import BaseProvider
 
@@ -15,13 +14,19 @@ from llm_factory_toolkit.providers._base import BaseProvider
 
 
 class _MockAdapter(BaseProvider):
-    async def _call_api(self, model: str, messages: List[Dict[str, Any]], **kwargs: Any):  # type: ignore[override]
+    async def _call_api(
+        self, model: str, messages: List[Dict[str, Any]], **kwargs: Any
+    ):  # type: ignore[override]
         ...  # pragma: no cover
 
-    async def _call_api_stream(self, model: str, messages: List[Dict[str, Any]], **kwargs: Any):  # type: ignore[override]
+    async def _call_api_stream(
+        self, model: str, messages: List[Dict[str, Any]], **kwargs: Any
+    ):  # type: ignore[override]
         yield  # pragma: no cover
 
-    def _build_tool_definitions(self, definitions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _build_tool_definitions(
+        self, definitions: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         return definitions
 
 
@@ -89,7 +94,9 @@ def test_openai_extra_params():
 def test_anthropic_extra_params():
     from llm_factory_toolkit.providers.anthropic import AnthropicAdapter
 
-    assert AnthropicAdapter._EXTRA_PARAMS == frozenset({"top_k", "top_p", "stop_sequences", "metadata"})
+    assert AnthropicAdapter._EXTRA_PARAMS == frozenset(
+        {"top_k", "top_p", "stop_sequences", "metadata"}
+    )
 
 
 def test_gemini_extra_params():

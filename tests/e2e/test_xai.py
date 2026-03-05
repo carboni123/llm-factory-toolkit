@@ -74,7 +74,9 @@ async def test_streaming(xai_test_model: str) -> None:
     assert "3" in text
 
 
-async def test_tool_with_streaming(xai_test_model: str, tool_factory: ToolFactory) -> None:
+async def test_tool_with_streaming(
+    xai_test_model: str, tool_factory: ToolFactory
+) -> None:
     client = LLMClient(model=xai_test_model, tool_factory=tool_factory)
     chunks: list[str] = []
     stream = await client.generate(

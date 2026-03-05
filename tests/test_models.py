@@ -100,21 +100,15 @@ class TestCatalogIntegrity:
 
     def test_all_have_capabilities(self) -> None:
         for model_id, info in MODEL_CATALOG.items():
-            assert len(info.capabilities) > 0, (
-                f"{model_id} has no capabilities"
-            )
+            assert len(info.capabilities) > 0, f"{model_id} has no capabilities"
 
     def test_model_id_matches_key(self) -> None:
         for key, info in MODEL_CATALOG.items():
-            assert key == info.model_id, (
-                f"Key {key!r} != model_id {info.model_id!r}"
-            )
+            assert key == info.model_id, f"Key {key!r} != model_id {info.model_id!r}"
 
     def test_all_model_ids_are_prefixed(self) -> None:
         for model_id in MODEL_CATALOG:
-            assert "/" in model_id, (
-                f"{model_id} should be in 'provider/name' format"
-            )
+            assert "/" in model_id, f"{model_id} should be in 'provider/name' format"
 
     def test_all_streaming(self) -> None:
         """Every model in the catalog supports streaming."""

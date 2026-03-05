@@ -166,9 +166,7 @@ def _tool_call_response(
 ) -> ProviderResponse:
     return ProviderResponse(
         content="",
-        tool_calls=[
-            ProviderToolCall(call_id=call_id, name=name, arguments=arguments)
-        ],
+        tool_calls=[ProviderToolCall(call_id=call_id, name=name, arguments=arguments)],
         raw_messages=[
             {
                 "role": "assistant",

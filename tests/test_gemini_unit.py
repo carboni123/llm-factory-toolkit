@@ -73,7 +73,10 @@ class TestNormalizeSchemaForGemini:
         assert result["items"] == {"type": "string", "nullable": True}
 
     def test_original_not_mutated(self) -> None:
-        schema = {"type": ["string", "null"], "properties": {"a": {"type": ["int", "null"]}}}
+        schema = {
+            "type": ["string", "null"],
+            "properties": {"a": {"type": ["int", "null"]}},
+        }
         GeminiAdapter._normalize_schema_for_gemini(schema)
         assert schema["type"] == ["string", "null"]
         assert schema["properties"]["a"]["type"] == ["int", "null"]
@@ -318,17 +321,13 @@ class TestCallApi:
 
         generate_mock = AsyncMock(return_value=fake_response)
         fake_client = SimpleNamespace(
-            aio=SimpleNamespace(
-                models=SimpleNamespace(generate_content=generate_mock)
-            )
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_mock))
         )
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
         monkeypatch.setattr(
             adapter, "_build_native_tools", lambda tools, web_search=False: None
         )
-        monkeypatch.setattr(
-            adapter, "_build_config", lambda **kw: SimpleNamespace()
-        )
+        monkeypatch.setattr(adapter, "_build_config", lambda **kw: SimpleNamespace())
         monkeypatch.setattr(
             adapter, "_convert_messages", staticmethod(lambda msgs: msgs)
         )
@@ -347,17 +346,13 @@ class TestCallApi:
 
         generate_mock = AsyncMock(side_effect=RuntimeError("quota exceeded"))
         fake_client = SimpleNamespace(
-            aio=SimpleNamespace(
-                models=SimpleNamespace(generate_content=generate_mock)
-            )
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_mock))
         )
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
         monkeypatch.setattr(
             adapter, "_build_native_tools", lambda tools, web_search=False: None
         )
-        monkeypatch.setattr(
-            adapter, "_build_config", lambda **kw: SimpleNamespace()
-        )
+        monkeypatch.setattr(adapter, "_build_config", lambda **kw: SimpleNamespace())
         monkeypatch.setattr(
             adapter, "_convert_messages", staticmethod(lambda msgs: msgs)
         )
@@ -384,17 +379,13 @@ class TestCallApi:
 
         generate_mock = AsyncMock(return_value=fake_response)
         fake_client = SimpleNamespace(
-            aio=SimpleNamespace(
-                models=SimpleNamespace(generate_content=generate_mock)
-            )
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_mock))
         )
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
         monkeypatch.setattr(
             adapter, "_build_native_tools", lambda tools, web_search=False: None
         )
-        monkeypatch.setattr(
-            adapter, "_build_config", lambda **kw: SimpleNamespace()
-        )
+        monkeypatch.setattr(adapter, "_build_config", lambda **kw: SimpleNamespace())
         monkeypatch.setattr(
             adapter, "_convert_messages", staticmethod(lambda msgs: msgs)
         )
@@ -423,17 +414,13 @@ class TestCallApi:
 
         generate_mock = AsyncMock(return_value=fake_response)
         fake_client = SimpleNamespace(
-            aio=SimpleNamespace(
-                models=SimpleNamespace(generate_content=generate_mock)
-            )
+            aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_mock))
         )
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
         monkeypatch.setattr(
             adapter, "_build_native_tools", lambda tools, web_search=False: None
         )
-        monkeypatch.setattr(
-            adapter, "_build_config", lambda **kw: SimpleNamespace()
-        )
+        monkeypatch.setattr(adapter, "_build_config", lambda **kw: SimpleNamespace())
         monkeypatch.setattr(
             adapter, "_convert_messages", staticmethod(lambda msgs: msgs)
         )

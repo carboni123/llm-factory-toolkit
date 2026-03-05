@@ -32,7 +32,9 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 
-def _text_response(content: str, usage: Optional[Dict[str, int]] = None) -> ProviderResponse:
+def _text_response(
+    content: str, usage: Optional[Dict[str, int]] = None
+) -> ProviderResponse:
     """Build a ProviderResponse representing a plain text reply."""
     msg: Dict[str, Any] = {"role": "assistant", "content": content}
     return ProviderResponse(content=content, raw_messages=[msg], usage=usage)
@@ -56,7 +58,9 @@ def _tool_call_response(
             }
         ],
     }
-    return ProviderResponse(content="", tool_calls=[tc], raw_messages=[msg], usage=usage)
+    return ProviderResponse(
+        content="", tool_calls=[tc], raw_messages=[msg], usage=usage
+    )
 
 
 class _MockAdapter(BaseProvider):

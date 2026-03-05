@@ -37,10 +37,30 @@ def _build_diverse_catalog() -> tuple[ToolFactory, InMemoryToolCatalog]:
     """Build a catalog with tools that have varied relevance to 'email'."""
     factory = ToolFactory()
     tools = [
-        ("send_email", "Send an email to a recipient.", ["email", "notify"], "communication"),
-        ("search_products", "Search the product catalog by keyword.", ["search", "products"], "commerce"),
-        ("get_weather", "Get the current weather for a city.", ["weather", "location"], "data"),
-        ("email_validator", "Validate an email address format.", ["email", "validation"], "utility"),
+        (
+            "send_email",
+            "Send an email to a recipient.",
+            ["email", "notify"],
+            "communication",
+        ),
+        (
+            "search_products",
+            "Search the product catalog by keyword.",
+            ["search", "products"],
+            "commerce",
+        ),
+        (
+            "get_weather",
+            "Get the current weather for a city.",
+            ["weather", "location"],
+            "data",
+        ),
+        (
+            "email_validator",
+            "Validate an email address format.",
+            ["email", "validation"],
+            "utility",
+        ),
         ("create_contact", "Create a new contact in CRM.", ["crm", "contact"], "crm"),
         ("send_sms", "Send an SMS notification.", ["sms", "notify"], "communication"),
     ]
@@ -163,7 +183,7 @@ class TestSearchRelevanceSorting:
         scores = [r.relevance_score("email") for r in results]
         for i in range(len(scores) - 1):
             assert scores[i] >= scores[i + 1], (
-                f"Score at index {i} ({scores[i]}) < score at index {i+1} ({scores[i+1]})"
+                f"Score at index {i} ({scores[i]}) < score at index {i + 1} ({scores[i + 1]})"
             )
 
     def test_empty_query_returns_all_unsorted(self) -> None:

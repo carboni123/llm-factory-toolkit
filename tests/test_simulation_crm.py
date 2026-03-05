@@ -52,6 +52,7 @@ def _safe_print(text: str) -> None:
 
 # --- CRM category ---
 
+
 def query_customers(
     search: str | None = None,
     status: str | None = None,
@@ -163,6 +164,7 @@ def delete_customer(
 
 # --- Sales category ---
 
+
 def query_deals(
     customer_id: str | None = None,
     status: str | None = None,
@@ -173,15 +175,37 @@ def query_deals(
     **_,
 ) -> ToolExecutionResult:
     deals = [
-        {"id": "d1-mock", "name": "Premium Package", "customer": "Maria Silva", "amount": 5000, "stage": "Proposal"},
-        {"id": "d2-mock", "name": "Enterprise Plan", "customer": "Joao Santos", "amount": 12500, "stage": "Negotiation"},
-        {"id": "d3-mock", "name": "Starter Kit", "customer": "Ana Oliveira", "amount": 1500, "stage": "Prospecting"},
+        {
+            "id": "d1-mock",
+            "name": "Premium Package",
+            "customer": "Maria Silva",
+            "amount": 5000,
+            "stage": "Proposal",
+        },
+        {
+            "id": "d2-mock",
+            "name": "Enterprise Plan",
+            "customer": "Joao Santos",
+            "amount": 12500,
+            "stage": "Negotiation",
+        },
+        {
+            "id": "d3-mock",
+            "name": "Starter Kit",
+            "customer": "Ana Oliveira",
+            "amount": 1500,
+            "stage": "Prospecting",
+        },
     ]
     # Filter by search term, stage, or customer_id when provided
     filtered = deals
     if search:
         term = search.lower()
-        filtered = [d for d in filtered if term in d["name"].lower() or term in d["customer"].lower()]
+        filtered = [
+            d
+            for d in filtered
+            if term in d["name"].lower() or term in d["customer"].lower()
+        ]
     if stage:
         filtered = [d for d in filtered if d["stage"].lower() == stage.lower()]
     if customer_id:
@@ -195,7 +219,9 @@ def query_deals(
     total_value = sum(d["amount"] for d in filtered)
     lines = [f"Pipeline: ${total_value:,.2f} ({len(filtered)} deals)\n"]
     for i, d in enumerate(filtered, 1):
-        lines.append(f"{i}. [{d['id']}] {d['name']} - {d['customer']} | ${d['amount']:,} | Stage: {d['stage']}")
+        lines.append(
+            f"{i}. [{d['id']}] {d['name']} - {d['customer']} | ${d['amount']:,} | Stage: {d['stage']}"
+        )
     return ToolExecutionResult(
         content="\n".join(lines),
         metadata={"total": len(filtered), "pipeline_value": total_value},
@@ -243,6 +269,7 @@ def delete_deal(
 
 
 # --- Tasks category ---
+
 
 def query_tasks(
     customer_id: str | None = None,
@@ -321,6 +348,7 @@ def delete_task(
 
 # --- Calendar category ---
 
+
 def query_calendar(
     start_date: str,
     end_date: str,
@@ -392,6 +420,7 @@ def delete_calendar_event(
 
 # --- Communication category ---
 
+
 def send_media(
     document_id: str,
     filename: str,
@@ -412,7 +441,11 @@ def call_human(
 ) -> ToolExecutionResult:
     return ToolExecutionResult(
         content="Human reviewer has been notified.",
-        metadata={"summary": summary, "mood": mood, "attention_reason": attention_reason},
+        metadata={
+            "summary": summary,
+            "mood": mood,
+            "attention_reason": attention_reason,
+        },
     )
 
 
@@ -433,6 +466,7 @@ def transfer_to_agent(
 
 # --- Session category ---
 
+
 def close_session(
     reason: str,
     summary: str | None = None,
@@ -452,7 +486,10 @@ def generate_report(
 ) -> ToolExecutionResult:
     return ToolExecutionResult(
         content=f"Report '{report_type}' queued for generation.",
-        metadata={"report_type": report_type, "time_period": time_period or "last_30_days"},
+        metadata={
+            "report_type": report_type,
+            "time_period": time_period or "last_30_days",
+        },
     )
 
 
@@ -463,14 +500,20 @@ def generate_report(
 QUERY_CUSTOMERS_PARAMS = {
     "type": "object",
     "properties": {
-        "search": {"type": ["string", "null"], "description": "Search by name, phone, or email."},
+        "search": {
+            "type": ["string", "null"],
+            "description": "Search by name, phone, or email.",
+        },
         "status": {
             "type": ["string", "null"],
             "enum": ["Lead", "Prospect", "Active", "Inactive", "Archived", None],
             "description": "Filter by customer status.",
         },
         "page": {"type": "integer", "description": "Page number (default 1)."},
-        "per_page": {"type": "integer", "description": "Results per page (default 10, max 20)."},
+        "per_page": {
+            "type": "integer",
+            "description": "Results per page (default 10, max 20).",
+        },
     },
     "required": [],
 }
@@ -478,8 +521,14 @@ QUERY_CUSTOMERS_PARAMS = {
 GET_CUSTOMER_CONTEXT_PARAMS = {
     "type": "object",
     "properties": {
-        "customer_id": {"type": ["string", "null"], "description": "UUID of the customer."},
-        "phone_number": {"type": ["string", "null"], "description": "Phone number to look up."},
+        "customer_id": {
+            "type": ["string", "null"],
+            "description": "UUID of the customer.",
+        },
+        "phone_number": {
+            "type": ["string", "null"],
+            "description": "Phone number to look up.",
+        },
     },
     "required": [],
 }
@@ -496,7 +545,10 @@ CREATE_CUSTOMER_PARAMS = {
         "full_name": {"type": "string", "description": "Customer full name."},
         "email": {"type": ["string", "null"], "description": "Email address."},
         "phone_number": {"type": ["string", "null"], "description": "Phone number."},
-        "organization": {"type": ["string", "null"], "description": "Company or organization."},
+        "organization": {
+            "type": ["string", "null"],
+            "description": "Company or organization.",
+        },
         "notes": {"type": ["string", "null"], "description": "Additional notes."},
     },
     "required": ["full_name"],
@@ -505,11 +557,20 @@ CREATE_CUSTOMER_PARAMS = {
 UPDATE_CUSTOMER_PARAMS = {
     "type": "object",
     "properties": {
-        "customer_id": {"type": "string", "description": "UUID of the customer to update."},
+        "customer_id": {
+            "type": "string",
+            "description": "UUID of the customer to update.",
+        },
         "full_name": {"type": ["string", "null"], "description": "New full name."},
         "email": {"type": ["string", "null"], "description": "New email address."},
-        "phone_number": {"type": ["string", "null"], "description": "New phone number."},
-        "organization": {"type": ["string", "null"], "description": "New organization."},
+        "phone_number": {
+            "type": ["string", "null"],
+            "description": "New phone number.",
+        },
+        "organization": {
+            "type": ["string", "null"],
+            "description": "New organization.",
+        },
         "status": {
             "type": ["string", "null"],
             "enum": ["Lead", "Prospect", "Active", "Inactive", "Archived", None],
@@ -523,7 +584,10 @@ UPDATE_CUSTOMER_PARAMS = {
 DELETE_CUSTOMER_PARAMS = {
     "type": "object",
     "properties": {
-        "customer_id": {"type": "string", "description": "UUID of the customer to delete."},
+        "customer_id": {
+            "type": "string",
+            "description": "UUID of the customer to delete.",
+        },
         "reason": {"type": ["string", "null"], "description": "Reason for deletion."},
     },
     "required": ["customer_id"],
@@ -532,7 +596,10 @@ DELETE_CUSTOMER_PARAMS = {
 QUERY_DEALS_PARAMS = {
     "type": "object",
     "properties": {
-        "customer_id": {"type": ["string", "null"], "description": "Filter by customer UUID."},
+        "customer_id": {
+            "type": ["string", "null"],
+            "description": "Filter by customer UUID.",
+        },
         "status": {
             "type": ["string", "null"],
             "enum": ["Open", "Won", "Lost", "On Hold", None],
@@ -540,7 +607,14 @@ QUERY_DEALS_PARAMS = {
         },
         "stage": {
             "type": ["string", "null"],
-            "enum": ["Prospecting", "Qualification", "Proposal", "Negotiation", "Closed", None],
+            "enum": [
+                "Prospecting",
+                "Qualification",
+                "Proposal",
+                "Negotiation",
+                "Closed",
+                None,
+            ],
             "description": "Filter by pipeline stage.",
         },
         "search": {"type": ["string", "null"], "description": "Search by deal name."},
@@ -573,7 +647,14 @@ UPDATE_DEAL_PARAMS = {
         "amount": {"type": ["number", "null"], "description": "New deal value."},
         "stage": {
             "type": ["string", "null"],
-            "enum": ["Prospecting", "Qualification", "Proposal", "Negotiation", "Closed", None],
+            "enum": [
+                "Prospecting",
+                "Qualification",
+                "Proposal",
+                "Negotiation",
+                "Closed",
+                None,
+            ],
             "description": "New pipeline stage.",
         },
         "status": {
@@ -581,7 +662,10 @@ UPDATE_DEAL_PARAMS = {
             "enum": ["Open", "Won", "Lost", "On Hold", None],
             "description": "New deal status.",
         },
-        "customer_id": {"type": ["string", "null"], "description": "New customer UUID."},
+        "customer_id": {
+            "type": ["string", "null"],
+            "description": "New customer UUID.",
+        },
     },
     "required": ["deal_id"],
 }
@@ -598,7 +682,10 @@ DELETE_DEAL_PARAMS = {
 QUERY_TASKS_PARAMS = {
     "type": "object",
     "properties": {
-        "customer_id": {"type": ["string", "null"], "description": "Filter by customer."},
+        "customer_id": {
+            "type": ["string", "null"],
+            "description": "Filter by customer.",
+        },
         "status": {
             "type": ["string", "null"],
             "enum": ["To Do", "In Progress", "Completed", "Blocked", None],
@@ -609,7 +696,10 @@ QUERY_TASKS_PARAMS = {
             "enum": ["Low", "Medium", "High", "Urgent", None],
             "description": "Filter by priority.",
         },
-        "overdue_only": {"type": ["boolean", "null"], "description": "Show only overdue tasks."},
+        "overdue_only": {
+            "type": ["boolean", "null"],
+            "description": "Show only overdue tasks.",
+        },
         "search": {"type": ["string", "null"], "description": "Search task titles."},
         "page": {"type": "integer", "description": "Page number."},
         "per_page": {"type": "integer", "description": "Results per page."},
@@ -631,7 +721,10 @@ CREATE_TASK_PARAMS = {
             "enum": ["Low", "Medium", "High", "Urgent", None],
             "description": "Task priority.",
         },
-        "context_summary": {"type": ["string", "null"], "description": "AI summary of why task was created."},
+        "context_summary": {
+            "type": ["string", "null"],
+            "description": "AI summary of why task was created.",
+        },
     },
     "required": ["title", "due_date"],
 }
@@ -641,7 +734,10 @@ UPDATE_TASK_PARAMS = {
     "properties": {
         "task_id": {"type": "string", "description": "UUID of the task to update."},
         "title": {"type": ["string", "null"], "description": "New task title."},
-        "due_date": {"type": ["string", "null"], "description": "New due date (YYYY-MM-DD)."},
+        "due_date": {
+            "type": ["string", "null"],
+            "description": "New due date (YYYY-MM-DD).",
+        },
         "priority": {
             "type": ["string", "null"],
             "enum": ["Low", "Medium", "High", "Urgent", None],
@@ -652,8 +748,14 @@ UPDATE_TASK_PARAMS = {
             "enum": ["To Do", "In Progress", "Completed", "Blocked", None],
             "description": "New task status.",
         },
-        "description": {"type": ["string", "null"], "description": "New task description."},
-        "assignee_id": {"type": ["string", "null"], "description": "New assignee UUID."},
+        "description": {
+            "type": ["string", "null"],
+            "description": "New task description.",
+        },
+        "assignee_id": {
+            "type": ["string", "null"],
+            "description": "New assignee UUID.",
+        },
     },
     "required": ["task_id"],
 }
@@ -672,7 +774,10 @@ QUERY_CALENDAR_PARAMS = {
     "properties": {
         "start_date": {"type": "string", "description": "Start date (YYYY-MM-DD)."},
         "end_date": {"type": "string", "description": "End date (YYYY-MM-DD)."},
-        "customer_id": {"type": ["string", "null"], "description": "Filter by customer UUID."},
+        "customer_id": {
+            "type": ["string", "null"],
+            "description": "Filter by customer UUID.",
+        },
         "max_results": {"type": "integer", "description": "Max results (default 20)."},
     },
     "required": ["start_date", "end_date"],
@@ -684,11 +789,20 @@ CREATE_CALENDAR_EVENT_PARAMS = {
         "title": {"type": "string", "description": "Event title."},
         "start_time": {"type": "string", "description": "Start time (ISO 8601)."},
         "end_time": {"type": ["string", "null"], "description": "End time (ISO 8601)."},
-        "duration_minutes": {"type": ["integer", "null"], "description": "Duration in minutes (default 60)."},
-        "description": {"type": ["string", "null"], "description": "Event description."},
+        "duration_minutes": {
+            "type": ["integer", "null"],
+            "description": "Duration in minutes (default 60).",
+        },
+        "description": {
+            "type": ["string", "null"],
+            "description": "Event description.",
+        },
         "location": {"type": ["string", "null"], "description": "Event location."},
         "customer_id": {"type": ["string", "null"], "description": "Customer UUID."},
-        "all_day": {"type": "boolean", "description": "Whether this is an all-day event."},
+        "all_day": {
+            "type": "boolean",
+            "description": "Whether this is an all-day event.",
+        },
     },
     "required": ["title", "start_time"],
 }
@@ -700,7 +814,10 @@ UPDATE_CALENDAR_EVENT_PARAMS = {
         "title": {"type": ["string", "null"], "description": "New title."},
         "start_time": {"type": ["string", "null"], "description": "New start time."},
         "end_time": {"type": ["string", "null"], "description": "New end time."},
-        "duration_minutes": {"type": ["integer", "null"], "description": "New duration."},
+        "duration_minutes": {
+            "type": ["integer", "null"],
+            "description": "New duration.",
+        },
         "description": {"type": ["string", "null"], "description": "New description."},
         "location": {"type": ["string", "null"], "description": "New location."},
     },
@@ -711,7 +828,10 @@ DELETE_CALENDAR_EVENT_PARAMS = {
     "type": "object",
     "properties": {
         "event_id": {"type": "string", "description": "UUID of the event to delete."},
-        "reason": {"type": ["string", "null"], "description": "Reason for cancellation."},
+        "reason": {
+            "type": ["string", "null"],
+            "description": "Reason for cancellation.",
+        },
     },
     "required": ["event_id"],
 }
@@ -719,7 +839,10 @@ DELETE_CALENDAR_EVENT_PARAMS = {
 SEND_MEDIA_PARAMS = {
     "type": "object",
     "properties": {
-        "document_id": {"type": "string", "description": "UUID of the document to send."},
+        "document_id": {
+            "type": "string",
+            "description": "UUID of the document to send.",
+        },
         "filename": {"type": "string", "description": "Filename for the media."},
         "caption": {"type": ["string", "null"], "description": "Optional caption."},
     },
@@ -735,7 +858,10 @@ CALL_HUMAN_PARAMS = {
             "enum": ["positive", "neutral", "negative", "angry", "confused"],
             "description": "Session mood.",
         },
-        "attention_reason": {"type": "string", "description": "Classification for attention."},
+        "attention_reason": {
+            "type": "string",
+            "description": "Classification for attention.",
+        },
     },
     "required": ["summary", "mood", "attention_reason"],
 }
@@ -743,8 +869,14 @@ CALL_HUMAN_PARAMS = {
 TRANSFER_TO_AGENT_PARAMS = {
     "type": "object",
     "properties": {
-        "target_agent_name": {"type": "string", "description": "Name of the agent to transfer to."},
-        "conversation_summary": {"type": "string", "description": "Summary of the conversation so far."},
+        "target_agent_name": {
+            "type": "string",
+            "description": "Name of the agent to transfer to.",
+        },
+        "conversation_summary": {
+            "type": "string",
+            "description": "Summary of the conversation so far.",
+        },
         "transfer_reason": {"type": "string", "description": "Why transferring."},
     },
     "required": ["target_agent_name", "conversation_summary", "transfer_reason"],
@@ -753,7 +885,10 @@ TRANSFER_TO_AGENT_PARAMS = {
 CLOSE_SESSION_PARAMS = {
     "type": "object",
     "properties": {
-        "reason": {"type": "string", "description": "Why the session should be closed."},
+        "reason": {
+            "type": "string",
+            "description": "Why the session should be closed.",
+        },
         "summary": {"type": ["string", "null"], "description": "Resolution summary."},
         "notes": {"type": ["string", "null"], "description": "Notes for reviewers."},
     },
@@ -785,38 +920,201 @@ GENERATE_REPORT_PARAMS = {
 # (function, name, description, params, category, tags)
 ALL_TOOLS = [
     # CRM
-    (query_customers, "query_customers", "Search and list customers in the CRM by name, phone, or email.", QUERY_CUSTOMERS_PARAMS, "crm", ["search", "customer", "list"]),
-    (get_customer_context, "get_customer_context", "Get complete context for a customer including profile, tasks, deals, and events.", GET_CUSTOMER_CONTEXT_PARAMS, "crm", ["customer", "context", "profile"]),
-    (get_crm_summary, "get_crm_summary", "Get high-level CRM overview: customers, deal pipeline, task backlog, key metrics.", GET_CRM_SUMMARY_PARAMS, "crm", ["summary", "metrics", "overview"]),
-    (create_customer, "create_customer", "Create a new customer in the CRM system.", CREATE_CUSTOMER_PARAMS, "crm", ["create", "customer"]),
-    (update_customer, "update_customer", "Update an existing customer's details (name, email, phone, status).", UPDATE_CUSTOMER_PARAMS, "crm", ["update", "customer", "edit"]),
-    (delete_customer, "delete_customer", "Delete a customer from the CRM.", DELETE_CUSTOMER_PARAMS, "crm", ["delete", "customer", "remove"]),
+    (
+        query_customers,
+        "query_customers",
+        "Search and list customers in the CRM by name, phone, or email.",
+        QUERY_CUSTOMERS_PARAMS,
+        "crm",
+        ["search", "customer", "list"],
+    ),
+    (
+        get_customer_context,
+        "get_customer_context",
+        "Get complete context for a customer including profile, tasks, deals, and events.",
+        GET_CUSTOMER_CONTEXT_PARAMS,
+        "crm",
+        ["customer", "context", "profile"],
+    ),
+    (
+        get_crm_summary,
+        "get_crm_summary",
+        "Get high-level CRM overview: customers, deal pipeline, task backlog, key metrics.",
+        GET_CRM_SUMMARY_PARAMS,
+        "crm",
+        ["summary", "metrics", "overview"],
+    ),
+    (
+        create_customer,
+        "create_customer",
+        "Create a new customer in the CRM system.",
+        CREATE_CUSTOMER_PARAMS,
+        "crm",
+        ["create", "customer"],
+    ),
+    (
+        update_customer,
+        "update_customer",
+        "Update an existing customer's details (name, email, phone, status).",
+        UPDATE_CUSTOMER_PARAMS,
+        "crm",
+        ["update", "customer", "edit"],
+    ),
+    (
+        delete_customer,
+        "delete_customer",
+        "Delete a customer from the CRM.",
+        DELETE_CUSTOMER_PARAMS,
+        "crm",
+        ["delete", "customer", "remove"],
+    ),
     # Sales
-    (query_deals, "query_deals", "List and search deals in the sales pipeline with filtering.", QUERY_DEALS_PARAMS, "sales", ["deals", "pipeline", "search"]),
-    (create_deal, "create_deal", "Create a new deal in the CRM to track a potential sale.", CREATE_DEAL_PARAMS, "sales", ["create", "deal"]),
-    (update_deal, "update_deal", "Update an existing deal's details (name, amount, stage, status).", UPDATE_DEAL_PARAMS, "sales", ["update", "deal", "edit"]),
-    (delete_deal, "delete_deal", "Delete a deal from the sales pipeline.", DELETE_DEAL_PARAMS, "sales", ["delete", "deal", "remove"]),
+    (
+        query_deals,
+        "query_deals",
+        "List and search deals in the sales pipeline with filtering.",
+        QUERY_DEALS_PARAMS,
+        "sales",
+        ["deals", "pipeline", "search"],
+    ),
+    (
+        create_deal,
+        "create_deal",
+        "Create a new deal in the CRM to track a potential sale.",
+        CREATE_DEAL_PARAMS,
+        "sales",
+        ["create", "deal"],
+    ),
+    (
+        update_deal,
+        "update_deal",
+        "Update an existing deal's details (name, amount, stage, status).",
+        UPDATE_DEAL_PARAMS,
+        "sales",
+        ["update", "deal", "edit"],
+    ),
+    (
+        delete_deal,
+        "delete_deal",
+        "Delete a deal from the sales pipeline.",
+        DELETE_DEAL_PARAMS,
+        "sales",
+        ["delete", "deal", "remove"],
+    ),
     # Tasks
-    (query_tasks, "query_tasks", "List and search tasks with filtering for status, priority, and overdue.", QUERY_TASKS_PARAMS, "tasks", ["tasks", "todo", "search"]),
-    (create_task, "create_task", "Create a new task for follow-ups, reminders, or action items.", CREATE_TASK_PARAMS, "tasks", ["create", "task", "todo"]),
-    (update_task, "update_task", "Update an existing task's details (title, due date, priority, status).", UPDATE_TASK_PARAMS, "tasks", ["update", "task", "edit"]),
-    (delete_task, "delete_task", "Delete a task.", DELETE_TASK_PARAMS, "tasks", ["delete", "task", "remove"]),
+    (
+        query_tasks,
+        "query_tasks",
+        "List and search tasks with filtering for status, priority, and overdue.",
+        QUERY_TASKS_PARAMS,
+        "tasks",
+        ["tasks", "todo", "search"],
+    ),
+    (
+        create_task,
+        "create_task",
+        "Create a new task for follow-ups, reminders, or action items.",
+        CREATE_TASK_PARAMS,
+        "tasks",
+        ["create", "task", "todo"],
+    ),
+    (
+        update_task,
+        "update_task",
+        "Update an existing task's details (title, due date, priority, status).",
+        UPDATE_TASK_PARAMS,
+        "tasks",
+        ["update", "task", "edit"],
+    ),
+    (
+        delete_task,
+        "delete_task",
+        "Delete a task.",
+        DELETE_TASK_PARAMS,
+        "tasks",
+        ["delete", "task", "remove"],
+    ),
     # Calendar
-    (query_calendar, "query_calendar", "Query calendar events to check availability and view schedules.", QUERY_CALENDAR_PARAMS, "calendar", ["schedule", "events", "availability"]),
-    (create_calendar_event, "create_calendar_event", "Create a new calendar event (appointment, meeting).", CREATE_CALENDAR_EVENT_PARAMS, "calendar", ["create", "event", "appointment"]),
-    (update_calendar_event, "update_calendar_event", "Update an existing calendar event.", UPDATE_CALENDAR_EVENT_PARAMS, "calendar", ["update", "event", "reschedule"]),
-    (delete_calendar_event, "delete_calendar_event", "Cancel and delete a calendar event.", DELETE_CALENDAR_EVENT_PARAMS, "calendar", ["delete", "cancel", "event"]),
+    (
+        query_calendar,
+        "query_calendar",
+        "Query calendar events to check availability and view schedules.",
+        QUERY_CALENDAR_PARAMS,
+        "calendar",
+        ["schedule", "events", "availability"],
+    ),
+    (
+        create_calendar_event,
+        "create_calendar_event",
+        "Create a new calendar event (appointment, meeting).",
+        CREATE_CALENDAR_EVENT_PARAMS,
+        "calendar",
+        ["create", "event", "appointment"],
+    ),
+    (
+        update_calendar_event,
+        "update_calendar_event",
+        "Update an existing calendar event.",
+        UPDATE_CALENDAR_EVENT_PARAMS,
+        "calendar",
+        ["update", "event", "reschedule"],
+    ),
+    (
+        delete_calendar_event,
+        "delete_calendar_event",
+        "Cancel and delete a calendar event.",
+        DELETE_CALENDAR_EVENT_PARAMS,
+        "calendar",
+        ["delete", "cancel", "event"],
+    ),
     # Communication
-    (send_media, "send_media", "Send media files (PDFs, images) to customers via WhatsApp.", SEND_MEDIA_PARAMS, "communication", ["media", "whatsapp", "send"]),
-    (call_human, "call_human", "Request human attention for the current conversation.", CALL_HUMAN_PARAMS, "communication", ["human", "escalate", "attention"]),
-    (transfer_to_agent, "transfer_to_agent", "Transfer conversation to another specialist agent.", TRANSFER_TO_AGENT_PARAMS, "communication", ["transfer", "handoff", "agent"]),
+    (
+        send_media,
+        "send_media",
+        "Send media files (PDFs, images) to customers via WhatsApp.",
+        SEND_MEDIA_PARAMS,
+        "communication",
+        ["media", "whatsapp", "send"],
+    ),
+    (
+        call_human,
+        "call_human",
+        "Request human attention for the current conversation.",
+        CALL_HUMAN_PARAMS,
+        "communication",
+        ["human", "escalate", "attention"],
+    ),
+    (
+        transfer_to_agent,
+        "transfer_to_agent",
+        "Transfer conversation to another specialist agent.",
+        TRANSFER_TO_AGENT_PARAMS,
+        "communication",
+        ["transfer", "handoff", "agent"],
+    ),
     # Session
-    (close_session, "close_session", "Signal that the current session should be closed.", CLOSE_SESSION_PARAMS, "session", ["close", "end"]),
-    (generate_report, "generate_report", "Generate a PDF report with CRM data.", GENERATE_REPORT_PARAMS, "session", ["report", "pdf", "export"]),
+    (
+        close_session,
+        "close_session",
+        "Signal that the current session should be closed.",
+        CLOSE_SESSION_PARAMS,
+        "session",
+        ["close", "end"],
+    ),
+    (
+        generate_report,
+        "generate_report",
+        "Generate a PDF report with CRM data.",
+        GENERATE_REPORT_PARAMS,
+        "session",
+        ["report", "pdf", "export"],
+    ),
 ]
 
 
-def _build_simulation() -> tuple[LLMClient, ToolFactory, InMemoryToolCatalog, ToolSession]:
+def _build_simulation() -> tuple[
+    LLMClient, ToolFactory, InMemoryToolCatalog, ToolSession
+]:
     """Register all 23 CRM tools + meta-tools and return a ready-to-use simulation."""
     factory = ToolFactory()
 
@@ -857,9 +1155,11 @@ SYSTEM_PROMPT = (
 
 def _make_error_handler(test_name: str):
     """Return a context-manager-like error handler for integration tests."""
+
     class _Handler:
         def __enter__(self):
             return self
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             if exc_type is None:
                 return False
@@ -877,12 +1177,14 @@ def _make_error_handler(test_name: str):
             if issubclass(exc_type, (UnsupportedFeatureError, LLMToolkitError)):
                 pytest.fail(f"[{test_name}] {exc_type.__name__}: {exc_val}")
             return False
+
     return _Handler()
 
 
 # =====================================================================
 # Test 1: CRM summary query
 # =====================================================================
+
 
 @pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_crm_query_scenario(openai_test_model: str) -> None:
@@ -895,7 +1197,10 @@ async def test_crm_query_scenario(openai_test_model: str) -> None:
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "How many customers do we have? Give me a CRM overview."},
+            {
+                "role": "user",
+                "content": "How many customers do we have? Give me a CRM overview.",
+            },
         ]
 
         result = await client.generate(
@@ -909,9 +1214,9 @@ async def test_crm_query_scenario(openai_test_model: str) -> None:
         print(f"Active tools: {session.list_active()}")
 
         # Verify the agent loaded and used CRM tools
-        assert session.is_active("get_crm_summary") or session.is_active("query_customers"), (
-            f"Expected CRM tool loaded. Active: {session.list_active()}"
-        )
+        assert session.is_active("get_crm_summary") or session.is_active(
+            "query_customers"
+        ), f"Expected CRM tool loaded. Active: {session.list_active()}"
         assert result.content is not None
         # The mock returns "156" as total customers
         assert "156" in result.content or "customer" in result.content.lower(), (
@@ -923,6 +1228,7 @@ async def test_crm_query_scenario(openai_test_model: str) -> None:
 # =====================================================================
 # Test 2: Calendar booking (multi-tool chain)
 # =====================================================================
+
 
 @pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_calendar_booking_scenario(openai_test_model: str) -> None:
@@ -956,9 +1262,8 @@ async def test_calendar_booking_scenario(openai_test_model: str) -> None:
         print(f"Active tools: {session.list_active()}")
 
         # Agent should have loaded calendar tools
-        has_calendar = (
-            session.is_active("create_calendar_event")
-            or session.is_active("query_calendar")
+        has_calendar = session.is_active("create_calendar_event") or session.is_active(
+            "query_calendar"
         )
         assert has_calendar, (
             f"Expected calendar tool loaded. Active: {session.list_active()}"
@@ -967,17 +1272,24 @@ async def test_calendar_booking_scenario(openai_test_model: str) -> None:
         # The agent may create the event or detect a conflict and ask —
         # either way it should mention the appointment context
         content_lower = result.content.lower()
-        assert any(w in content_lower for w in [
-            "created", "booked", "scheduled", "conflict", "maria", "haircut",
-        ]), (
-            f"Expected calendar-related response: {result.content}"
-        )
+        assert any(
+            w in content_lower
+            for w in [
+                "created",
+                "booked",
+                "scheduled",
+                "conflict",
+                "maria",
+                "haircut",
+            ]
+        ), f"Expected calendar-related response: {result.content}"
         print("Calendar booking test passed.")
 
 
 # =====================================================================
 # Test 3: Task creation
 # =====================================================================
+
 
 @pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_task_creation_scenario(openai_test_model: str) -> None:
@@ -1011,15 +1323,16 @@ async def test_task_creation_scenario(openai_test_model: str) -> None:
         )
         assert result.content is not None
         content_lower = result.content.lower()
-        assert "task" in content_lower and ("created" in content_lower or "success" in content_lower), (
-            f"Expected task creation confirmation: {result.content}"
-        )
+        assert "task" in content_lower and (
+            "created" in content_lower or "success" in content_lower
+        ), f"Expected task creation confirmation: {result.content}"
         print("Task creation test passed.")
 
 
 # =====================================================================
 # Test 4: Customer lookup
 # =====================================================================
+
 
 @pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_customer_lookup_scenario(openai_test_model: str) -> None:
@@ -1053,9 +1366,8 @@ async def test_customer_lookup_scenario(openai_test_model: str) -> None:
         print(f"Active tools: {session.list_active()}")
 
         # Should have loaded customer tools
-        has_crm_tool = (
-            session.is_active("query_customers")
-            or session.is_active("get_customer_context")
+        has_crm_tool = session.is_active("query_customers") or session.is_active(
+            "get_customer_context"
         )
         assert has_crm_tool, (
             f"Expected customer tool loaded. Active: {session.list_active()}"
@@ -1063,15 +1375,16 @@ async def test_customer_lookup_scenario(openai_test_model: str) -> None:
         # The agent may hit max iterations; check session state as primary assertion
         # If it did produce content, verify it mentions the customer
         if result.content and "Tool executions completed" not in result.content:
-            assert "maria" in result.content.lower() or "5511999998888" in result.content, (
-                f"Expected customer data in response: {result.content}"
-            )
+            assert (
+                "maria" in result.content.lower() or "5511999998888" in result.content
+            ), f"Expected customer data in response: {result.content}"
         print("Customer lookup test passed.")
 
 
 # =====================================================================
 # Test 5: Cross-category workflow (calendar + tasks)
 # =====================================================================
+
 
 @pytest.mark.skipif(skip_openai, reason=skip_reason_openai)
 async def test_full_workflow_scenario(openai_test_model: str) -> None:

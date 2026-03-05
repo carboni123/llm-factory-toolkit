@@ -191,9 +191,7 @@ async def test_openai_three_tool_calls_combined_secret(
         )
 
         # 2. Instantiate the LLMClient with the factory containing all tools
-        client = LLMClient(
-            model=openai_test_model, tool_factory=tool_factory
-        )
+        client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
         assert client is not None
         assert client.tool_factory is tool_factory
         print(

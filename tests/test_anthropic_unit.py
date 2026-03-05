@@ -254,9 +254,7 @@ class TestParseResponse:
         resp = SimpleNamespace(
             content=[
                 SimpleNamespace(type="text", text="Looking up... "),
-                SimpleNamespace(
-                    type="tool_use", id="tc1", name="f", input={"x": 1}
-                ),
+                SimpleNamespace(type="tool_use", id="tc1", name="f", input={"x": 1}),
             ]
         )
         text, tools = AnthropicAdapter._parse_response(resp)
@@ -292,9 +290,7 @@ class TestBuildRawMessages:
 
 class TestExtractUsage:
     def test_with_usage(self) -> None:
-        resp = SimpleNamespace(
-            usage=SimpleNamespace(input_tokens=10, output_tokens=5)
-        )
+        resp = SimpleNamespace(usage=SimpleNamespace(input_tokens=10, output_tokens=5))
         usage = AnthropicAdapter._extract_usage(resp)
         assert usage == {
             "prompt_tokens": 10,
@@ -327,9 +323,7 @@ class TestCallApi:
             usage=SimpleNamespace(input_tokens=10, output_tokens=5),
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         result = await adapter._call_api(  # noqa: SLF001
@@ -351,9 +345,7 @@ class TestCallApi:
             usage=None,
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         await adapter._call_api(  # noqa: SLF001
@@ -375,9 +367,7 @@ class TestCallApi:
             usage=None,
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         await adapter._call_api(  # noqa: SLF001
@@ -396,9 +386,7 @@ class TestCallApi:
             usage=None,
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         tools = [{"name": "fn", "description": "d", "input_schema": {}}]
@@ -425,9 +413,7 @@ class TestCallApi:
             usage=SimpleNamespace(input_tokens=5, output_tokens=3),
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         result = await adapter._call_api(  # noqa: SLF001
@@ -453,9 +439,7 @@ class TestCallApi:
             usage=None,
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         existing = [{"name": "fn", "description": "d", "input_schema": {}}]
@@ -480,9 +464,7 @@ class TestCallApi:
             usage=None,
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         await adapter._call_api(  # noqa: SLF001
@@ -503,9 +485,7 @@ class TestCallApi:
             usage=None,
         )
         create_mock = AsyncMock(return_value=fake_response)
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         await adapter._call_api(  # noqa: SLF001
@@ -520,9 +500,7 @@ class TestCallApi:
     async def test_api_error_wrapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         adapter = AnthropicAdapter(api_key="k")
         create_mock = AsyncMock(side_effect=RuntimeError("rate limit"))
-        fake_client = SimpleNamespace(
-            messages=SimpleNamespace(create=create_mock)
-        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=create_mock))
         monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
         with pytest.raises(ProviderError, match="Anthropic API error"):
@@ -558,9 +536,7 @@ class TestGetClient:
         adapter = AnthropicAdapter()
         adapter._async_client = None  # noqa: SLF001
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        fake_module = SimpleNamespace(
-            AsyncAnthropic=lambda **kw: SimpleNamespace()
-        )
+        fake_module = SimpleNamespace(AsyncAnthropic=lambda **kw: SimpleNamespace())
         import builtins
 
         real_import = builtins.__import__

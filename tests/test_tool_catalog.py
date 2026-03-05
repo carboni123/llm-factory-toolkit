@@ -13,6 +13,7 @@ from llm_factory_toolkit.tools.tool_factory import ToolFactory
 # Fixtures
 # ------------------------------------------------------------------
 
+
 @pytest.fixture
 def factory_with_tools() -> ToolFactory:
     """ToolFactory with several registered tools."""
@@ -69,7 +70,9 @@ def catalog(factory_with_tools: ToolFactory) -> InMemoryToolCatalog:
     """Catalog auto-built from the factory, with metadata enrichment."""
     cat = InMemoryToolCatalog(factory_with_tools)
     cat.add_metadata("send_email", category="communication", tags=["email", "notify"])
-    cat.add_metadata("search_products", category="commerce", tags=["search", "products"])
+    cat.add_metadata(
+        "search_products", category="commerce", tags=["search", "products"]
+    )
     cat.add_metadata("get_weather", category="data", tags=["weather", "location"])
     return cat
 
@@ -77,6 +80,7 @@ def catalog(factory_with_tools: ToolFactory) -> InMemoryToolCatalog:
 # ------------------------------------------------------------------
 # Auto-build from factory
 # ------------------------------------------------------------------
+
 
 class TestAutoBuilding:
     def test_all_tools_in_catalog(self, catalog: InMemoryToolCatalog) -> None:
@@ -99,6 +103,7 @@ class TestAutoBuilding:
 # ------------------------------------------------------------------
 # Metadata enrichment
 # ------------------------------------------------------------------
+
 
 class TestMetadata:
     def test_add_metadata_category(self, catalog: InMemoryToolCatalog) -> None:
@@ -133,6 +138,7 @@ class TestMetadata:
 # ------------------------------------------------------------------
 # Search
 # ------------------------------------------------------------------
+
 
 class TestSearch:
     def test_search_by_query(self, catalog: InMemoryToolCatalog) -> None:
@@ -176,6 +182,7 @@ class TestSearch:
 # Categories
 # ------------------------------------------------------------------
 
+
 class TestCategories:
     def test_list_categories(self, catalog: InMemoryToolCatalog) -> None:
         cats = catalog.list_categories()
@@ -185,6 +192,7 @@ class TestCategories:
 # ------------------------------------------------------------------
 # ToolCatalogEntry.matches_query
 # ------------------------------------------------------------------
+
 
 class TestEntryMatchesQuery:
     def test_matches_name(self) -> None:
@@ -263,6 +271,7 @@ class TestEntryMatchesQuery:
 # ------------------------------------------------------------------
 # Auto-populated metadata from register_tool()
 # ------------------------------------------------------------------
+
 
 class TestAutoPopulatedMetadata:
     def test_category_from_register_tool(self) -> None:

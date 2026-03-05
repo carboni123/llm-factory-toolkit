@@ -1,7 +1,5 @@
 """Tests for ToolSession."""
 
-import pytest
-
 from llm_factory_toolkit.tools.session import ToolSession
 
 

@@ -4,8 +4,6 @@ This is an integration test and requires a valid GEMINI_API_KEY environment vari
 
 import os
 import pytest
-import asyncio
-import logging  # Optional: Add logging if needed
 
 # Imports from your library
 from llm_factory_toolkit import LLMClient

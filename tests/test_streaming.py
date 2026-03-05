@@ -56,7 +56,7 @@ async def test_openai_streaming_basic(openai_test_model: str) -> None:
     Verifies that chunks have content and the final chunk has done=True.
     Requires OPENAI_API_KEY.
     """
-    print(f"\n--- Starting Test: OpenAI Streaming Basic ---")
+    print("\n--- Starting Test: OpenAI Streaming Basic ---")
 
     try:
         client = LLMClient(model=openai_test_model)
@@ -130,7 +130,7 @@ async def test_openai_streaming_usage_metadata(openai_test_model: str) -> None:
     Tests that the final StreamChunk includes usage metadata when streaming.
     Requires OPENAI_API_KEY.
     """
-    print(f"\n--- Starting Test: OpenAI Streaming Usage Metadata ---")
+    print("\n--- Starting Test: OpenAI Streaming Usage Metadata ---")
 
     try:
         client = LLMClient(model=openai_test_model)
@@ -166,13 +166,13 @@ async def test_openai_streaming_usage_metadata(openai_test_model: str) -> None:
             assert "total_tokens" in last_chunk.usage, (
                 "Usage should contain total_tokens"
             )
-            assert last_chunk.usage["total_tokens"] > 0, (
-                "Total tokens should be > 0"
-            )
+            assert last_chunk.usage["total_tokens"] > 0, "Total tokens should be > 0"
             print("Streaming usage metadata test successful.")
         else:
             # Usage may not always be available depending on the provider
-            print("Warning: No usage metadata returned in final stream chunk (may be expected for some providers).")
+            print(
+                "Warning: No usage metadata returned in final stream chunk (may be expected for some providers)."
+            )
 
     except ConfigurationError as e:
         pytest.fail(f"ConfigurationError: {e}")
@@ -197,7 +197,7 @@ async def test_google_genai_streaming_basic(google_test_model: str) -> None:
     Tests that stream=True returns an async generator of StreamChunk objects
     with a Google GenAI model. Requires GEMINI_API_KEY.
     """
-    print(f"\n--- Starting Test: Google GenAI Streaming Basic ---")
+    print("\n--- Starting Test: Google GenAI Streaming Basic ---")
 
     try:
         client = LLMClient(model=google_test_model)

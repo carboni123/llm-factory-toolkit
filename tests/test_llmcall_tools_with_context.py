@@ -7,9 +7,7 @@ Requires a valid OPENAI_API_KEY environment variable.
 
 import os
 import pytest
-import asyncio
 import json
-from typing import Any, Dict
 
 # Imports from your library
 from llm_factory_toolkit import LLMClient
@@ -43,7 +41,7 @@ USER_PASSWORDS = {
 TARGET_USER_ID = "user_gamma"
 EXPECTED_PASSWORD = USER_PASSWORDS[TARGET_USER_ID]
 
-USER_PROMPT_CONTEXT_TOOL = f"I need the password for our system."  # LLM should infer to use the tool without needing user_id
+USER_PROMPT_CONTEXT_TOOL = "I need the password for our system."  # LLM should infer to use the tool without needing user_id
 MOCK_TOOL_NAME_CONTEXT = "get_user_password"
 
 # --- Skip Condition ---
@@ -154,12 +152,8 @@ async def test_openai_tool_call_with_context_injection(
         ), "user_id should NOT be in the tool's advertised parameters for the LLM"
 
         # 2. Instantiate the LLMClient
-        client = LLMClient(
-            model=openai_test_model, tool_factory=tool_factory
-        )
-        print(
-            f"LLMClient initialized with model: {client.model} and Tool Factory"
-        )
+        client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
+        print(f"LLMClient initialized with model: {client.model} and Tool Factory")
 
         # 3. Prepare messages
         messages = [

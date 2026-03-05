@@ -21,7 +21,6 @@ from llm_factory_toolkit.providers._base import (
     BaseProvider,
     ProviderResponse,
     ProviderToolCall,
-    ToolResultMessage,
 )
 from llm_factory_toolkit.tools.meta_tools import (
     browse_toolkit,
@@ -237,9 +236,7 @@ class TestAutoCompactProvider:
         )
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 
@@ -279,9 +276,7 @@ class TestAutoCompactProvider:
         )
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 
@@ -314,9 +309,7 @@ class TestAutoCompactProvider:
         )
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 
@@ -346,9 +339,7 @@ class TestAutoCompactProvider:
         )
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 
@@ -383,13 +374,13 @@ class TestAutoCompactLogging:
         )
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 
-        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.providers._base"):
+        with caplog.at_level(
+            logging.INFO, logger="llm_factory_toolkit.providers._base"
+        ):
             await adapter.generate(
                 input=[{"role": "user", "content": "test"}],
                 model="test-model",
@@ -420,13 +411,13 @@ class TestAutoCompactLogging:
         )
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 
-        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.providers._base"):
+        with caplog.at_level(
+            logging.INFO, logger="llm_factory_toolkit.providers._base"
+        ):
             await adapter.generate(
                 input=[{"role": "user", "content": "test"}],
                 model="test-model",
@@ -646,13 +637,13 @@ class TestNoBudgetNoAutoCompact:
         session.load(["core_tool", "dynamic_0"])
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 
-        with caplog.at_level(logging.INFO, logger="llm_factory_toolkit.providers._base"):
+        with caplog.at_level(
+            logging.INFO, logger="llm_factory_toolkit.providers._base"
+        ):
             await adapter.generate(
                 input=[{"role": "user", "content": "test"}],
                 model="test-model",
@@ -680,9 +671,7 @@ class TestNoSessionNoAutoCompact:
         adapter = _MockAdapter(tool_factory=factory)
 
         adapter.set_responses(
-            _tool_call_response(
-                "core_tool", '{"first_name":"A","email":"a@b.com"}'
-            ),
+            _tool_call_response("core_tool", '{"first_name":"A","email":"a@b.com"}'),
             _text_response("done"),
         )
 

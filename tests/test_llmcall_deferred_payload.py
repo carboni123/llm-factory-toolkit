@@ -7,9 +7,8 @@ Uses the three-part secret scenario. Requires OPENAI_API_KEY.
 
 import os
 import pytest
-import asyncio
 import json
-from typing import List, Dict, Any  # For type hints
+from typing import Dict  # For type hints
 
 # Imports from your library
 from llm_factory_toolkit import LLMClient
@@ -171,12 +170,8 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
         assert len(tool_factory.get_tool_definitions()) == 3
 
         # 2. Instantiate the LLMClient
-        client = LLMClient(
-            model=openai_test_model, tool_factory=tool_factory
-        )
-        print(
-            f"LLMClient initialized for payload test with model: {client.model}"
-        )
+        client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
+        print(f"LLMClient initialized for payload test with model: {client.model}")
 
         # 3. Prepare initial messages
         messages = [
@@ -185,7 +180,7 @@ async def test_openai_deferred_payload_processing(openai_test_model: str) -> Non
         ]
 
         # 4. Call generate() - This should handle the tool calls internally
-        print(f"\nCalling client.generate() which should trigger tools...")
+        print("\nCalling client.generate() which should trigger tools...")
         # The generate function now returns the final text AND the collected payloads
         generation_result = await client.generate(
             input=messages,

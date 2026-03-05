@@ -7,7 +7,6 @@ Requires OPENAI_API_KEY environment variable.
 
 import os
 import pytest
-import asyncio
 import json
 
 # Imports from your library
@@ -223,9 +222,7 @@ async def test_generate_tool_usage_counts(
         assert initial_counts.get(MOCK_TOOL_NAME_3, 0) == 0
         assert initial_counts.get(MOCK_TOOL_NAME_4_UNUSED, 0) == 0
 
-        client = LLMClient(
-            model=openai_test_model, tool_factory=tool_factory
-        )
+        client = LLMClient(model=openai_test_model, tool_factory=tool_factory)
         print(f"LLMClient initialized with model: {client.model}")
 
         messages = [

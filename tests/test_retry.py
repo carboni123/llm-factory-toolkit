@@ -7,11 +7,10 @@ exponential backoff timing, Retry-After header, and default hook behaviour.
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Dict, List, Optional, Type, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic import BaseModel
 
 from llm_factory_toolkit.exceptions import ProviderError
 from llm_factory_toolkit.providers._base import BaseProvider, ProviderResponse

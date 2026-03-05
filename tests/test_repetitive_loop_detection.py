@@ -121,9 +121,7 @@ def _tool_call_response(
 ) -> ProviderResponse:
     return ProviderResponse(
         content="",
-        tool_calls=[
-            ProviderToolCall(call_id=call_id, name=name, arguments=arguments)
-        ],
+        tool_calls=[ProviderToolCall(call_id=call_id, name=name, arguments=arguments)],
         raw_messages=[
             {
                 "role": "assistant",
@@ -204,7 +202,8 @@ class TestSoftWarning:
         # The warning should have been injected into messages after the 3rd failure
         assert result.messages is not None
         user_messages = [
-            m for m in result.messages
+            m
+            for m in result.messages
             if m.get("role") == "user" and "SYSTEM:" in str(m.get("content", ""))
         ]
         assert len(user_messages) >= 1, "Expected at least one SYSTEM warning message"
@@ -298,10 +297,13 @@ class TestSuccessClearsCounter:
         # Verify no SYSTEM warning was injected
         assert result.messages is not None
         system_warnings = [
-            m for m in result.messages
+            m
+            for m in result.messages
             if m.get("role") == "user" and "SYSTEM:" in str(m.get("content", ""))
         ]
-        assert len(system_warnings) == 0, "No SYSTEM warning expected when counter resets"
+        assert len(system_warnings) == 0, (
+            "No SYSTEM warning expected when counter resets"
+        )
 
 
 # ===================================================================
@@ -337,7 +339,8 @@ class TestDifferentArgsTrackedSeparately:
         # No SYSTEM warnings should exist
         assert result.messages is not None
         system_warnings = [
-            m for m in result.messages
+            m
+            for m in result.messages
             if m.get("role") == "user" and "SYSTEM:" in str(m.get("content", ""))
         ]
         assert len(system_warnings) == 0
@@ -385,7 +388,8 @@ class TestSuccessfulCallsNotTracked:
         # No warnings of any kind
         assert result.messages is not None
         system_warnings = [
-            m for m in result.messages
+            m
+            for m in result.messages
             if m.get("role") == "user" and "SYSTEM:" in str(m.get("content", ""))
         ]
         assert len(system_warnings) == 0
@@ -421,7 +425,8 @@ class TestCustomThreshold:
         # Soft warning should have been injected after 2 failures
         assert result.messages is not None
         system_warnings = [
-            m for m in result.messages
+            m
+            for m in result.messages
             if m.get("role") == "user" and "SYSTEM:" in str(m.get("content", ""))
         ]
         assert len(system_warnings) >= 1
@@ -483,7 +488,8 @@ class TestThresholdZeroDisables:
         # No SYSTEM warning injected
         assert result.messages is not None
         system_warnings = [
-            m for m in result.messages
+            m
+            for m in result.messages
             if m.get("role") == "user" and "SYSTEM:" in str(m.get("content", ""))
         ]
         assert len(system_warnings) == 0

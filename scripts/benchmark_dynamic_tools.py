@@ -36,14 +36,14 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _REPO_ROOT)
 sys.path.insert(0, os.path.join(_REPO_ROOT, "tests"))
 
-from llm_factory_toolkit import LLMClient
-from llm_factory_toolkit.exceptions import ToolError
-from llm_factory_toolkit.tools import (
+from llm_factory_toolkit import LLMClient  # noqa: E402
+from llm_factory_toolkit.exceptions import ToolError  # noqa: E402
+from llm_factory_toolkit.tools import (  # noqa: E402
     InMemoryToolCatalog,
     ToolFactory,
     ToolSession,
 )
-from llm_factory_toolkit.tools.models import GenerationResult, ToolExecutionResult
+from llm_factory_toolkit.tools.models import ToolExecutionResult  # noqa: E402
 
 # Import the CRM simulation helpers from the test suite.
 from test_simulation_crm import ALL_TOOLS, SYSTEM_PROMPT, _build_simulation  # noqa: E402
@@ -232,7 +232,9 @@ def _build_loop_detection_simulation() -> tuple[
         )
 
     # Deliberately failing tool
-    def query_crm_analytics(report_type: str, period: str = "Q1 2026") -> ToolExecutionResult:
+    def query_crm_analytics(
+        report_type: str, period: str = "Q1 2026"
+    ) -> ToolExecutionResult:
         """Pull CRM analytics reports including revenue, conversion rates, and customer growth."""
         raise ToolError(
             "Service unavailable: analytics database is offline for maintenance. "
@@ -1079,7 +1081,9 @@ async def run_case(
             _safe_print(f"  [verbose] Hit ceiling: {hit_ceiling}")
             if repetition_detected or soft_warning_injected:
                 _safe_print(f"  [verbose] Repetition detected: {repetition_detected}")
-                _safe_print(f"  [verbose] Soft warning injected: {soft_warning_injected}")
+                _safe_print(
+                    f"  [verbose] Soft warning injected: {soft_warning_injected}"
+                )
             _safe_print(f"  [verbose] Response: {last_content[:300]}")
 
         bench_result = evaluate_case(
@@ -1244,7 +1248,11 @@ def format_summary_table(results: list[BenchmarkResult]) -> str:
         time_str = f"{r.duration_ms}ms"
         tokens_str = str(r.total_tokens) if r.total_tokens else "-"
         ceil_str = "YES" if r.hit_ceiling else "-"
-        loop_str = "STOP" if r.repetition_detected else ("WARN" if r.soft_warning_injected else "-")
+        loop_str = (
+            "STOP"
+            if r.repetition_detected
+            else ("WARN" if r.soft_warning_injected else "-")
+        )
         row = (
             f"  {icon:<8} {r.case_name:<22} {r.protocol_score:<10} "
             f"{r.loading_score:<10} {r.usage_score:<10} {r.response_score:<10} {r.overall_score:<10} "
@@ -1269,7 +1277,7 @@ def format_summary_table(results: list[BenchmarkResult]) -> str:
     total_meta = sum(r.meta_calls_count for r in results)
     total_business = sum(r.business_calls_count for r in results)
     avg_overhead = (total_meta / total_calls_all * 100) if total_calls_all else 0
-    avg_efficiency = (total_business / total_calls_all * 100) if total_calls_all else 0
+    _ = (total_business / total_calls_all * 100) if total_calls_all else 0  # efficiency
 
     lines.append(
         f"  Summary: {total_pass} pass / {total_partial} partial / {total_fail} fail / {total_error} error  (out of {total_cases})"
@@ -1414,8 +1422,8 @@ def format_markdown_report(
 
     lines.append("## Summary")
     lines.append("")
-    lines.append(f"| Metric | Value |")
-    lines.append(f"|--------|-------|")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
     lines.append(f"| Pass | {total_pass} |")
     lines.append(f"| Partial | {total_partial} |")
     lines.append(f"| Fail | {total_fail} |")
@@ -1553,7 +1561,7 @@ def format_markdown_report(
         lines.append("## Tool Call Traces")
         lines.append("")
         for r in results:
-            lines.append(f"<details>")
+            lines.append("<details>")
             lines.append(
                 f"<summary><b>{r.case_name}</b> [{r.status}] — {r.total_tool_calls} calls</summary>"
             )

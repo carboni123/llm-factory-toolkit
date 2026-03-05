@@ -20,7 +20,9 @@ def _create_mock_tool(idx: int, category: str, tags: list[str]):
     return tool_func
 
 
-def _build_large_catalog(num_tools: int = 50) -> tuple[ToolFactory, InMemoryToolCatalog]:
+def _build_large_catalog(
+    num_tools: int = 50,
+) -> tuple[ToolFactory, InMemoryToolCatalog]:
     """Build a catalog with *num_tools* registered tools across categories."""
     factory = ToolFactory()
 
@@ -154,7 +156,9 @@ def test_session_recomputation_performance():
     elapsed = time.perf_counter() - start_time
 
     # Should be negligible (< 10ms for 25 iterations with 50 tools)
-    assert elapsed < 0.01, f"Session recomputation took {elapsed:.4f}s for {iterations} iterations"
+    assert elapsed < 0.01, (
+        f"Session recomputation took {elapsed:.4f}s for {iterations} iterations"
+    )
 
 
 def test_factory_get_tool_definitions_performance():
@@ -173,7 +177,9 @@ def test_factory_get_tool_definitions_performance():
     elapsed = time.perf_counter() - start_time
 
     # Should be fast (< 50ms for 25 iterations with 50 tools)
-    assert elapsed < 0.05, f"get_tool_definitions took {elapsed:.4f}s for {iterations} iterations"
+    assert elapsed < 0.05, (
+        f"get_tool_definitions took {elapsed:.4f}s for {iterations} iterations"
+    )
 
 
 # =====================================================================

@@ -198,7 +198,9 @@ class TestCompactRemovesNestedDescriptions:
         defs = factory.get_tool_definitions(compact=True)
         for d in defs:
             func = d["function"]
-            assert "description" in func, f"Top-level description missing for {func['name']}"
+            assert "description" in func, (
+                f"Top-level description missing for {func['name']}"
+            )
             assert len(func["description"]) > 0
 
     def test_nested_property_descriptions_removed(self, factory: ToolFactory) -> None:
@@ -284,8 +286,12 @@ class TestTokenReduction:
         full_defs = factory.get_tool_definitions(compact=False)
         compact_defs = factory.get_tool_definitions(compact=True)
 
-        contact_full = [d for d in full_defs if d["function"]["name"] == "create_contact"][0]
-        contact_compact = [d for d in compact_defs if d["function"]["name"] == "create_contact"][0]
+        contact_full = [
+            d for d in full_defs if d["function"]["name"] == "create_contact"
+        ][0]
+        contact_compact = [
+            d for d in compact_defs if d["function"]["name"] == "create_contact"
+        ][0]
 
         full_tokens = estimate_token_count(contact_full)
         compact_tokens = estimate_token_count(contact_compact)
@@ -299,8 +305,12 @@ class TestTokenReduction:
         full_defs = factory.get_tool_definitions(compact=False)
         compact_defs = factory.get_tool_definitions(compact=True)
 
-        orders_full = [d for d in full_defs if d["function"]["name"] == "search_orders"][0]
-        orders_compact = [d for d in compact_defs if d["function"]["name"] == "search_orders"][0]
+        orders_full = [
+            d for d in full_defs if d["function"]["name"] == "search_orders"
+        ][0]
+        orders_compact = [
+            d for d in compact_defs if d["function"]["name"] == "search_orders"
+        ][0]
 
         full_tokens = estimate_token_count(orders_full)
         compact_tokens = estimate_token_count(orders_compact)
@@ -315,8 +325,12 @@ class TestTokenReduction:
         full_defs = factory.get_tool_definitions(compact=False)
         compact_defs = factory.get_tool_definitions(compact=True)
 
-        weather_full = [d for d in full_defs if d["function"]["name"] == "get_weather"][0]
-        weather_compact = [d for d in compact_defs if d["function"]["name"] == "get_weather"][0]
+        weather_full = [d for d in full_defs if d["function"]["name"] == "get_weather"][
+            0
+        ]
+        weather_compact = [
+            d for d in compact_defs if d["function"]["name"] == "get_weather"
+        ][0]
 
         full_tokens = estimate_token_count(weather_full)
         compact_tokens = estimate_token_count(weather_compact)
@@ -437,7 +451,9 @@ class TestEstimateTokenSavings:
             assert "compact" in entry, f"Missing 'compact' for {name}"
             assert "saved" in entry, f"Missing 'saved' for {name}"
 
-    def test_saved_equals_full_minus_compact(self, catalog: InMemoryToolCatalog) -> None:
+    def test_saved_equals_full_minus_compact(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
         savings = catalog.estimate_token_savings()
         for name, entry in savings.items():
             assert entry["saved"] == entry["full"] - entry["compact"], (
@@ -460,11 +476,11 @@ class TestEstimateTokenSavings:
     def test_compact_lte_full(self, catalog: InMemoryToolCatalog) -> None:
         savings = catalog.estimate_token_savings()
         for name, entry in savings.items():
-            assert entry["compact"] <= entry["full"], (
-                f"Compact > full for {name}"
-            )
+            assert entry["compact"] <= entry["full"], f"Compact > full for {name}"
 
-    def test_significant_savings_on_rich_tool(self, catalog: InMemoryToolCatalog) -> None:
+    def test_significant_savings_on_rich_tool(
+        self, catalog: InMemoryToolCatalog
+    ) -> None:
         savings = catalog.estimate_token_savings()
         contact = savings["create_contact"]
         pct = contact["saved"] / contact["full"] * 100

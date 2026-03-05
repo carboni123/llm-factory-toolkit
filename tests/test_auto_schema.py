@@ -54,6 +54,7 @@ class TestOptionalType:
 
     def test_optional_default_none_not_in_schema(self) -> None:
         """When default is None, no 'default' key should be added."""
+
         def f(value: Optional[int] = None) -> None: ...
 
         schema = generate_schema_from_function(f)
@@ -185,9 +186,7 @@ class TestExcludeParams:
     def test_exclude_params(self) -> None:
         def f(name: str, user_id: str, db: str) -> None: ...
 
-        schema = generate_schema_from_function(
-            f, exclude_params={"user_id", "db"}
-        )
+        schema = generate_schema_from_function(f, exclude_params={"user_id", "db"})
 
         assert list(schema["properties"].keys()) == ["name"]
         assert schema["required"] == ["name"]
@@ -195,9 +194,7 @@ class TestExcludeParams:
     def test_exclude_all_params(self) -> None:
         def f(user_id: str, db: str) -> None: ...
 
-        schema = generate_schema_from_function(
-            f, exclude_params={"user_id", "db"}
-        )
+        schema = generate_schema_from_function(f, exclude_params={"user_id", "db"})
 
         assert schema["properties"] == {}
         assert "required" not in schema
@@ -404,9 +401,7 @@ class TestDispatchWithAutoSchema:
         assert params["required"] == ["name"]
 
         # Dispatch with just the required arg
-        result = await factory.dispatch_tool(
-            "greet", '{"name": "Alice"}'
-        )
+        result = await factory.dispatch_tool("greet", '{"name": "Alice"}')
         assert result.content == "Hello, Alice!"
         assert result.payload == {"name": "Alice", "greeting": "Hello"}
 

@@ -5,7 +5,7 @@ All tests run without API keys — the provider is mocked.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -19,6 +19,7 @@ from llm_factory_toolkit.tools.tool_factory import ToolFactory
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
 
 def _make_factory() -> ToolFactory:
     """Factory with two dummy tools registered."""
@@ -88,7 +89,7 @@ class TestDynamicToolLoading:
     def test_auto_builds_catalog(self) -> None:
         """Catalog and meta-tools auto-created when not already set up."""
         factory = _make_factory()
-        client = LLMClient(
+        LLMClient(
             model="openai/gpt-4o-mini",
             tool_factory=factory,
             core_tools=["call_human"],
@@ -142,8 +143,6 @@ class TestDynamicToolLoading:
         )
 
         captured_sessions = []
-
-        original_generate = client.provider.generate
 
         async def _capture_generate(**kwargs):
             captured_sessions.append(kwargs.get("tool_session"))
