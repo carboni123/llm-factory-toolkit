@@ -241,7 +241,17 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
     # ------------------------------------------------------------------
     # Claude Code (Agent SDK)
     # ------------------------------------------------------------------
-    "claude-code/claude-sonnet-4-5": ModelInfo(
+    "claude-code/claude-haiku-4-5": ModelInfo(
+        model_id="claude-code/claude-haiku-4-5",
+        provider="claude_code",
+        display_name="Claude Code Haiku 4.5",
+        capabilities=[
+            "streaming",
+            "structured_output",
+            "code",
+        ],
+    ),
+    "claude-code/claude-sonnet-4-6": ModelInfo(
         model_id="claude-code/claude-sonnet-4-6",
         provider="claude_code",
         display_name="Claude Code Sonnet 4.6",
