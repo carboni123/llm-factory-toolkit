@@ -18,6 +18,7 @@ _DEFAULT_UNSUPPORTED_MODEL = "openai/gpt-5-mini"
 _DEFAULT_GOOGLE_MODEL = "gemini/gemini-2.5-flash"
 _DEFAULT_ANTHROPIC_MODEL = "anthropic/claude-sonnet-4-20250514"
 _DEFAULT_XAI_MODEL = "xai/grok-4-1-fast-non-reasoning"
+_DEFAULT_CLAUDE_CODE_MODEL = "claude-code/claude-sonnet-4-6"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -62,6 +63,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=os.environ.get("XAI_TEST_MODEL", _DEFAULT_XAI_MODEL),
         dest="xai_test_model",
         help="Model identifier for xAI integration tests.",
+    )
+    parser.addoption(
+        "--claude-code-test-model",
+        action="store",
+        default=os.environ.get("CLAUDE_CODE_TEST_MODEL", _DEFAULT_CLAUDE_CODE_MODEL),
+        dest="claude_code_test_model",
+        help="Model identifier for Claude Code integration tests.",
     )
 
 
@@ -110,3 +118,9 @@ def anthropic_test_model(pytestconfig: pytest.Config) -> str:
 def xai_test_model(pytestconfig: pytest.Config) -> str:
     """Return the model identifier used for xAI integration tests."""
     return pytestconfig.getoption("xai_test_model")
+
+
+@pytest.fixture(scope="session")
+def claude_code_test_model(pytestconfig: pytest.Config) -> str:
+    """Return the model identifier used for Claude Code integration tests."""
+    return pytestconfig.getoption("claude_code_test_model")

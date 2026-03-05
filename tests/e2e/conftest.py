@@ -24,6 +24,19 @@ skip_anthropic = pytest.mark.skipif(
 )
 skip_xai = pytest.mark.skipif(not XAI_API_KEY, reason="XAI_API_KEY not set")
 
+_claude_code_sdk_available = False
+try:
+    import claude_agent_sdk  # noqa: F401
+
+    _claude_code_sdk_available = True
+except ImportError:
+    pass
+
+skip_claude_code = pytest.mark.skipif(
+    not ANTHROPIC_API_KEY or not _claude_code_sdk_available,
+    reason="ANTHROPIC_API_KEY not set or claude-agent-sdk not installed",
+)
+
 
 # --- Tool definitions ---
 
