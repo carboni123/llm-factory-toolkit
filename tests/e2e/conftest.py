@@ -32,8 +32,8 @@ except ImportError:
     pass
 
 skip_claude_code = pytest.mark.skipif(
-    not ANTHROPIC_API_KEY or not _claude_code_sdk_available,
-    reason="ANTHROPIC_API_KEY not set or claude-agent-sdk not installed",
+    not _claude_code_sdk_available,
+    reason="claude-agent-sdk not installed",
 )
 
 

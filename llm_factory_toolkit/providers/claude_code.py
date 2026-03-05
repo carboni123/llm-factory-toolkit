@@ -19,6 +19,7 @@ import logging
 from typing import (
     Any,
     AsyncGenerator,
+    AsyncIterator,
     Dict,
     List,
     Optional,
@@ -94,6 +95,7 @@ class ClaudeCodeAdapter(BaseProvider):
         self._current_mock_mode: bool = False
         self._current_tool_timeout: Optional[float] = None
         self._collected_payloads: List[Any] = []
+        self._collected_tool_call_records: List[Dict[str, Any]] = []
         self._max_turns_override: Optional[int] = None
 
     # ------------------------------------------------------------------
@@ -153,6 +155,7 @@ class ClaudeCodeAdapter(BaseProvider):
         self._current_tool_timeout = tool_timeout
         self._max_turns_override = max_tool_iterations
         self._collected_payloads = []
+        self._collected_tool_call_records = []
 
         try:
             result = await super().generate(
@@ -185,6 +188,7 @@ class ClaudeCodeAdapter(BaseProvider):
             self._current_mock_mode = False
             self._current_tool_timeout = None
             self._collected_payloads = []
+            self._collected_tool_call_records = []
 
     # ------------------------------------------------------------------
     # Message conversion helpers
@@ -220,13 +224,46 @@ class ClaudeCodeAdapter(BaseProvider):
             if role == "user":
                 parts.append(f"[User]: {content}")
             elif role == "assistant":
-                parts.append(f"[Assistant]: {content}")
+                tool_calls = msg.get("tool_calls", [])
+                if tool_calls:
+                    descs = []
+                    for tc in tool_calls:
+                        func = tc.get("function", {})
+                        tc_name = func.get("name", "?")
+                        tc_args = func.get("arguments", {})
+                        if isinstance(tc_args, dict):
+                            tc_args = json.dumps(tc_args)
+                        descs.append(f"{tc_name}({tc_args})")
+                    parts.append(f"[Assistant called tools]: {', '.join(descs)}")
+                if content:
+                    parts.append(f"[Assistant]: {content}")
             elif role == "tool":
                 name = msg.get("name", "unknown")
                 parts.append(f"[Tool Result ({name})]: {content}")
             else:
                 parts.append(f"[{role.title()}]: {content}")
         return "\n\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Prompt wrapping for MCP tool support
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _prompt_as_stream(prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Wrap a prompt string as an async iterable of user-message dicts.
+
+        When MCP tool servers are present the SDK must use the
+        ``AsyncIterable`` prompt path so that ``stream_input()`` keeps
+        stdin open until the first result arrives.  The plain ``str``
+        path calls ``end_input()`` immediately, which closes stdin
+        before MCP tool responses can be written back.
+        """
+        yield {
+            "type": "user",
+            "session_id": "",
+            "message": {"role": "user", "content": prompt},
+            "parent_tool_use_id": None,
+        }
 
     # ------------------------------------------------------------------
     # MCP tool bridge
@@ -256,6 +293,7 @@ class ClaudeCodeAdapter(BaseProvider):
                 args: Dict[str, Any], _name: str = name
             ) -> Dict[str, Any]:
                 assert self.tool_factory is not None  # noqa: S101
+                call_id = f"cc_{_name}_{len(self._collected_tool_call_records)}"
                 result = await self.tool_factory.dispatch_tool(
                     _name,
                     json.dumps(args),
@@ -265,6 +303,14 @@ class ClaudeCodeAdapter(BaseProvider):
                 )
                 if result.payload:
                     self._collected_payloads.append(result.payload)
+                self._collected_tool_call_records.append(
+                    {
+                        "call_id": call_id,
+                        "name": _name,
+                        "arguments": args,
+                        "result_content": result.content,
+                    }
+                )
                 return {"content": [{"type": "text", "text": result.content}]}
 
             mcp_tool = sdk.tool(name, desc, params)(_handler)
@@ -329,6 +375,15 @@ class ClaudeCodeAdapter(BaseProvider):
         elif isinstance(response_format, dict):
             opts["output_format"] = response_format
 
+        # Prevent nested-session detection when called from inside Claude Code
+        # and clear ANTHROPIC_API_KEY so the CLI uses Max subscription auth
+        env = kwargs.pop("env", {})
+        if "CLAUDECODE" not in env:
+            env["CLAUDECODE"] = ""
+        if "ANTHROPIC_API_KEY" not in env:
+            env["ANTHROPIC_API_KEY"] = ""
+        opts["env"] = env
+
         # Forward remaining SDK-specific params
         for key in list(kwargs):
             if key in self._EXTRA_PARAMS:
@@ -384,6 +439,12 @@ class ClaudeCodeAdapter(BaseProvider):
             **filtered,
         )
 
+        # Use async-iterable prompt when MCP tools are bridged so the SDK
+        # keeps stdin open long enough for tool responses (see _prompt_as_stream).
+        effective_prompt: Union[str, AsyncIterator[Dict[str, Any]]] = prompt
+        if mcp_servers:
+            effective_prompt = self._prompt_as_stream(prompt)
+
         # Call the SDK
         text_parts: List[str] = []
         usage: Optional[Dict[str, int]] = None
@@ -391,7 +452,7 @@ class ClaudeCodeAdapter(BaseProvider):
         raw_messages: List[Dict[str, Any]] = []
 
         try:
-            async for message in sdk.query(prompt=prompt, options=options):
+            async for message in sdk.query(prompt=effective_prompt, options=options):
                 if isinstance(message, sdk.AssistantMessage):
                     for block in message.content:
                         if isinstance(block, sdk.TextBlock):
@@ -425,13 +486,47 @@ class ClaudeCodeAdapter(BaseProvider):
             raise ProviderError(f"Claude Code SDK error: {e}") from e
 
         content = "".join(text_parts)
+
+        # Inject tool call records into raw_messages so consumers (e.g.
+        # benchmarks) can see which tools were called during the SDK loop.
+        tool_call_msgs: List[Dict[str, Any]] = []
+        if self._collected_tool_call_records:
+            tool_call_msgs.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": rec["call_id"],
+                            "function": {
+                                "name": rec["name"],
+                                "arguments": rec["arguments"],
+                            },
+                        }
+                        for rec in self._collected_tool_call_records
+                    ],
+                }
+            )
+            for rec in self._collected_tool_call_records:
+                tool_call_msgs.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": rec["call_id"],
+                        "name": rec["name"],
+                        "content": rec["result_content"],
+                    }
+                )
+
         if not raw_messages:
             raw_messages.append({"role": "assistant", "content": content})
+
+        # Place tool call messages before final assistant text
+        all_messages = tool_call_msgs + raw_messages
 
         return ProviderResponse(
             content=content,
             tool_calls=[],  # SDK handles tools internally
-            raw_messages=raw_messages,
+            raw_messages=all_messages,
             usage=usage,
             parsed_content=parsed_content,
         )
@@ -481,10 +576,15 @@ class ClaudeCodeAdapter(BaseProvider):
         # Enable partial messages for streaming
         options.include_partial_messages = True
 
+        # Use async-iterable prompt when MCP tools are bridged (see _prompt_as_stream).
+        effective_prompt: Union[str, AsyncIterator[Dict[str, Any]]] = prompt
+        if mcp_servers:
+            effective_prompt = self._prompt_as_stream(prompt)
+
         usage: Optional[Dict[str, int]] = None
 
         try:
-            async for message in sdk.query(prompt=prompt, options=options):
+            async for message in sdk.query(prompt=effective_prompt, options=options):
                 if hasattr(sdk, "StreamEvent") and isinstance(message, sdk.StreamEvent):
                     # Extract text delta from raw event
                     event = getattr(message, "event", {})
