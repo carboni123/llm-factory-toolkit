@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm_factory_toolkit"
-version = "2.0.0"
+version = "2.0.1"
 authors = [
   { name="Diego Carboni", email="carboni123@hotmail.com" },
 ]
@@ -26,8 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/carboni123/llm_factory_toolkit"
-"Bug Tracker" = "https://github.com/carboni123/llm_factory_toolkit/issues"
+"Homepage" = "https://github.com/carboni123/llm-factory-toolkit"
+"Bug Tracker" = "https://github.com/carboni123/llm-factory-toolkit/issues"
 
 [project.optional-dependencies]
 openai = ["openai>=2.7.1,<3"]
