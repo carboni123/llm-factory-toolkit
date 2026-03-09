@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import (
     Any,
     AsyncGenerator,
+    Callable,
     Dict,
     List,
     Optional,
@@ -825,6 +826,9 @@ class BaseProvider(abc.ABC):
         max_tool_output_chars: Optional[int] = None,
         max_concurrent_tools: Optional[int] = None,
         tool_timeout: Optional[float] = None,
+        on_usage: Optional[Callable[..., Any]] = None,
+        usage_metadata: Optional[Dict[str, Any]] = None,
+        pricing: Optional[Dict[str, float]] = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, executing tool calls iteratively."""

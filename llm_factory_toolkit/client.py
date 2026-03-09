@@ -312,6 +312,7 @@ class LLMClient:
         max_tool_output_chars: Optional[int] = None,
         max_concurrent_tools: Optional[int] = None,
         tool_timeout: Optional[float] = None,
+        usage_metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
         """Generate a response from the configured LLM.
@@ -498,6 +499,9 @@ class LLMClient:
             else copy.deepcopy(input)
         )
 
+        # Merge usage metadata: init-level defaults + per-call overrides
+        effective_usage_metadata = {**self.usage_metadata, **(usage_metadata or {})}
+
         common_kwargs: Dict[str, Any] = {
             "input": processed_input,
             "model": model,
@@ -516,16 +520,26 @@ class LLMClient:
             "max_tool_output_chars": max_tool_output_chars,
             "max_concurrent_tools": max_concurrent_tools,
             "tool_timeout": tool_timeout,
+            "on_usage": self.on_usage,
+            "usage_metadata": effective_usage_metadata,
+            "pricing": self.pricing,
             **kwargs,
         }
         # Filter None values but keep meaningful None/empty (use_tools,
-        # tool_execution_context, parallel_tools, file_search, tool_session)
+        # tool_execution_context, parallel_tools, file_search, tool_session,
+        # usage_metadata)
         common_kwargs = {
             k: v
             for k, v in common_kwargs.items()
             if v is not None
             or k
-            in {"use_tools", "tool_execution_context", "parallel_tools", "tool_session"}
+            in {
+                "use_tools",
+                "tool_execution_context",
+                "parallel_tools",
+                "tool_session",
+                "usage_metadata",
+            }
         }
 
         try:

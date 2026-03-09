@@ -6,6 +6,7 @@ import logging
 from typing import (
     Any,
     AsyncGenerator,
+    Callable,
     Dict,
     List,
     Optional,
@@ -245,6 +246,9 @@ class ProviderRouter:
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
         compact_tools: bool = False,
+        on_usage: Optional[Callable[..., Any]] = None,
+        usage_metadata: Optional[Dict[str, Any]] = None,
+        pricing: Optional[Dict[str, float]] = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, routing to the correct provider adapter."""
@@ -266,6 +270,9 @@ class ProviderRouter:
             file_search=file_search,
             tool_session=tool_session,
             compact_tools=compact_tools,
+            on_usage=on_usage,
+            usage_metadata=usage_metadata,
+            pricing=pricing,
             **kwargs,
         )
 
