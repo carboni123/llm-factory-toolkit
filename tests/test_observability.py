@@ -410,3 +410,16 @@ class TestGenerationResultCost:
         )
         assert result.cost_usd is not None
         assert abs(result.cost_usd - 15.0) < 1e-10
+
+    @pytest.mark.asyncio
+    async def test_cost_zero_when_provider_reports_no_usage(self) -> None:
+        """When provider returns usage=None, cost should be 0.0 for known models."""
+        provider = _MockAdapter(
+            responses=[_text_response("hello", usage=None)],
+        )
+        result = await provider.generate(
+            input=[{"role": "user", "content": "hi"}],
+            model="openai/gpt-5.2",
+            use_tools=None,
+        )
+        assert result.cost_usd == 0.0

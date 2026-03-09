@@ -382,7 +382,7 @@ def compute_cost(
     input_rate: Optional[float] = None
     output_rate: Optional[float] = None
 
-    if pricing:
+    if pricing is not None:
         input_rate = pricing.get("input_cost_per_1m")
         output_rate = pricing.get("output_cost_per_1m")
     else:
