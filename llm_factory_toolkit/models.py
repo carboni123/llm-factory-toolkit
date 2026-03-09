@@ -51,12 +51,18 @@ class ModelInfo(BaseModel):
             Common values: ``"streaming"``, ``"structured_output"``,
             ``"web_search"``, ``"file_search"``, ``"vision"``,
             ``"reasoning"``, ``"code"``.
+        input_cost_per_1m: USD cost per 1 million input tokens, or ``None``
+            if pricing is unknown.
+        output_cost_per_1m: USD cost per 1 million output tokens, or ``None``
+            if pricing is unknown.
     """
 
     model_id: str
     provider: str
     display_name: str
     capabilities: list[str]
+    input_cost_per_1m: float | None = None  # USD per 1M input tokens
+    output_cost_per_1m: float | None = None  # USD per 1M output tokens
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +87,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "vision",
             "reasoning",
         ],
+        input_cost_per_1m=2.50,
+        output_cost_per_1m=10.00,
     ),
     "openai/gpt-5-mini": ModelInfo(
         model_id="openai/gpt-5-mini",
@@ -94,6 +102,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "vision",
             "reasoning",
         ],
+        input_cost_per_1m=0.40,
+        output_cost_per_1m=1.60,
     ),
     "openai/gpt-5.1-codex-mini": ModelInfo(
         model_id="openai/gpt-5.1-codex-mini",
@@ -107,6 +117,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "code",
             "reasoning",
         ],
+        input_cost_per_1m=0.40,
+        output_cost_per_1m=1.60,
     ),
     "openai/gpt-4.1": ModelInfo(
         model_id="openai/gpt-4.1",
@@ -119,6 +131,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "file_search",
             "vision",
         ],
+        input_cost_per_1m=2.00,
+        output_cost_per_1m=8.00,
     ),
     # ------------------------------------------------------------------
     # Anthropic
@@ -133,6 +147,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "vision",
             "reasoning",
         ],
+        input_cost_per_1m=15.00,
+        output_cost_per_1m=75.00,
     ),
     "anthropic/claude-sonnet-4-6": ModelInfo(
         model_id="anthropic/claude-sonnet-4-6",
@@ -143,6 +159,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "structured_output",
             "vision",
         ],
+        input_cost_per_1m=3.00,
+        output_cost_per_1m=15.00,
     ),
     "anthropic/claude-haiku-4-5": ModelInfo(
         model_id="anthropic/claude-haiku-4-5",
@@ -153,6 +171,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "structured_output",
             "vision",
         ],
+        input_cost_per_1m=0.80,
+        output_cost_per_1m=4.00,
     ),
     # ------------------------------------------------------------------
     # Google Gemini
@@ -168,6 +188,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "vision",
             "reasoning",
         ],
+        input_cost_per_1m=1.25,
+        output_cost_per_1m=10.00,
     ),
     "gemini/gemini-3-flash-preview": ModelInfo(
         model_id="gemini/gemini-3-flash-preview",
@@ -179,6 +201,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "web_search",
             "vision",
         ],
+        input_cost_per_1m=0.15,
+        output_cost_per_1m=0.60,
     ),
     "gemini/gemini-2.5-flash": ModelInfo(
         model_id="gemini/gemini-2.5-flash",
@@ -191,6 +215,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "vision",
             "reasoning",
         ],
+        input_cost_per_1m=0.15,
+        output_cost_per_1m=0.60,
     ),
     "gemini/gemini-2.5-flash-lite": ModelInfo(
         model_id="gemini/gemini-2.5-flash-lite",
@@ -202,6 +228,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "web_search",
             "vision",
         ],
+        input_cost_per_1m=0.075,
+        output_cost_per_1m=0.30,
     ),
     # ------------------------------------------------------------------
     # xAI
@@ -216,6 +244,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "web_search",
             "reasoning",
         ],
+        input_cost_per_1m=3.00,
+        output_cost_per_1m=15.00,
     ),
     "xai/grok-4-1-fast-non-reasoning": ModelInfo(
         model_id="xai/grok-4-1-fast-non-reasoning",
@@ -226,6 +256,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "structured_output",
             "web_search",
         ],
+        input_cost_per_1m=3.00,
+        output_cost_per_1m=15.00,
     ),
     "xai/grok-code-fast-1": ModelInfo(
         model_id="xai/grok-code-fast-1",
@@ -237,6 +269,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "web_search",
             "code",
         ],
+        input_cost_per_1m=3.00,
+        output_cost_per_1m=15.00,
     ),
     # ------------------------------------------------------------------
     # Claude Code (Agent SDK)
@@ -250,6 +284,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "structured_output",
             "code",
         ],
+        input_cost_per_1m=0.80,
+        output_cost_per_1m=4.00,
     ),
     "claude-code/claude-sonnet-4-6": ModelInfo(
         model_id="claude-code/claude-sonnet-4-6",
@@ -260,6 +296,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "structured_output",
             "code",
         ],
+        input_cost_per_1m=3.00,
+        output_cost_per_1m=15.00,
     ),
     "claude-code/claude-opus-4-6": ModelInfo(
         model_id="claude-code/claude-opus-4-6",
@@ -271,6 +309,8 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
             "code",
             "reasoning",
         ],
+        input_cost_per_1m=15.00,
+        output_cost_per_1m=75.00,
     ),
 }
 
