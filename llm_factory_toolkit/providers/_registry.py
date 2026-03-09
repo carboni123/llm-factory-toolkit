@@ -197,9 +197,9 @@ class ProviderRouter:
 
         if self.tool_factory:
             logger.info(
-                "ProviderRouter initialised. Model: %s. Tools: %s.",
+                "ProviderRouter initialised. Model: %s. Tool catalog: %d registered.",
                 self.model,
-                self.tool_factory.available_tool_names,
+                len(self.tool_factory.available_tool_names),
             )
         else:
             logger.info(
