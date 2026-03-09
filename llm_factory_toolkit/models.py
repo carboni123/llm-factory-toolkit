@@ -358,3 +358,40 @@ def get_model_info(model_id: str) -> Optional[ModelInfo]:
             return MODEL_CATALOG[prefixed]
 
     return None
+
+
+def compute_cost(
+    model: str,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    pricing: Optional[dict[str, float]] = None,
+) -> Optional[float]:
+    """Compute cost in USD for a given token count.
+
+    Args:
+        model: Model identifier (prefixed or bare).
+        input_tokens: Number of input/prompt tokens.
+        output_tokens: Number of output/completion tokens.
+        pricing: Optional override with ``input_cost_per_1m`` and
+            ``output_cost_per_1m`` keys. Takes precedence over catalog.
+
+    Returns:
+        Cost in USD, or ``None`` if pricing is unknown.
+    """
+    input_rate: Optional[float] = None
+    output_rate: Optional[float] = None
+
+    if pricing:
+        input_rate = pricing.get("input_cost_per_1m")
+        output_rate = pricing.get("output_cost_per_1m")
+    else:
+        info = get_model_info(model)
+        if info:
+            input_rate = info.input_cost_per_1m
+            output_rate = info.output_cost_per_1m
+
+    if input_rate is None or output_rate is None:
+        return None
+
+    return (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000

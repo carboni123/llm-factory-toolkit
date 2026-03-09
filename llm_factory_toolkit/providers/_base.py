@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import copy
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
@@ -28,12 +29,14 @@ from ..exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
+from ..models import compute_cost
 from ..tools.models import (
     GenerationResult,
     ParsedToolCall,
     StreamChunk,
     ToolExecutionResult,
     ToolIntentOutput,
+    UsageEvent,
 )
 from ..tools.session import ToolSession
 from ..tools.tool_factory import ToolFactory
@@ -853,6 +856,8 @@ class BaseProvider(abc.ABC):
             "completion_tokens": 0,
             "total_tokens": 0,
         }
+        accumulated_cost: Optional[float] = 0.0
+        iteration_number = 0
         _failed_call_counts: Dict[Tuple[str, str], int] = {}
         _all_call_counts: Dict[Tuple[str, str], int] = {}
 
@@ -889,6 +894,42 @@ class BaseProvider(abc.ABC):
                 for key in accumulated_usage:
                     accumulated_usage[key] += response.usage.get(key, 0)
 
+            # --- Usage callback + cost tracking ---
+            iteration_number += 1
+            iteration_input = (
+                response.usage.get("prompt_tokens", 0) if response.usage else 0
+            )
+            iteration_output = (
+                response.usage.get("completion_tokens", 0) if response.usage else 0
+            )
+            iteration_cost = compute_cost(
+                model,
+                input_tokens=iteration_input,
+                output_tokens=iteration_output,
+                pricing=pricing,
+            )
+            if iteration_cost is not None and accumulated_cost is not None:
+                accumulated_cost += iteration_cost
+            elif iteration_cost is None:
+                accumulated_cost = None
+
+            tool_names = [tc.name for tc in response.tool_calls]
+
+            if on_usage is not None:
+                event = UsageEvent(
+                    model=model,
+                    iteration=iteration_number,
+                    input_tokens=iteration_input,
+                    output_tokens=iteration_output,
+                    cost_usd=iteration_cost,
+                    tool_calls=tool_names,
+                    metadata=usage_metadata or {},
+                )
+                if inspect.iscoroutinefunction(on_usage):
+                    await on_usage(event)
+                else:
+                    await asyncio.to_thread(on_usage, event)
+
             # Append raw messages to conversation
             current_messages.extend(response.raw_messages)
 
@@ -905,6 +946,7 @@ class BaseProvider(abc.ABC):
                             tool_messages=copy.deepcopy(tool_result_messages),
                             messages=copy.deepcopy(current_messages),
                             usage=accumulated_usage,
+                            cost_usd=accumulated_cost,
                         )
                     # Try parsing from content
                     if response.content:
@@ -918,6 +960,7 @@ class BaseProvider(abc.ABC):
                                 tool_messages=copy.deepcopy(tool_result_messages),
                                 messages=copy.deepcopy(current_messages),
                                 usage=accumulated_usage,
+                                cost_usd=accumulated_cost,
                             )
                         except (json.JSONDecodeError, ValueError, TypeError):
                             logger.warning(
@@ -932,6 +975,7 @@ class BaseProvider(abc.ABC):
                     tool_messages=copy.deepcopy(tool_result_messages),
                     messages=copy.deepcopy(current_messages),
                     usage=accumulated_usage,
+                    cost_usd=accumulated_cost,
                 )
 
             # --- Tool execution ---
@@ -988,6 +1032,7 @@ class BaseProvider(abc.ABC):
                     tool_messages=copy.deepcopy(tool_result_messages),
                     messages=copy.deepcopy(current_messages),
                     usage=accumulated_usage,
+                    cost_usd=accumulated_cost,
                 )
 
             # Auto-compact on budget pressure
@@ -1005,6 +1050,7 @@ class BaseProvider(abc.ABC):
             tool_messages=copy.deepcopy(tool_result_messages),
             messages=copy.deepcopy(current_messages),
             usage=accumulated_usage,
+            cost_usd=accumulated_cost,
         )
 
     async def generate_stream(
