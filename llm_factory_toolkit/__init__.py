@@ -131,11 +131,11 @@ from .exceptions import ToolError  # noqa: E402
 from .exceptions import UnsupportedFeatureError  # noqa: E402
 from .tools import builtins  # noqa: E402
 from .tools.base_tool import BaseTool  # noqa: E402
-from .tools.models import GenerationResult, StreamChunk, ToolExecutionResult  # noqa: E402
+from .tools.models import GenerationResult, StreamChunk, ToolExecutionResult, UsageEvent  # noqa: E402
 from .tools.catalog import InMemoryToolCatalog, ToolCatalog, ToolCatalogEntry  # noqa: E402
 from .tools.session import ToolSession  # noqa: E402
 from .tools.tool_factory import ToolFactory  # noqa: E402
-from .models import ModelInfo, get_model_info, list_models  # noqa: E402
+from .models import ModelInfo, compute_cost, get_model_info, list_models  # noqa: E402
 
 # --- Utility functions ---
 
@@ -171,9 +171,11 @@ __all__ = [
     "ToolCatalogEntry",
     "ToolSession",
     "ToolExecutionResult",
+    "UsageEvent",
     "ModelInfo",
     "list_models",
     "get_model_info",
+    "compute_cost",
     "clean_json_string",
     "extract_json_from_markdown",
     "builtins",

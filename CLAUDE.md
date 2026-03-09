@@ -48,7 +48,7 @@ This library uses **native provider adapters** with a shared agentic loop:
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading` (`bool` or model string), history merging | ~760 |
+| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading`, `on_usage`/`usage_metadata`/`pricing` observability, history merging | ~780 |
 | `providers/__init__.py` | Package exports: `ProviderRouter`, `BaseProvider`, normalised types | ~10 |
 | `providers/_base.py` | `BaseProvider` ABC -- shared agentic loop, tool dispatch, compact mode, auto-compact, repetitive loop detection, tool output truncation, bounded concurrency, tool timeout | ~1140 |
 | `providers/_registry.py` | `ProviderRouter` -- model prefix routing, lazy adapter caching | ~150 |
@@ -58,11 +58,11 @@ This library uses **native provider adapters** with a shared agentic loop:
 | `providers/gemini.py` | `GeminiAdapter` -- Google Gemini GenerateContent, native structured output | ~380 |
 | `providers/xai.py` | `XAIAdapter` -- thin OpenAI subclass with custom base_url | ~50 |
 | `exceptions.py` | Exception hierarchy: `LLMToolkitError` > `ConfigurationError`, `ProviderError`, `ToolError`, `UnsupportedFeatureError`, `RetryExhaustedError` | ~40 |
-| `models.py` | `ModelInfo`, `MODEL_CATALOG`, `list_models()`, `get_model_info()` -- model metadata registry | ~290 |
+| `models.py` | `ModelInfo` (with pricing), `MODEL_CATALOG`, `list_models()`, `get_model_info()`, `compute_cost()` -- model metadata and cost computation | ~400 |
 | `tools/tool_factory.py` | `ToolFactory` -- registration (with `category`/`tags`/`blocking`), dispatch, context injection, mock mode, usage tracking, meta-tools, `register_find_tools`, `list_groups()`, auto-schema, blocking handler offload, tool timeout | ~930 |
 | `tools/_schema_gen.py` | `generate_schema_from_function()` -- auto-generates JSON Schema from function type hints for `register_tool(parameters=None)` | ~190 |
 | `tools/base_tool.py` | `BaseTool` ABC for class-based tools (includes `CATEGORY`, `TAGS`, `BLOCKING` class attrs) | ~46 |
-| `tools/models.py` | `GenerationResult`, `StreamChunk`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~95 |
+| `tools/models.py` | `GenerationResult` (with `cost_usd`), `StreamChunk`, `UsageEvent`, `ParsedToolCall`, `ToolIntentOutput`, `ToolExecutionResult` | ~145 |
 | `tools/runtime.py` | `ToolRuntime` -- nested tool calls with depth tracking, bounded concurrency, tool timeout | ~215 |
 | `tools/builtins.py` | `safe_math_evaluator`, `read_local_file` (category `"utility"`) | ~60 |
 | `tools/catalog.py` | `ToolCatalog` ABC, `InMemoryToolCatalog`, `LazyCatalogEntry`, `ToolCatalogEntry` -- lazy building, majority-match search, group-to-category fallback, offset/pagination, `get_tools_in_group()` | ~550 |
@@ -168,9 +168,16 @@ When `register_tool(parameters=None)`, `ToolFactory._auto_generate_schema()` ins
 ### Strict Mode (OpenAI)
 `OpenAIAdapter._build_tool_definitions()` sets `strict: True` on function tools. This requires ALL properties listed in the `required` array -- not just the ones you want to be required. This is an OpenAI Responses API constraint.
 
+### Token Observability
+`LLMClient` accepts `on_usage` (async or sync callback), `usage_metadata` (dict for attribution), and `pricing` (override dict) at init. `generate()` also accepts per-call `usage_metadata` that merges with init-level defaults (per-call wins on conflicts).
+
+After each `_call_api` iteration in the agentic loop, a `UsageEvent` is emitted via the callback with model, iteration number, input/output tokens, cost, tool call names, and metadata. `GenerationResult.cost_usd` contains the accumulated cost across all iterations. Cost is computed via `compute_cost()` using `ModelInfo.input_cost_per_1m` / `output_cost_per_1m` from `MODEL_CATALOG`, or from user-provided pricing override. Unknown pricing yields `None`.
+
+Streaming (`generate_stream()`) does not yet support usage callbacks or cost tracking.
+
 ## Testing
 
-### Unit Tests (no API keys, 708 tests)
+### Unit Tests (no API keys, 790 tests)
 - `test_builtin_tools.py` -- built-in tool functions + category metadata
 - `test_client_unit.py` -- LLMClient generate/intent/error wrapping
 - `test_dynamic_loading_unit.py` -- `core_tools`/`dynamic_tool_loading` constructor feature
@@ -205,6 +212,10 @@ When `register_tool(parameters=None)`, `ToolFactory._auto_generate_schema()` ins
 - `test_bounded_concurrency.py` -- semaphore limits, no-limit mode, sequential fallback (5 tests)
 - `test_auto_schema.py` -- type-to-schema mapping, exclude_params, registration integration, dispatch round-trip (27 tests)
 - `test_async_safety.py` -- blocking handler offload, tool timeout, ToolRuntime bounded concurrency (11 tests)
+- `test_model_pricing.py` -- ModelInfo pricing fields, catalog pricing population (4 tests)
+- `test_usage_event.py` -- UsageEvent dataclass construction, frozen immutability (3 tests)
+- `test_client_observability.py` -- on_usage, usage_metadata, pricing params, metadata merge, passthrough (10 tests)
+- `test_observability.py` -- compute_cost, usage callback emission (async/sync), cost_usd accumulation (14 tests)
 
 ### Integration Tests (require API keys, 54 tests)
 - `test_llmcall.py` -- basic generation (OpenAI)
