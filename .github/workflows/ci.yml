@@ -25,25 +25,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[all,dev]"
+        run: uv sync --all-extras
 
       - name: Ruff format check
-        run: ruff format --check llm_factory_toolkit
+        run: uv run ruff format --check llm_factory_toolkit
 
       - name: Ruff lint
-        run: ruff check llm_factory_toolkit
+        run: uv run ruff check llm_factory_toolkit
 
       - name: MyPy (strict)
-        run: mypy llm_factory_toolkit
+        run: uv run mypy llm_factory_toolkit
 
       - name: Unit tests with coverage
-        run: pytest --cov=llm_factory_toolkit --cov-fail-under=80 -m "not integration" tests -q
+        run: uv run pytest --cov=llm_factory_toolkit --cov-fail-under=80 -m "not integration" tests -q

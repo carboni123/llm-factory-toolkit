@@ -160,3 +160,6 @@ cython_debug/
 #.idea/
 *.patch
 /.claude
+
+# Compiled requirements (platform-specific, generate with: uv pip compile pyproject.toml --all-extras -o requirements.txt)
+requirements.txt
