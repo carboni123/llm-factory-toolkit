@@ -76,6 +76,36 @@ class StreamChunk:
 
 
 # ---------------------------------------------------------------------------
+# Per-iteration usage event
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class UsageEvent:
+    """Per-iteration usage event emitted via the on_usage callback.
+
+    Attributes:
+        model: Model identifier (e.g. ``"openai/gpt-5.2"``).
+        iteration: 1-indexed loop iteration number.
+        input_tokens: Prompt/input tokens consumed this iteration.
+        output_tokens: Completion/output tokens generated this iteration.
+        cost_usd: Estimated cost in USD for this iteration, or ``None``
+            if pricing is unknown for the model.
+        tool_calls: Names of tools called after this LLM response.
+        metadata: Passthrough dict from the caller for attribution
+            (e.g. user_id, org_id, conversation_id).
+    """
+
+    model: str
+    iteration: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: Optional[float]
+    tool_calls: List[str]
+    metadata: Dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
 # Tool models
 # ---------------------------------------------------------------------------
 
