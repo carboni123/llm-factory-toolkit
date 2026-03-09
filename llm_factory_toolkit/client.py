@@ -144,12 +144,18 @@ class LLMClient:
         core_tools: Optional[List[str]] = None,
         dynamic_tool_loading: Union[bool, str] = False,
         compact_tools: bool = False,
+        on_usage: Optional[Callable[..., Any]] = None,
+        usage_metadata: Optional[Dict[str, Any]] = None,
+        pricing: Optional[Dict[str, float]] = None,
         **kwargs: Any,
     ) -> None:
         logger.info("Initialising LLMClient for model: %s", model)
 
         self.model = model
         self.compact_tools = compact_tools
+        self.on_usage = on_usage
+        self.usage_metadata = usage_metadata or {}
+        self.pricing = pricing
         self.tool_factory = tool_factory or ToolFactory()
 
         self.provider = ProviderRouter(
