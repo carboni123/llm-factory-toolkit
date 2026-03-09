@@ -156,6 +156,21 @@ class TestGenerationResultUsageField:
         # usage is not part of tuple unpacking
         assert result.usage == usage
 
+    def test_cost_usd_defaults_to_none(self) -> None:
+        result = GenerationResult(content="hello")
+        assert result.cost_usd is None
+
+    def test_cost_usd_can_be_set(self) -> None:
+        result = GenerationResult(content="hello", cost_usd=0.0032)
+        assert result.cost_usd == 0.0032
+
+    def test_tuple_unpacking_ignores_cost(self) -> None:
+        result = GenerationResult(content="hello", payloads=["p"], cost_usd=0.01)
+        content, payloads = result
+        assert content == "hello"
+        assert payloads == ["p"]
+        assert result.cost_usd == 0.01
+
 
 # ---------------------------------------------------------------------------
 # Provider usage accumulation

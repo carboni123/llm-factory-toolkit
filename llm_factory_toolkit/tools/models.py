@@ -33,6 +33,9 @@ class GenerationResult:
             agentic loop.  Contains ``prompt_tokens``, ``completion_tokens``,
             and ``total_tokens``.  ``None`` if the provider did not report
             usage.
+        cost_usd: Estimated total cost in USD accumulated across all LLM
+            calls in the agentic loop.  ``None`` if pricing is unknown for
+            the model.
 
     Supports tuple unpacking for backwards compatibility::
 
@@ -44,6 +47,7 @@ class GenerationResult:
     tool_messages: List[Dict[str, Any]] = field(default_factory=list)
     messages: Optional[List[Dict[str, Any]]] = None
     usage: Optional[Dict[str, int]] = None
+    cost_usd: Optional[float] = None
 
     def __iter__(self) -> Iterator[Any]:
         """Yield items so callers can unpack the result like a tuple."""
