@@ -478,10 +478,11 @@ class ClaudeCodeAdapter(BaseProvider):
                                 parsed_content = response_format.model_validate(
                                     message.structured_output
                                 )
-                            except Exception:
+                            except (ValueError, TypeError) as exc:
                                 logger.debug(
-                                    "Failed to parse structured output: %s",
+                                    "Failed to parse structured output: %s (%s)",
                                     message.structured_output,
+                                    exc,
                                 )
         except Exception as e:
             raise ProviderError(f"Claude Code SDK error: {e}") from e
