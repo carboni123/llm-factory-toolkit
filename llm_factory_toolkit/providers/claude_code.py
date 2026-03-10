@@ -38,6 +38,8 @@ from ._base import DEFAULT_MAX_TOOL_ITERATIONS, BaseProvider, ProviderResponse
 
 logger = logging.getLogger(__name__)
 
+_MCP_SERVER_NAME = "toolkit"
+
 
 class ClaudeCodeAdapter(BaseProvider):
     """Provider adapter for the Claude Code Agent SDK.
@@ -281,7 +283,7 @@ class ClaudeCodeAdapter(BaseProvider):
         sdk = self._get_sdk()
         mcp_tools: List[Any] = []
         allowed_names: List[str] = []
-        server_name = "toolkit"
+        server_name = _MCP_SERVER_NAME
 
         for tool_def in tool_definitions:
             func = tool_def.get("function", tool_def)
@@ -428,8 +430,8 @@ class ClaudeCodeAdapter(BaseProvider):
         if tools and self.tool_factory:
             mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
             if mcp_tools:
-                server = sdk.create_sdk_mcp_server("toolkit", tools=mcp_tools)
-                mcp_servers = {"toolkit": server}
+                server = sdk.create_sdk_mcp_server(_MCP_SERVER_NAME, tools=mcp_tools)
+                mcp_servers = {_MCP_SERVER_NAME: server}
 
         options = self._build_options(
             model=model,
@@ -564,8 +566,8 @@ class ClaudeCodeAdapter(BaseProvider):
         if tools and self.tool_factory:
             mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
             if mcp_tools:
-                server = sdk.create_sdk_mcp_server("toolkit", tools=mcp_tools)
-                mcp_servers = {"toolkit": server}
+                server = sdk.create_sdk_mcp_server(_MCP_SERVER_NAME, tools=mcp_tools)
+                mcp_servers = {_MCP_SERVER_NAME: server}
 
         options = self._build_options(
             model=model,
