@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
 import importlib
 import inspect
@@ -502,8 +503,6 @@ class ToolFactory:
 
         The top-level ``function.description`` is preserved.
         """
-        import copy
-
         out = copy.deepcopy(definition)
         params = out.get("function", {}).get("parameters")
         if params is not None:
