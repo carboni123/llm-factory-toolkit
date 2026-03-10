@@ -21,12 +21,14 @@ from pydantic import BaseModel
 from ..exceptions import ConfigurationError, ProviderError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
-from ._base import BaseProvider, ProviderResponse, ProviderToolCall
+from ._base import (
+    RETRYABLE_STATUS_CODES,
+    BaseProvider,
+    ProviderResponse,
+    ProviderToolCall,
+)
 
 logger = logging.getLogger(__name__)
-
-
-_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 class GeminiAdapter(BaseProvider):
@@ -86,7 +88,7 @@ class GeminiAdapter(BaseProvider):
         status = getattr(error, "status_code", None) or getattr(error, "code", None)
         if status is not None:
             try:
-                return int(status) in _RETRYABLE_STATUS_CODES
+                return int(status) in RETRYABLE_STATUS_CODES
             except (ValueError, TypeError):
                 pass
         # Connection / timeout errors

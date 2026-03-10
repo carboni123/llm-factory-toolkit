@@ -45,6 +45,9 @@ from ._util import strip_urls
 
 logger = logging.getLogger(__name__)
 
+# Shared across all adapters for retry logic.
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
 
 # ---------------------------------------------------------------------------
 # Normalised types returned by adapter _call_api / _call_api_stream

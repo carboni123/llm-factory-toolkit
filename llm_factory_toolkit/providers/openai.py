@@ -21,15 +21,18 @@ from pydantic import BaseModel
 from ..exceptions import ConfigurationError, ProviderError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
-from ._base import BaseProvider, ProviderResponse, ProviderToolCall, ToolResultMessage
+from ._base import (
+    RETRYABLE_STATUS_CODES,
+    BaseProvider,
+    ProviderResponse,
+    ProviderToolCall,
+    ToolResultMessage,
+)
 
 logger = logging.getLogger(__name__)
 
 _GPT5_PREFIXES = ("gpt-5",)
 _REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
-
-
-_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 class OpenAIAdapter(BaseProvider):
@@ -109,7 +112,7 @@ class OpenAIAdapter(BaseProvider):
         if isinstance(error, (APIConnectionError, APITimeoutError)):
             return True
         if isinstance(error, APIStatusError):
-            return error.status_code in _RETRYABLE_STATUS_CODES
+            return error.status_code in RETRYABLE_STATUS_CODES
         return False
 
     def _extract_retry_after(self, error: Exception) -> Optional[float]:

@@ -21,13 +21,17 @@ from pydantic import BaseModel
 from ..exceptions import ConfigurationError, ProviderError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
-from ._base import BaseProvider, ProviderResponse, ProviderToolCall
+from ._base import (
+    RETRYABLE_STATUS_CODES,
+    BaseProvider,
+    ProviderResponse,
+    ProviderToolCall,
+)
 
 logger = logging.getLogger(__name__)
 
 # Default max_tokens for Anthropic (required parameter)
 _DEFAULT_MAX_TOKENS = 4096
-_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 class AnthropicAdapter(BaseProvider):
@@ -90,7 +94,7 @@ class AnthropicAdapter(BaseProvider):
         if isinstance(error, (APIConnectionError, APITimeoutError)):
             return True
         if isinstance(error, APIStatusError):
-            return error.status_code in _RETRYABLE_STATUS_CODES
+            return error.status_code in RETRYABLE_STATUS_CODES
         return False
 
     def _extract_retry_after(self, error: Exception) -> Optional[float]:
