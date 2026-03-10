@@ -7,7 +7,7 @@ import pytest
 from llm_factory_toolkit.models import (
     MODEL_CATALOG,
     ModelInfo,
-    _VALID_PROVIDERS,
+    _PROVIDER_PREFIXES,
     get_model_info,
     list_models,
 )
@@ -94,7 +94,7 @@ class TestGetModelInfo:
 class TestCatalogIntegrity:
     def test_all_providers_valid(self) -> None:
         for model_id, info in MODEL_CATALOG.items():
-            assert info.provider in _VALID_PROVIDERS, (
+            assert info.provider in _PROVIDER_PREFIXES, (
                 f"{model_id} has invalid provider {info.provider!r}"
             )
 

@@ -109,6 +109,21 @@ import re
 
 from dotenv import load_dotenv
 
+from .client import LLMClient
+from .exceptions import ConfigurationError
+from .exceptions import LLMToolkitError
+from .exceptions import ProviderError
+from .exceptions import RetryExhaustedError
+from .exceptions import ToolError
+from .exceptions import UnsupportedFeatureError
+from .models import ModelInfo, compute_cost, get_model_info, list_models
+from .tools import builtins
+from .tools.base_tool import BaseTool
+from .tools.catalog import InMemoryToolCatalog, ToolCatalog, ToolCatalogEntry
+from .tools.models import GenerationResult, StreamChunk, ToolExecutionResult, UsageEvent
+from .tools.session import ToolSession
+from .tools.tool_factory import ToolFactory
+
 # Configure basic logging for the library
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -119,23 +134,6 @@ try:
         load_dotenv(dotenv_path=dotenv_path)
 except Exception as e:
     logging.getLogger(__name__).warning(f"Could not load .env file: {e}")
-
-
-# Expose key components for easy import
-from .client import LLMClient  # noqa: E402
-from .exceptions import ConfigurationError  # noqa: E402
-from .exceptions import LLMToolkitError  # noqa: E402
-from .exceptions import ProviderError  # noqa: E402
-from .exceptions import RetryExhaustedError  # noqa: E402
-from .exceptions import ToolError  # noqa: E402
-from .exceptions import UnsupportedFeatureError  # noqa: E402
-from .tools import builtins  # noqa: E402
-from .tools.base_tool import BaseTool  # noqa: E402
-from .tools.models import GenerationResult, StreamChunk, ToolExecutionResult, UsageEvent  # noqa: E402
-from .tools.catalog import InMemoryToolCatalog, ToolCatalog, ToolCatalogEntry  # noqa: E402
-from .tools.session import ToolSession  # noqa: E402
-from .tools.tool_factory import ToolFactory  # noqa: E402
-from .models import ModelInfo, compute_cost, get_model_info, list_models  # noqa: E402
 
 # --- Utility functions ---
 
