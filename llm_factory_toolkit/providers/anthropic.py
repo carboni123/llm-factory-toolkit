@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import (
     Any,
     AsyncGenerator,
@@ -69,8 +70,6 @@ class AnthropicAdapter(BaseProvider):
                 "Anthropic models require the 'anthropic' package. "
                 "Install it with: pip install llm_factory_toolkit[anthropic]"
             )
-
-        import os
 
         key = self.api_key or os.environ.get(self.API_ENV_VAR)
         if not key:

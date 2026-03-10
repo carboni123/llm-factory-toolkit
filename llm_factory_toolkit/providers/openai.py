@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from typing import (
     Any,
@@ -68,8 +69,6 @@ class OpenAIAdapter(BaseProvider):
                 "OpenAI models require the 'openai' package. "
                 "Install it with: pip install llm_factory_toolkit[openai]"
             )
-
-        import os
 
         key = self.api_key or os.environ.get(self.API_ENV_VAR)
         if not key:

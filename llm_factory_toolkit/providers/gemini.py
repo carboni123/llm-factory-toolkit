@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import (
     Any,
     AsyncGenerator,
@@ -62,8 +63,6 @@ class GeminiAdapter(BaseProvider):
                 "Gemini models require the 'google-genai' package. "
                 "Install it with: pip install llm_factory_toolkit[gemini]"
             )
-
-        import os
 
         key = self.api_key or os.environ.get(self.API_ENV_VAR)
         if not key:
