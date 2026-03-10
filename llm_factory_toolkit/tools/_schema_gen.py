@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import enum
 import inspect
-import logging
 import types
 from typing import (
     Any,
@@ -24,8 +23,6 @@ from typing import (
 )
 
 from pydantic import BaseModel
-
-logger = logging.getLogger(__name__)
 
 
 def generate_schema_from_function(

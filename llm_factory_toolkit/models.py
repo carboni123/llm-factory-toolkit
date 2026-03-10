@@ -69,8 +69,6 @@ class ModelInfo(BaseModel):
 # Catalog — curated list of recent production-ready models
 # ---------------------------------------------------------------------------
 
-_VALID_PROVIDERS = frozenset(_PROVIDER_PREFIXES.keys())
-
 MODEL_CATALOG: dict[str, ModelInfo] = {
     # ------------------------------------------------------------------
     # OpenAI
