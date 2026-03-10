@@ -10,6 +10,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -344,7 +345,7 @@ class OpenAIAdapter(BaseProvider):
 
     def _prepare_native_tools(
         self,
-        use_tools: Optional[List[str]],
+        use_tools: Optional[Sequence[str]],
         *,
         compact_tools: bool = False,
         core_tool_names: Optional[set[str]] = None,

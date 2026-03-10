@@ -16,6 +16,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -363,7 +364,7 @@ class BaseProvider(abc.ABC):
 
     def _resolve_tool_definitions(
         self,
-        use_tools: Optional[List[str]],
+        use_tools: Optional[Sequence[str]],
         compact: bool = False,
         core_tool_names: Optional[set[str]] = None,
     ) -> List[Dict[str, Any]]:
@@ -372,12 +373,12 @@ class BaseProvider(abc.ABC):
             return []
 
         if not compact:
-            if use_tools == []:
+            if not use_tools:
                 return self.tool_factory.get_tool_definitions()
             return self.tool_factory.get_tool_definitions(filter_tool_names=use_tools)
 
         _core = core_tool_names or set()
-        if use_tools == []:
+        if not use_tools:
             all_names = self.tool_factory.available_tool_names
         else:
             all_names = list(use_tools)
@@ -713,9 +714,9 @@ class BaseProvider(abc.ABC):
 
     def _get_effective_tools(
         self,
-        use_tools: Optional[List[str]],
+        use_tools: Optional[Sequence[str]],
         tool_session: Optional[ToolSession],
-    ) -> Optional[List[str]]:
+    ) -> Optional[Sequence[str]]:
         """Return the effective tool list, considering dynamic session."""
         if tool_session is not None:
             active = tool_session.list_active()
@@ -725,7 +726,7 @@ class BaseProvider(abc.ABC):
 
     def _prepare_native_tools(
         self,
-        use_tools: Optional[List[str]],
+        use_tools: Optional[Sequence[str]],
         *,
         compact_tools: bool = False,
         core_tool_names: Optional[set[str]] = None,
@@ -817,7 +818,7 @@ class BaseProvider(abc.ABC):
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
-        use_tools: Optional[List[str]] = [],
+        use_tools: Optional[Sequence[str]] = (),
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
@@ -1062,7 +1063,7 @@ class BaseProvider(abc.ABC):
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
-        use_tools: Optional[List[str]] = [],
+        use_tools: Optional[Sequence[str]] = (),
         tool_execution_context: Optional[Dict[str, Any]] = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
@@ -1183,7 +1184,7 @@ class BaseProvider(abc.ABC):
         input: List[Dict[str, Any]],
         *,
         model: str,
-        use_tools: Optional[List[str]] = [],
+        use_tools: Optional[Sequence[str]] = (),
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
