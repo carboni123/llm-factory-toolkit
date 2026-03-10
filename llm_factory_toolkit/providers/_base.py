@@ -48,6 +48,9 @@ logger = logging.getLogger(__name__)
 # Shared across all adapters for retry logic.
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
+# Default cap on tool-call iterations in the agentic loop.
+DEFAULT_MAX_TOOL_ITERATIONS = 25
+
 
 # ---------------------------------------------------------------------------
 # Normalised types returned by adapter _call_api / _call_api_stream
@@ -817,7 +820,7 @@ class BaseProvider(abc.ABC):
         input: List[Dict[str, Any]],
         *,
         model: str,
-        max_tool_iterations: int = 25,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
@@ -1062,7 +1065,7 @@ class BaseProvider(abc.ABC):
         input: List[Dict[str, Any]],
         *,
         model: str,
-        max_tool_iterations: int = 25,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,

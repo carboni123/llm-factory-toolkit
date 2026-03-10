@@ -22,6 +22,7 @@ from ..exceptions import ConfigurationError
 from ..tools.models import GenerationResult, StreamChunk, ToolIntentOutput
 from ..tools.session import ToolSession
 from ..tools.tool_factory import ToolFactory
+from ._base import DEFAULT_MAX_TOOL_ITERATIONS
 from ._util import bare_model_name
 
 if TYPE_CHECKING:
@@ -235,7 +236,7 @@ class ProviderRouter:
         input: List[Dict[str, Any]],
         *,
         model: Optional[str] = None,
-        max_tool_iterations: int = 25,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
@@ -282,7 +283,7 @@ class ProviderRouter:
         input: List[Dict[str, Any]],
         *,
         model: Optional[str] = None,
-        max_tool_iterations: int = 25,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,

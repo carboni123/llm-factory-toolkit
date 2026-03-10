@@ -28,6 +28,7 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
+from .providers._base import DEFAULT_MAX_TOOL_ITERATIONS
 from .providers import ProviderRouter
 from .tools.catalog import InMemoryToolCatalog
 from .tools.models import (
@@ -297,7 +298,7 @@ class LLMClient:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
-        max_tool_iterations: int = 25,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
         response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
         use_tools: Optional[Sequence[str]] = (),
         tool_execution_context: Optional[Dict[str, Any]] = None,
