@@ -679,7 +679,29 @@ class BaseProvider(abc.ABC):
             else:
                 pairs = await asyncio.gather(*[_handle_one(tc) for tc in tool_calls])
         else:
-            pairs = [await _handle_one(tc) for tc in tool_calls]
+            # Sequential execution: propagate customer_id forward within the batch.
+            # When create_customer runs before create_deal/create_calendar_event in the
+            # same response, the new customer's ID flows into subsequent tool calls.
+            pairs = []
+            ctx = tool_execution_context  # may be None
+            for tc in tool_calls:
+                msg, payload, is_error = await _handle_one(tc)
+                # Propagate customer_id from tool result metadata into context
+                if (
+                    not is_error
+                    and payload
+                    and ctx is not None
+                    and not ctx.get("customer_id")
+                ):
+                    new_cid = (payload.get("metadata") or {}).get("customer_id")
+                    if new_cid:
+                        ctx["customer_id"] = new_cid
+                        logger.debug(
+                            "Propagated customer_id=%s from %s into tool context",
+                            new_cid,
+                            tc.name,
+                        )
+                pairs.append((msg, payload, is_error))
 
         call_error_info: List[Tuple[str, str, bool]] = []
         for (msg, payload, is_error), tc in zip(pairs, tool_calls):
