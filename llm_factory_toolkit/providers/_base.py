@@ -8,6 +8,7 @@ import copy
 import inspect
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -245,11 +246,29 @@ class BaseProvider(abc.ABC):
         self,
         model: str,
         messages: List[Dict[str, Any]],
+        *,
+        deadline: Optional[float] = None,
         **kwargs: Any,
     ) -> ProviderResponse:
-        """Call ``_call_api`` with exponential-backoff retry on transient errors."""
+        """Call ``_call_api`` with exponential-backoff retry on transient errors.
+
+        Parameters
+        ----------
+        deadline:
+            Absolute wall-clock cutoff (``time.monotonic()`` value).  When set,
+            retries that would start past the deadline are skipped and the last
+            error is raised immediately.
+        """
         last_error: Optional[Exception] = None
         for attempt in range(1 + self.max_retries):
+            # Respect wall-clock deadline — skip retry if budget exhausted
+            if deadline is not None and attempt > 0 and time.monotonic() >= deadline:
+                logger.warning(
+                    "Deadline exceeded before retry attempt %d/%d — aborting.",
+                    attempt + 1,
+                    self.max_retries,
+                )
+                break
             try:
                 return await self._call_api(model, messages, **kwargs)
             except ProviderError as e:
@@ -861,9 +880,20 @@ class BaseProvider(abc.ABC):
         on_usage: Optional[Callable[..., Any]] = None,
         usage_metadata: Optional[Dict[str, Any]] = None,
         pricing: Optional[Dict[str, float]] = None,
+        deadline: Optional[float] = None,
         **kwargs: Any,
     ) -> GenerationResult:
-        """Generate a response, executing tool calls iteratively."""
+        """Generate a response, executing tool calls iteratively.
+
+        Parameters
+        ----------
+        deadline:
+            Absolute wall-clock cutoff (``time.monotonic()`` value).  The tool
+            loop will stop starting new iterations once the deadline is reached,
+            returning whatever content has been accumulated so far.  Also
+            forwarded to ``_call_api_with_retry`` so that retries respect the
+            same budget.
+        """
         # Feature gate: file_search
         if file_search and not self._supports_file_search():
             raise UnsupportedFeatureError(
@@ -891,6 +921,13 @@ class BaseProvider(abc.ABC):
         _all_call_counts: Dict[Tuple[str, str], int] = {}
 
         while iteration_count < max_tool_iterations:
+            # Wall-clock deadline check — stop starting new iterations
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.warning(
+                    "Deadline reached after %d iterations — returning partial result.",
+                    iteration_count,
+                )
+                break
             effective_tools = self._get_effective_tools(use_tools, tool_session)
 
             native_tools = self._prepare_native_tools(
@@ -909,6 +946,7 @@ class BaseProvider(abc.ABC):
             response = await self._call_api_with_retry(
                 model,
                 current_messages,
+                deadline=deadline,
                 tools=native_tools,
                 temperature=effective_temp,
                 max_output_tokens=max_output_tokens,
