@@ -14,12 +14,13 @@ mock mode, blocking offload, tool timeout, and payloads.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import (
     Any,
     AsyncGenerator,
-    AsyncIterator,
     Dict,
     List,
     Optional,
@@ -39,6 +40,32 @@ from ._base import DEFAULT_MAX_TOOL_ITERATIONS, BaseProvider, ProviderResponse
 logger = logging.getLogger(__name__)
 
 _MCP_SERVER_NAME = "toolkit"
+
+
+# ---------------------------------------------------------------------------
+# Per-call context — isolated per generate() invocation for concurrency safety
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CallContext:
+    """Mutable state scoped to a single ``generate()`` / ``generate_stream()`` call.
+
+    Stored in a :class:`contextvars.ContextVar` so concurrent calls on the
+    same adapter instance do not corrupt each other's state.
+    """
+
+    tool_context: Dict[str, Any] | None = None
+    mock_mode: bool = False
+    tool_timeout: float | None = None
+    max_turns_override: int | None = None
+    payloads: List[Any] = field(default_factory=list)
+    tool_call_records: List[Dict[str, Any]] = field(default_factory=list)
+
+
+_call_ctx_var: contextvars.ContextVar[_CallContext] = contextvars.ContextVar(
+    "_call_ctx_var"
+)
 
 
 class ClaudeCodeAdapter(BaseProvider):
@@ -93,14 +120,6 @@ class ClaudeCodeAdapter(BaseProvider):
         self._default_max_turns = max_turns
         self._default_allowed_tools = allowed_tools or []
 
-        # Stash fields used by MCP bridge handlers during a generate() call
-        self._current_tool_context: Optional[Dict[str, Any]] = None
-        self._current_mock_mode: bool = False
-        self._current_tool_timeout: Optional[float] = None
-        self._collected_payloads: List[Any] = []
-        self._collected_tool_call_records: List[Dict[str, Any]] = []
-        self._max_turns_override: Optional[int] = None
-
     # ------------------------------------------------------------------
     # SDK import
     # ------------------------------------------------------------------
@@ -122,7 +141,7 @@ class ClaudeCodeAdapter(BaseProvider):
             )
 
     # ------------------------------------------------------------------
-    # generate() override — stash tool context for MCP handlers
+    # generate() override — set per-call context for MCP handlers
     # ------------------------------------------------------------------
 
     async def generate(
@@ -150,15 +169,17 @@ class ClaudeCodeAdapter(BaseProvider):
     ) -> GenerationResult:
         """Generate a response via the Claude Code Agent SDK.
 
-        Stashes tool execution context so MCP bridge handlers can access it,
-        then delegates to ``super().generate()`` for the standard loop.
+        Creates a per-call :class:`_CallContext` stored in a
+        :class:`~contextvars.ContextVar` so concurrent calls on the same
+        adapter instance remain isolated.
         """
-        self._current_tool_context = tool_execution_context
-        self._current_mock_mode = mock_tools
-        self._current_tool_timeout = tool_timeout
-        self._max_turns_override = max_tool_iterations
-        self._collected_payloads = []
-        self._collected_tool_call_records = []
+        ctx = _CallContext(
+            tool_context=tool_execution_context,
+            mock_mode=mock_tools,
+            tool_timeout=tool_timeout,
+            max_turns_override=max_tool_iterations,
+        )
+        token = _call_ctx_var.set(ctx)
 
         try:
             result = await super().generate(
@@ -183,15 +204,77 @@ class ClaudeCodeAdapter(BaseProvider):
                 **kwargs,
             )
             # Append payloads collected by MCP bridge handlers
-            if self._collected_payloads:
-                result.payloads.extend(self._collected_payloads)
+            if ctx.payloads:
+                result.payloads.extend(ctx.payloads)
             return result
         finally:
-            self._current_tool_context = None
-            self._current_mock_mode = False
-            self._current_tool_timeout = None
-            self._collected_payloads = []
-            self._collected_tool_call_records = []
+            _call_ctx_var.reset(token)
+
+    # ------------------------------------------------------------------
+    # generate_stream() override — set per-call context for MCP handlers
+    # ------------------------------------------------------------------
+
+    async def generate_stream(
+        self,
+        input: List[Dict[str, Any]],
+        *,
+        model: str,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
+        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        use_tools: Optional[Sequence[str]] = (),
+        tool_execution_context: Optional[Dict[str, Any]] = None,
+        mock_tools: bool = False,
+        parallel_tools: bool = False,
+        web_search: bool | Dict[str, Any] = False,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tool_session: Optional[Any] = None,
+        compact_tools: bool = False,
+        repetition_threshold: int = 3,
+        max_tool_output_chars: Optional[int] = None,
+        max_concurrent_tools: Optional[int] = None,
+        tool_timeout: Optional[float] = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Stream a response via the Claude Code Agent SDK.
+
+        Sets per-call context like :meth:`generate`, then delegates to
+        ``super().generate_stream()``.
+        """
+        ctx = _CallContext(
+            tool_context=tool_execution_context,
+            mock_mode=mock_tools,
+            tool_timeout=tool_timeout,
+            max_turns_override=max_tool_iterations,
+        )
+        token = _call_ctx_var.set(ctx)
+
+        try:
+            async for chunk in super().generate_stream(
+                input=input,
+                model=model,
+                max_tool_iterations=max_tool_iterations,
+                response_format=response_format,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                use_tools=use_tools,
+                tool_execution_context=tool_execution_context,
+                mock_tools=mock_tools,
+                parallel_tools=parallel_tools,
+                web_search=web_search,
+                file_search=file_search,
+                tool_session=tool_session,
+                compact_tools=compact_tools,
+                repetition_threshold=repetition_threshold,
+                max_tool_output_chars=max_tool_output_chars,
+                max_concurrent_tools=max_concurrent_tools,
+                tool_timeout=tool_timeout,
+                **kwargs,
+            ):
+                yield chunk
+        finally:
+            _call_ctx_var.reset(token)
 
     # ------------------------------------------------------------------
     # Message conversion helpers
@@ -210,8 +293,8 @@ class ClaudeCodeAdapter(BaseProvider):
     def _messages_to_prompt(messages: List[Dict[str, Any]]) -> str:
         """Convert Chat Completions messages to a single prompt string.
 
-        Single user message → use content directly.
-        Multi-turn → format as ``[Role]: content`` blocks.
+        Single user message -> use content directly.
+        Multi-turn -> format as ``[Role]: content`` blocks.
         """
         if not messages:
             return ""
@@ -248,37 +331,21 @@ class ClaudeCodeAdapter(BaseProvider):
         return "\n\n".join(parts)
 
     # ------------------------------------------------------------------
-    # Prompt wrapping for MCP tool support
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    async def _prompt_as_stream(prompt: str) -> AsyncIterator[Dict[str, Any]]:
-        """Wrap a prompt string as an async iterable of user-message dicts.
-
-        When MCP tool servers are present the SDK must use the
-        ``AsyncIterable`` prompt path so that ``stream_input()`` keeps
-        stdin open until the first result arrives.  The plain ``str``
-        path calls ``end_input()`` immediately, which closes stdin
-        before MCP tool responses can be written back.
-        """
-        yield {
-            "type": "user",
-            "session_id": "",
-            "message": {"role": "user", "content": prompt},
-            "parent_tool_use_id": None,
-        }
-
-    # ------------------------------------------------------------------
     # MCP tool bridge
     # ------------------------------------------------------------------
 
     def _bridge_tools_to_mcp(
-        self, tool_definitions: List[Dict[str, Any]]
+        self,
+        tool_definitions: List[Dict[str, Any]],
+        ctx: _CallContext,
     ) -> Tuple[List[Any], List[str]]:
         """Bridge ToolFactory tool definitions to MCP ``@tool`` objects.
 
         Returns ``(mcp_tools, allowed_tool_names)`` where
         ``allowed_tool_names`` uses the ``mcp__<server>__<name>`` pattern.
+
+        MCP handlers close over the provided *ctx* so concurrent
+        ``generate()`` calls remain isolated.
         """
         sdk = self._get_sdk()
         mcp_tools: List[Any] = []
@@ -291,22 +358,22 @@ class ClaudeCodeAdapter(BaseProvider):
             desc = func.get("description", "")
             params = func.get("parameters", {})
 
-            # Closure captures _name by default-arg trick
+            # Closure captures _name by default-arg trick, ctx by lexical scope
             async def _handler(
                 args: Dict[str, Any], _name: str = name
             ) -> Dict[str, Any]:
                 assert self.tool_factory is not None  # noqa: S101
-                call_id = f"cc_{_name}_{len(self._collected_tool_call_records)}"
+                call_id = f"cc_{_name}_{len(ctx.tool_call_records)}"
                 result = await self.tool_factory.dispatch_tool(
                     _name,
                     json.dumps(args),
-                    tool_execution_context=self._current_tool_context,
-                    use_mock=self._current_mock_mode,
-                    tool_timeout=self._current_tool_timeout,
+                    tool_execution_context=ctx.tool_context,
+                    use_mock=ctx.mock_mode,
+                    tool_timeout=ctx.tool_timeout,
                 )
                 if result.payload:
-                    self._collected_payloads.append(result.payload)
-                self._collected_tool_call_records.append(
+                    ctx.payloads.append(result.payload)
+                ctx.tool_call_records.append(
                     {
                         "call_id": call_id,
                         "name": _name,
@@ -352,7 +419,9 @@ class ClaudeCodeAdapter(BaseProvider):
             opts["cwd"] = kwargs.pop("cwd", self._default_cwd)
 
         # max_turns: per-call override > constructor default
-        max_turns = kwargs.pop("max_turns", None) or self._max_turns_override
+        ctx = _call_ctx_var.get(None)
+        max_turns_override = ctx.max_turns_override if ctx else None
+        max_turns = kwargs.pop("max_turns", None) or max_turns_override
         if max_turns is None:
             max_turns = self._default_max_turns
         if max_turns is not None:
@@ -387,6 +456,11 @@ class ClaudeCodeAdapter(BaseProvider):
             env["ANTHROPIC_API_KEY"] = ""
         opts["env"] = env
 
+        # Capture stderr so we get actual error details when the CLI crashes
+        # instead of the useless "Check stderr output for details" message.
+        stderr_lines: List[str] = kwargs.pop("_stderr_lines", [])
+        opts["stderr"] = lambda line: stderr_lines.append(line)
+
         # Forward remaining SDK-specific params
         for key in list(kwargs):
             if key in self._EXTRA_PARAMS:
@@ -411,14 +485,16 @@ class ClaudeCodeAdapter(BaseProvider):
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ProviderResponse:
-        """Make a single SDK call.
+        """Make a single SDK call via ``ClaudeSDKClient``.
 
-        Extracts system message, converts remaining messages to a prompt,
-        bridges ToolFactory tools to MCP, and iterates SDK messages to
-        collect the final text response.
+        Uses the client context manager for proper MCP server lifecycle
+        management.  Extracts system message, converts remaining messages
+        to a prompt, bridges ToolFactory tools to MCP, and iterates SDK
+        messages to collect the final text response.
         """
         sdk = self._get_sdk()
         filtered = self._filter_kwargs(kwargs)
+        ctx = _call_ctx_var.get(None) or _CallContext()
 
         # Extract system message
         system_prompt, rest_messages = self._extract_system(messages)
@@ -428,73 +504,77 @@ class ClaudeCodeAdapter(BaseProvider):
         mcp_servers: Optional[Dict[str, Any]] = None
         mcp_allowed: Optional[List[str]] = None
         if tools and self.tool_factory:
-            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
+            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools, ctx)
             if mcp_tools:
                 server = sdk.create_sdk_mcp_server(_MCP_SERVER_NAME, tools=mcp_tools)
                 mcp_servers = {_MCP_SERVER_NAME: server}
 
+        stderr_lines: List[str] = []
         options = self._build_options(
             model=model,
             system_prompt=system_prompt,
             response_format=response_format,
             mcp_servers=mcp_servers,
             allowed_tools=mcp_allowed,
+            _stderr_lines=stderr_lines,
             **filtered,
         )
 
-        # Use async-iterable prompt when MCP tools are bridged so the SDK
-        # keeps stdin open long enough for tool responses (see _prompt_as_stream).
-        effective_prompt: Union[str, AsyncIterator[Dict[str, Any]]] = prompt
-        if mcp_servers:
-            effective_prompt = self._prompt_as_stream(prompt)
-
-        # Call the SDK
+        # Call the SDK via ClaudeSDKClient for proper MCP lifecycle
         text_parts: List[str] = []
         usage: Optional[Dict[str, int]] = None
         parsed_content: Optional[BaseModel] = None
         raw_messages: List[Dict[str, Any]] = []
 
         try:
-            async for message in sdk.query(prompt=effective_prompt, options=options):
-                if isinstance(message, sdk.AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, sdk.TextBlock):
-                            text_parts.append(block.text)
-                    raw_messages.append(
-                        {"role": "assistant", "content": "".join(text_parts)}
-                    )
-                elif isinstance(message, sdk.ResultMessage):
-                    if message.usage:
-                        usage = {
-                            "prompt_tokens": message.usage.get("input_tokens", 0),
-                            "completion_tokens": message.usage.get("output_tokens", 0),
-                            "total_tokens": message.usage.get("input_tokens", 0)
-                            + message.usage.get("output_tokens", 0),
-                        }
-                    # Structured output
-                    if message.structured_output is not None:
-                        if isinstance(response_format, type) and issubclass(
-                            response_format, BaseModel
-                        ):
-                            try:
-                                parsed_content = response_format.model_validate(
-                                    message.structured_output
-                                )
-                            except (ValueError, TypeError) as exc:
-                                logger.debug(
-                                    "Failed to parse structured output: %s (%s)",
-                                    message.structured_output,
-                                    exc,
-                                )
+            async with sdk.ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+                async for message in client.receive_response():
+                    if isinstance(message, sdk.AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, sdk.TextBlock):
+                                text_parts.append(block.text)
+                        raw_messages.append(
+                            {"role": "assistant", "content": "".join(text_parts)}
+                        )
+                    elif isinstance(message, sdk.ResultMessage):
+                        if message.usage:
+                            usage = {
+                                "prompt_tokens": message.usage.get("input_tokens", 0),
+                                "completion_tokens": message.usage.get(
+                                    "output_tokens", 0
+                                ),
+                                "total_tokens": message.usage.get("input_tokens", 0)
+                                + message.usage.get("output_tokens", 0),
+                            }
+                        # Structured output
+                        if message.structured_output is not None:
+                            if isinstance(response_format, type) and issubclass(
+                                response_format, BaseModel
+                            ):
+                                try:
+                                    parsed_content = response_format.model_validate(
+                                        message.structured_output
+                                    )
+                                except (ValueError, TypeError) as exc:
+                                    logger.debug(
+                                        "Failed to parse structured output: %s (%s)",
+                                        message.structured_output,
+                                        exc,
+                                    )
         except Exception as e:
-            raise ProviderError(f"Claude Code SDK error: {e}") from e
+            stderr_text = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
+            detail = f"Claude Code SDK error: {e}"
+            if stderr_text:
+                detail += f"\nStderr:\n{stderr_text}"
+            raise ProviderError(detail) from e
 
         content = "".join(text_parts)
 
         # Inject tool call records into raw_messages so consumers (e.g.
         # benchmarks) can see which tools were called during the SDK loop.
         tool_call_msgs: List[Dict[str, Any]] = []
-        if self._collected_tool_call_records:
+        if ctx.tool_call_records:
             tool_call_msgs.append(
                 {
                     "role": "assistant",
@@ -507,11 +587,11 @@ class ClaudeCodeAdapter(BaseProvider):
                                 "arguments": rec["arguments"],
                             },
                         }
-                        for rec in self._collected_tool_call_records
+                        for rec in ctx.tool_call_records
                     ],
                 }
             )
-            for rec in self._collected_tool_call_records:
+            for rec in ctx.tool_call_records:
                 tool_call_msgs.append(
                     {
                         "role": "tool",
@@ -548,7 +628,7 @@ class ClaudeCodeAdapter(BaseProvider):
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
-        """Stream a response from the SDK.
+        """Stream a response via ``ClaudeSDKClient``.
 
         Uses ``include_partial_messages=True`` to receive ``StreamEvent``
         objects with text deltas, falling back to full ``AssistantMessage``
@@ -556,6 +636,7 @@ class ClaudeCodeAdapter(BaseProvider):
         """
         sdk = self._get_sdk()
         filtered = self._filter_kwargs(kwargs)
+        ctx = _call_ctx_var.get(None) or _CallContext()
 
         system_prompt, rest_messages = self._extract_system(messages)
         prompt = self._messages_to_prompt(rest_messages)
@@ -564,56 +645,64 @@ class ClaudeCodeAdapter(BaseProvider):
         mcp_servers: Optional[Dict[str, Any]] = None
         mcp_allowed: Optional[List[str]] = None
         if tools and self.tool_factory:
-            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
+            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools, ctx)
             if mcp_tools:
                 server = sdk.create_sdk_mcp_server(_MCP_SERVER_NAME, tools=mcp_tools)
                 mcp_servers = {_MCP_SERVER_NAME: server}
 
+        stderr_lines: List[str] = []
         options = self._build_options(
             model=model,
             system_prompt=system_prompt,
             response_format=response_format,
             mcp_servers=mcp_servers,
             allowed_tools=mcp_allowed,
+            _stderr_lines=stderr_lines,
             **filtered,
         )
         # Enable partial messages for streaming
         options.include_partial_messages = True
 
-        # Use async-iterable prompt when MCP tools are bridged (see _prompt_as_stream).
-        effective_prompt: Union[str, AsyncIterator[Dict[str, Any]]] = prompt
-        if mcp_servers:
-            effective_prompt = self._prompt_as_stream(prompt)
-
         usage: Optional[Dict[str, int]] = None
 
         try:
-            async for message in sdk.query(prompt=effective_prompt, options=options):
-                if hasattr(sdk, "StreamEvent") and isinstance(message, sdk.StreamEvent):
-                    # Extract text delta from raw event
-                    event = getattr(message, "event", {})
-                    delta_text = ""
-                    if isinstance(event, dict):
-                        delta = event.get("delta", {})
-                        if isinstance(delta, dict):
-                            delta_text = delta.get("text", "")
-                    if delta_text:
-                        yield StreamChunk(content=delta_text)
-                elif isinstance(message, sdk.AssistantMessage):
-                    # Fallback: yield full text blocks
-                    for block in message.content:
-                        if isinstance(block, sdk.TextBlock):
-                            yield StreamChunk(content=block.text)
-                elif isinstance(message, sdk.ResultMessage):
-                    if message.usage:
-                        usage = {
-                            "prompt_tokens": message.usage.get("input_tokens", 0),
-                            "completion_tokens": message.usage.get("output_tokens", 0),
-                            "total_tokens": message.usage.get("input_tokens", 0)
-                            + message.usage.get("output_tokens", 0),
-                        }
+            async with sdk.ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+                async for message in client.receive_response():
+                    if hasattr(sdk, "StreamEvent") and isinstance(
+                        message, sdk.StreamEvent
+                    ):
+                        # Only content_block_delta events carry text deltas
+                        event = getattr(message, "event", {})
+                        if isinstance(event, dict):
+                            event_type = event.get("type", "")
+                            if event_type == "content_block_delta":
+                                delta = event.get("delta", {})
+                                if isinstance(delta, dict):
+                                    delta_text = delta.get("text", "")
+                                    if delta_text:
+                                        yield StreamChunk(content=delta_text)
+                    elif isinstance(message, sdk.AssistantMessage):
+                        # Fallback: yield full text blocks
+                        for block in message.content:
+                            if isinstance(block, sdk.TextBlock):
+                                yield StreamChunk(content=block.text)
+                    elif isinstance(message, sdk.ResultMessage):
+                        if message.usage:
+                            usage = {
+                                "prompt_tokens": message.usage.get("input_tokens", 0),
+                                "completion_tokens": message.usage.get(
+                                    "output_tokens", 0
+                                ),
+                                "total_tokens": message.usage.get("input_tokens", 0)
+                                + message.usage.get("output_tokens", 0),
+                            }
         except Exception as e:
-            raise ProviderError(f"Claude Code SDK streaming error: {e}") from e
+            stderr_text = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
+            detail = f"Claude Code SDK streaming error: {e}"
+            if stderr_text:
+                detail += f"\nStderr:\n{stderr_text}"
+            raise ProviderError(detail) from e
 
         yield StreamChunk(content="", done=True, usage=usage)
 

@@ -77,12 +77,33 @@ class _FakeClaudeAgentOptions:
             setattr(self, k, v)
 
 
+class _FakeClient:
+    """Mimics ClaudeSDKClient — async context manager with query/receive."""
+
+    def __init__(self, messages: List[Any], options: Any = None) -> None:
+        self._messages = messages
+        self._options = options
+
+    async def __aenter__(self) -> _FakeClient:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+    async def query(self, prompt: Any) -> None:
+        pass
+
+    async def receive_response(self):  # type: ignore[no-untyped-def]
+        for msg in self._messages:
+            yield msg
+
+
 def _build_mock_sdk(
     messages: Optional[List[Any]] = None,
 ) -> MagicMock:
     """Build a mock ``claude_agent_sdk`` module.
 
-    *messages* controls what ``query()`` yields.
+    *messages* controls what ``ClaudeSDKClient.receive_response()`` yields.
     """
     sdk = MagicMock()
     sdk.AssistantMessage = _AssistantMessage
@@ -110,18 +131,14 @@ def _build_mock_sdk(
         return_value={"type": "sdk", "name": "toolkit"}
     )
 
-    # query(): async generator yielding *messages*
+    # ClaudeSDKClient: async context manager yielding *messages*
     if messages is None:
         messages = [
             _AssistantMessage(content=[_TextBlock(text="Hello!")]),
             _ResultMessage(usage={"input_tokens": 10, "output_tokens": 5}),
         ]
 
-    async def _query(**kwargs: Any):  # type: ignore[no-untyped-def]
-        for msg in messages:
-            yield msg
-
-    sdk.query = _query
+    sdk.ClaudeSDKClient = lambda options=None: _FakeClient(messages, options)
     return sdk
 
 
@@ -267,11 +284,24 @@ class TestCallApi:
     async def test_sdk_error_wraps_as_provider_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async def _failing_query(**kwargs: Any):  # type: ignore[no-untyped-def]
-            raise RuntimeError("SDK blew up")
-            yield  # make it an async generator  # type: ignore[misc]  # pragma: no cover
+        class _FailingClient:
+            def __init__(self, options: Any = None) -> None:
+                pass
 
-        self.mock_sdk.query = _failing_query
+            async def __aenter__(self) -> _FailingClient:
+                return self
+
+            async def __aexit__(self, *args: Any) -> None:
+                pass
+
+            async def query(self, prompt: Any) -> None:
+                pass
+
+            async def receive_response(self):  # type: ignore[no-untyped-def]
+                raise RuntimeError("SDK blew up")
+                yield  # make it an async generator  # type: ignore[misc]  # pragma: no cover
+
+        self.mock_sdk.ClaudeSDKClient = _FailingClient
         adapter = _make_adapter()
 
         with pytest.raises(ProviderError, match="SDK blew up"):
@@ -294,11 +324,9 @@ class TestCallApi:
             ),
         ]
 
-        async def _query(**kwargs: Any):  # type: ignore[no-untyped-def]
-            for msg in messages:
-                yield msg
-
-        self.mock_sdk.query = _query
+        self.mock_sdk.ClaudeSDKClient = lambda options=None: _FakeClient(
+            messages, options
+        )
 
         adapter = _make_adapter()
         resp = await adapter._call_api(
@@ -338,6 +366,8 @@ class TestMcpToolBridge:
         )
 
     def test_bridge_creates_mcp_tools(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import _CallContext
+
         factory = ToolFactory()
         factory.register_tool(
             lambda name: f"Hello, {name}!",
@@ -352,13 +382,16 @@ class TestMcpToolBridge:
         adapter = _make_adapter(tool_factory=factory)
         defs = factory.get_tool_definitions()
 
-        mcp_tools, allowed = adapter._bridge_tools_to_mcp(defs)
+        ctx = _CallContext()
+        mcp_tools, allowed = adapter._bridge_tools_to_mcp(defs, ctx)
 
         assert len(mcp_tools) == 1
         assert mcp_tools[0]._tool_name == "greet"
         assert "mcp__toolkit__greet" in allowed
 
     async def test_handler_dispatches_to_factory(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import _CallContext
+
         factory = ToolFactory()
         factory.register_tool(
             lambda text: text,
@@ -373,7 +406,8 @@ class TestMcpToolBridge:
         adapter = _make_adapter(tool_factory=factory)
         defs = factory.get_tool_definitions()
 
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
+        ctx = _CallContext()
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
         handler = mcp_tools[0]
 
         # Call the handler directly
@@ -381,6 +415,8 @@ class TestMcpToolBridge:
         assert result["content"][0]["text"] == "hello"
 
     async def test_context_injection_flows_through(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import _CallContext
+
         factory = ToolFactory()
 
         async def greet_with_context(name: str, user_id: str = "") -> str:
@@ -397,16 +433,18 @@ class TestMcpToolBridge:
             },
         )
         adapter = _make_adapter(tool_factory=factory)
-        adapter._current_tool_context = {"user_id": "u123"}
         defs = factory.get_tool_definitions()
 
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
+        ctx = _CallContext(tool_context={"user_id": "u123"})
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
         handler = mcp_tools[0]
 
         result = await handler({"name": "Alice"})
         assert "u123" in result["content"][0]["text"]
 
     async def test_payloads_collected(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import _CallContext
+
         factory = ToolFactory()
 
         async def data_tool() -> ToolExecutionResult:
@@ -422,18 +460,20 @@ class TestMcpToolBridge:
             parameters={"type": "object", "properties": {}},
         )
         adapter = _make_adapter(tool_factory=factory)
-        adapter._collected_payloads = []
         defs = factory.get_tool_definitions()
 
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
+        ctx = _CallContext()
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
         handler = mcp_tools[0]
 
         result = await handler({})
         assert result["content"][0]["text"] == "done"
-        assert len(adapter._collected_payloads) == 1
-        assert adapter._collected_payloads[0] == {"data": [1, 2, 3]}
+        assert len(ctx.payloads) == 1
+        assert ctx.payloads[0] == {"data": [1, 2, 3]}
 
     async def test_mock_mode_propagates(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import _CallContext
+
         factory = ToolFactory()
         factory.register_tool(
             lambda x: str(x * 2),
@@ -446,10 +486,10 @@ class TestMcpToolBridge:
             },
         )
         adapter = _make_adapter(tool_factory=factory)
-        adapter._current_mock_mode = True
         defs = factory.get_tool_definitions()
 
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
+        ctx = _CallContext(mock_mode=True)
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
         handler = mcp_tools[0]
 
         # In mock mode, dispatch_tool returns a mock result
@@ -478,16 +518,18 @@ class TestCallApiStream:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         messages = [
-            _StreamEvent(event={"delta": {"text": "Hello"}}),
-            _StreamEvent(event={"delta": {"text": " world"}}),
+            _StreamEvent(
+                event={"type": "content_block_delta", "delta": {"text": "Hello"}}
+            ),
+            _StreamEvent(
+                event={"type": "content_block_delta", "delta": {"text": " world"}}
+            ),
             _ResultMessage(usage={"input_tokens": 5, "output_tokens": 3}),
         ]
 
-        async def _query(**kwargs: Any):  # type: ignore[no-untyped-def]
-            for msg in messages:
-                yield msg
-
-        self.mock_sdk.query = _query
+        self.mock_sdk.ClaudeSDKClient = lambda options=None: _FakeClient(
+            messages, options
+        )
 
         adapter = _make_adapter()
         chunks: List[StreamChunk] = []
@@ -513,11 +555,9 @@ class TestCallApiStream:
             _ResultMessage(),
         ]
 
-        async def _query(**kwargs: Any):  # type: ignore[no-untyped-def]
-            for msg in messages:
-                yield msg
-
-        self.mock_sdk.query = _query
+        self.mock_sdk.ClaudeSDKClient = lambda options=None: _FakeClient(
+            messages, options
+        )
 
         adapter = _make_adapter()
         chunks: List[StreamChunk] = []
@@ -537,11 +577,9 @@ class TestCallApiStream:
             _ResultMessage(usage={"input_tokens": 20, "output_tokens": 10}),
         ]
 
-        async def _query(**kwargs: Any):  # type: ignore[no-untyped-def]
-            for msg in messages:
-                yield msg
-
-        self.mock_sdk.query = _query
+        self.mock_sdk.ClaudeSDKClient = lambda options=None: _FakeClient(
+            messages, options
+        )
 
         adapter = _make_adapter()
         chunks: List[StreamChunk] = []
@@ -615,6 +653,13 @@ class TestConstructor:
     def test_custom_cwd(self) -> None:
         adapter = _make_adapter(cwd="/tmp/test")
         assert adapter._default_cwd == "/tmp/test"
+
+    def test_no_instance_state_for_per_call_fields(self) -> None:
+        """Per-call state should NOT be stored on the adapter instance."""
+        adapter = _make_adapter()
+        assert not hasattr(adapter, "_current_tool_context")
+        assert not hasattr(adapter, "_current_mock_mode")
+        assert not hasattr(adapter, "_collected_payloads")
 
 
 # =========================================================================
@@ -716,11 +761,20 @@ class TestBuildOptions:
         assert opts.mcp_servers == servers
         assert "mcp__toolkit__greet" in opts.allowed_tools
 
-    def test_max_turns_from_override(self) -> None:
+    def test_max_turns_from_context_var(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import (
+            _CallContext,
+            _call_ctx_var,
+        )
+
         adapter = _make_adapter()
-        adapter._max_turns_override = 10
-        opts = adapter._build_options(model="claude-sonnet-4-5")
-        assert opts.max_turns == 10
+        ctx = _CallContext(max_turns_override=10)
+        token = _call_ctx_var.set(ctx)
+        try:
+            opts = adapter._build_options(model="claude-sonnet-4-5")
+            assert opts.max_turns == 10
+        finally:
+            _call_ctx_var.reset(token)
 
     def test_effort_forwarded(self) -> None:
         adapter = _make_adapter()
