@@ -925,12 +925,11 @@ class ToolFactory:
 
         for param_name, param_value in context.items():
             if param_name in arguments:
-                logger.warning(
-                    "Context parameter '%s' for tool '%s' collides with an LLM-provided argument. Context will NOT override.",
+                logger.debug(
+                    "Context parameter '%s' for tool '%s' overrides LLM-provided value.",
                     param_name,
                     tool_name,
                 )
-                continue
 
             if param_name in signature.parameters or accepts_var_kw:
                 arguments[param_name] = param_value

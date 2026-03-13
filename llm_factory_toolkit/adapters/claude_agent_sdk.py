@@ -85,8 +85,6 @@ def _wrap_handler(
                     for p in sig.parameters.values()
                 )
                 for key, value in context.items():
-                    if key in final_args:
-                        continue
                     if key in sig.parameters or accepts_var_kw:
                         final_args[key] = value
 

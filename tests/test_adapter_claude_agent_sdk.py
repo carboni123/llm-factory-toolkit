@@ -322,7 +322,7 @@ class TestContextInjection:
         assert result["content"][0]["text"] == "Hello Alice, you are u-123"
 
     @pytest.mark.asyncio
-    async def test_context_does_not_override_args(self) -> None:
+    async def test_context_overrides_llm_args(self) -> None:
         from llm_factory_toolkit.adapters.claude_agent_sdk import to_sdk_tools
 
         def echo(x: str) -> ToolExecutionResult:
@@ -339,11 +339,12 @@ class TestContextInjection:
             },
         )
 
-        # Context has same key as an LLM-provided arg — arg wins
+        # Context has same key as an LLM-provided arg — context wins
+        # (security: server-side context is trusted over LLM-provided values)
         tools = to_sdk_tools(factory, context={"x": "from-context"})
         result = await tools[0].handler({"x": "from-llm"})
 
-        assert result["content"][0]["text"] == "from-llm"
+        assert result["content"][0]["text"] == "from-context"
 
     @pytest.mark.asyncio
     async def test_context_ignored_for_unknown_params(self) -> None:
