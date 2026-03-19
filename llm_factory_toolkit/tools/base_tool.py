@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -42,5 +43,26 @@ class BaseTool(ABC):
 
     @classmethod
     def from_config(cls, **config: Any) -> "BaseTool":
-        """Instantiate the tool with optional config."""
-        return cls(**config)
+        """Instantiate the tool with optional config.
+
+        Only passes config keys that the constructor actually accepts,
+        so no-arg tools (e.g. FinalAnswerTool) aren't broken by extra
+        kwargs like db_session_factory.
+        """
+        if not config:
+            return cls()
+        # If the class doesn't define its own __init__, it inherits
+        # object.__init__ which reports *args/**kwargs in the signature
+        # but actually rejects keyword arguments at runtime.
+        has_own_init = "__init__" in cls.__dict__ or any(
+            "__init__" in base.__dict__
+            for base in cls.__mro__[1:]
+            if base not in (BaseTool, ABC, object)
+        )
+        if not has_own_init:
+            return cls()
+        sig = inspect.signature(cls.__init__)
+        if any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values()):
+            return cls(**config)
+        accepted = {k: v for k, v in config.items() if k in sig.parameters}
+        return cls(**accepted)
