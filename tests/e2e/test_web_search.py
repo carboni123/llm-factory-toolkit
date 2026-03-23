@@ -68,6 +68,52 @@ async def test_openai_web_search_no_citations(openai_test_model: str) -> None:
     assert "https://" not in result.content
 
 
+@skip_openai
+async def test_openai_web_search_multi_turn(openai_test_model: str) -> None:
+    """Multi-turn: follow-up after web search round-trips correctly.
+
+    Regression test: web_search_call items must be emitted alongside
+    their reasoning items for the Responses API to accept them as input.
+    """
+    client = LLMClient(model=openai_test_model)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "What is the current price of Bitcoin in USD?"},
+    ]
+
+    # Turn 1: triggers web search
+    result1 = await client.generate(
+        input=messages, temperature=0.0, web_search=True,
+    )
+    assert result1.content, "Turn 1 returned empty content"
+
+    # Turn 2: follow-up using raw_messages from turn 1
+    turn2_messages = list(messages) + (result1.messages or [])
+    turn2_messages.append({"role": "user", "content": "How does that compare to one year ago?"})
+
+    result2 = await client.generate(
+        input=turn2_messages, temperature=0.0, web_search=True,
+    )
+    assert result2.content, "Turn 2 returned empty content"
+    assert len(result2.content) > 10, f"Turn 2 response too short: {result2.content}"
+
+
+@skip_openai
+async def test_openai_web_search_domain_filter(openai_test_model: str) -> None:
+    """Domain filters (allowed_domains) are forwarded via the filters param."""
+    client = LLMClient(model=openai_test_model)
+    result = await client.generate(
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "What is the latest Python release?"},
+        ],
+        temperature=0.0,
+        web_search={"allowed_domains": ["python.org"]},
+    )
+    assert result.content, "Response content is empty"
+    assert len(result.content) > 20, f"Response too short: {result.content}"
+
+
 # ------------------------------------------------------------------
 # Google Gemini  (GoogleSearch tool)
 # ------------------------------------------------------------------
