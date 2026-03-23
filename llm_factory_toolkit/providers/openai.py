@@ -243,6 +243,13 @@ class OpenAIAdapter(BaseProvider):
                 )
                 pending_raw_items.append(item)
 
+            elif item_type in ("web_search_call", "file_search_call"):
+                # Native tool calls must be round-tripped alongside their
+                # preceding reasoning items — the Responses API requires
+                # the reasoning item to appear before its dependent call.
+                has_reasoning = True
+                pending_raw_items.append(item)
+
             elif item_type == "function_call_output":
                 _flush()
                 result.append(
@@ -367,8 +374,18 @@ class OpenAIAdapter(BaseProvider):
         if web_search:
             ws_tool: Dict[str, Any] = {"type": "web_search"}
             if isinstance(web_search, dict):
+                # Domain filters must be nested under "filters" for the
+                # Responses API (not top-level on the tool config).
+                filters: Dict[str, Any] = {}
+                for key in ("allowed_domains", "blocked_domains"):
+                    if key in web_search:
+                        filters[key] = web_search[key]
+                if filters:
+                    ws_tool["filters"] = filters
+                # Forward other params (search_context_size, user_location, etc.)
+                _skip = {"citations", "allowed_domains", "blocked_domains"}
                 for key, value in web_search.items():
-                    if key != "citations":
+                    if key not in _skip:
                         ws_tool[key] = value
             tools_list.append(ws_tool)
 
@@ -526,6 +543,8 @@ class OpenAIAdapter(BaseProvider):
             for item in output_items:
                 dump = item.model_dump()
                 dump.pop("parsed_arguments", None)
+                # Strip status from all output items — the Responses API
+                # rejects unknown params on round-tripped items.
                 dump.pop("status", None)
                 content_list = dump.get("content")
                 if isinstance(content_list, list):
