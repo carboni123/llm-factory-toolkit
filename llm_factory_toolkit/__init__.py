@@ -113,6 +113,7 @@ from .client import LLMClient
 from .exceptions import ConfigurationError
 from .exceptions import LLMToolkitError
 from .exceptions import ProviderError
+from .exceptions import QuotaExhaustedError
 from .exceptions import RetryExhaustedError
 from .exceptions import ToolError
 from .exceptions import UnsupportedFeatureError
@@ -159,6 +160,7 @@ __all__ = [
     "LLMToolkitError",
     "ConfigurationError",
     "ProviderError",
+    "QuotaExhaustedError",
     "ToolError",
     "UnsupportedFeatureError",
     "RetryExhaustedError",

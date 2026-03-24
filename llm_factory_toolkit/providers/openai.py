@@ -19,7 +19,7 @@ from typing import (
 
 from pydantic import BaseModel
 
-from ..exceptions import ConfigurationError, ProviderError
+from ..exceptions import ConfigurationError, ProviderError, QuotaExhaustedError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
 from ._base import (
@@ -111,7 +111,24 @@ class OpenAIAdapter(BaseProvider):
         if isinstance(error, (APIConnectionError, APITimeoutError)):
             return True
         if isinstance(error, APIStatusError):
+            if error.status_code == 429 and self._is_quota_error(error):
+                return False
             return error.status_code in RETRYABLE_STATUS_CODES
+        return False
+
+    @staticmethod
+    def _is_quota_error(error: Exception) -> bool:
+        """Detect permanent quota exhaustion vs transient rate limit.
+
+        OpenAI uses HTTP 429 for both, but ``insufficient_quota`` in the
+        response body means the account needs billing attention — retrying
+        will never succeed.
+        """
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            err = body.get("error", {})
+            if isinstance(err, dict) and err.get("code") == "insufficient_quota":
+                return True
         return False
 
     def _extract_retry_after(self, error: Exception) -> Optional[float]:
@@ -484,6 +501,11 @@ class OpenAIAdapter(BaseProvider):
         try:
             completion = await client.responses.parse(**request)
         except Exception as e:
+            if self._is_quota_error(e):
+                raise QuotaExhaustedError(
+                    "OpenAI quota exhausted — check billing at "
+                    "https://platform.openai.com/account/billing"
+                ) from e
             raise ProviderError(f"OpenAI Responses API error: {e}") from e
 
         # Extract usage
@@ -598,6 +620,11 @@ class OpenAIAdapter(BaseProvider):
         try:
             stream = await client.responses.create(**request)
         except Exception as e:
+            if self._is_quota_error(e):
+                raise QuotaExhaustedError(
+                    "OpenAI quota exhausted — check billing at "
+                    "https://platform.openai.com/account/billing"
+                ) from e
             raise ProviderError(f"OpenAI Responses API stream error: {e}") from e
 
         response_obj = None

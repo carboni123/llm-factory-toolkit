@@ -31,6 +31,16 @@ class UnsupportedFeatureError(LLMToolkitError):
     pass
 
 
+class QuotaExhaustedError(ProviderError):
+    """Raised when the provider account has exhausted its quota.
+
+    Unlike transient rate limits, this is a permanent failure that should
+    NOT be retried — the account needs billing attention.
+    """
+
+    pass
+
+
 class RetryExhaustedError(ProviderError):
     """Raised when all retry attempts have been exhausted."""
 
