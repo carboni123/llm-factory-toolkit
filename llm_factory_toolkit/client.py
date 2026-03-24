@@ -25,6 +25,8 @@ from .exceptions import (
     ConfigurationError,
     LLMToolkitError,
     ProviderError,
+    QuotaExhaustedError,
+    RetryExhaustedError,
     ToolError,
     UnsupportedFeatureError,
 )
@@ -149,6 +151,7 @@ class LLMClient:
         on_usage: Optional[Callable[..., Any]] = None,
         usage_metadata: Optional[Dict[str, Any]] = None,
         pricing: Optional[Dict[str, float]] = None,
+        fallback: Optional["LLMClient"] = None,
         **kwargs: Any,
     ) -> None:
         logger.info("Initialising LLMClient for model: %s", model)
@@ -169,6 +172,8 @@ class LLMClient:
             retry_min_wait=retry_min_wait,
             **kwargs,
         )
+
+        self.fallback = fallback
 
         # Dynamic tool loading setup — normalise str to True + model name
         self.core_tools = core_tools or []
@@ -554,6 +559,11 @@ class LLMClient:
                     for k, v in common_kwargs.items()
                     if k not in {"on_usage", "usage_metadata", "pricing"}
                 }
+                if self.fallback is not None:
+                    return self._generate_stream_with_fallback(
+                        stream_kwargs=stream_kwargs,
+                        file_search=file_search,
+                    )
                 return self.provider.generate_stream(
                     **stream_kwargs, file_search=file_search
                 )
@@ -562,11 +572,90 @@ class LLMClient:
                 **common_kwargs,
                 file_search=file_search,
             )
+        except (QuotaExhaustedError, RetryExhaustedError) as e:
+            if self.fallback is None:
+                raise
+            logger.warning(
+                "Primary provider failed (%s: %s), falling back to %s",
+                type(e).__name__,
+                e,
+                self.fallback.model,
+            )
+            # Forward all original call args except model.
+            # model is an explicit named param so it's NOT in **kwargs.
+            # The fallback client uses its own default model.
+            return await self.fallback.generate(
+                input,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                max_tool_iterations=max_tool_iterations,
+                response_format=response_format,
+                use_tools=use_tools,
+                tool_execution_context=tool_execution_context,
+                mock_tools=mock_tools,
+                parallel_tools=parallel_tools,
+                merge_history=merge_history,
+                stream=stream,
+                web_search=web_search,
+                file_search=file_search,
+                tool_session=tool_session,
+                compact_tools=compact_tools,
+                repetition_threshold=repetition_threshold,
+                max_tool_output_chars=max_tool_output_chars,
+                max_concurrent_tools=max_concurrent_tools,
+                tool_timeout=tool_timeout,
+                usage_metadata=usage_metadata,
+                **kwargs,
+            )
         except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError):
             raise
         except Exception as e:
             logger.error("Unexpected error during generation: %s", e, exc_info=True)
             raise LLMToolkitError(f"Unexpected generation error: {e}") from e
+
+    async def _generate_stream_with_fallback(
+        self,
+        *,
+        stream_kwargs: Dict[str, Any],
+        file_search: Any = False,
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Wrap streaming with fallback — catches errors during async iteration.
+
+        Unlike ``generate()`` where we can try/except the await, streaming
+        errors surface during iteration of the async generator.  This wrapper
+        catches fallback-eligible errors and transparently switches to the
+        fallback client's stream.
+        """
+        try:
+            async for chunk in self.provider.generate_stream(
+                **stream_kwargs, file_search=file_search
+            ):
+                yield chunk
+        except (QuotaExhaustedError, RetryExhaustedError) as e:
+            if self.fallback is None:
+                raise
+            logger.warning(
+                "Primary provider stream failed (%s: %s), falling back to %s",
+                type(e).__name__,
+                e,
+                self.fallback.model,
+            )
+            # Strip model from kwargs so fallback uses its own default.
+            # Delegate to fallback.generate(stream=True) so its own
+            # fallback chain can also trigger if needed.
+            fallback_stream_kwargs = {
+                k: v for k, v in stream_kwargs.items() if k != "model"
+            }
+            fallback_stream = await self.fallback.generate(
+                stream=True,
+                file_search=file_search,
+                **fallback_stream_kwargs,
+            )
+            # generate(stream=True) returns AsyncGenerator, but the Union
+            # type confuses mypy — narrow with an assertion.
+            assert hasattr(fallback_stream, "__aiter__")  # noqa: S101
+            async for chunk in fallback_stream:
+                yield chunk
 
     # ------------------------------------------------------------------
     # Tool intent planning / execution
@@ -606,6 +695,26 @@ class LLMClient:
 
         try:
             return await self.provider.generate_tool_intent(**provider_args)
+        except (QuotaExhaustedError, RetryExhaustedError) as e:
+            if self.fallback is None:
+                raise
+            logger.warning(
+                "Primary provider failed (%s: %s), falling back to %s",
+                type(e).__name__,
+                e,
+                self.fallback.model,
+            )
+            # Forward all args except model — use fallback.generate_tool_intent()
+            # (not .provider.) so the chain continues if this fallback also fails.
+            return await self.fallback.generate_tool_intent(
+                input,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                response_format=response_format,
+                use_tools=use_tools,
+                web_search=web_search,
+                **kwargs,
+            )
         except (ProviderError, ToolError, ConfigurationError, UnsupportedFeatureError):
             raise
         except Exception as e:
