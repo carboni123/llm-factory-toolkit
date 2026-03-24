@@ -103,6 +103,33 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
         input_cost_per_1m=0.40,
         output_cost_per_1m=1.60,
     ),
+    "openai/gpt-5.4-mini": ModelInfo(
+        model_id="openai/gpt-5.4-mini",
+        provider="openai",
+        display_name="GPT-5.4 Mini",
+        capabilities=[
+            "streaming",
+            "structured_output",
+            "web_search",
+            "file_search",
+            "vision",
+            "reasoning",
+        ],
+        input_cost_per_1m=0.75,
+        output_cost_per_1m=4.50,
+    ),
+    "openai/gpt-5.4-nano": ModelInfo(
+        model_id="openai/gpt-5.4-nano",
+        provider="openai",
+        display_name="GPT-5.4 Nano",
+        capabilities=[
+            "streaming",
+            "structured_output",
+            "vision",
+        ],
+        input_cost_per_1m=0.20,
+        output_cost_per_1m=1.25,
+    ),
     "openai/gpt-5.1-codex-mini": ModelInfo(
         model_id="openai/gpt-5.1-codex-mini",
         provider="openai",
