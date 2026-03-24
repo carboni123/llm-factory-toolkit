@@ -624,7 +624,12 @@ class BaseProvider(abc.ABC):
                         name=tc.name or "unknown",
                         content=json.dumps({"error": "Malformed tool call received."}),
                     ),
-                    None,
+                    {
+                        "tool_name": tc.name or "unknown",
+                        "error": "Malformed tool call received.",
+                        "status": "error",
+                        "severity": "fatal",
+                    },
                     True,
                 )
 
@@ -644,6 +649,29 @@ class BaseProvider(abc.ABC):
                 if result.payload is not None:
                     payload["payload"] = result.payload
 
+                # Surface error information so callers (sandbox trace) can
+                # distinguish success from failure per tool call.
+                if is_error:
+                    payload["error"] = result.error
+                    payload["status"] = "error"
+                    # Classify severity from the error status embedded in content JSON.
+                    # _build_error_result() encodes {"error": msg, "status": type}.
+                    _severity = "non_fatal"
+                    try:
+                        _err_data = json.loads(result.content)
+                        _err_status = _err_data.get("status", "")
+                        if _err_status in ("timeout", "execution_error"):
+                            _severity = "fatal"
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        pass
+                    # Tool-level override: tools can set metadata["severity"] directly
+                    _tool_severity = (result.metadata or {}).get("severity")
+                    if _tool_severity is not None:
+                        _severity = _tool_severity
+                    payload["severity"] = _severity
+                else:
+                    payload["status"] = "success"
+
                 return (
                     ToolResultMessage(
                         call_id=tc.call_id,
@@ -662,7 +690,12 @@ class BaseProvider(abc.ABC):
                         name=tc.name,
                         content=json.dumps({"error": str(e)}),
                     ),
-                    None,
+                    {
+                        "tool_name": tc.name,
+                        "error": str(e),
+                        "status": "error",
+                        "severity": "fatal",
+                    },
                     True,
                 )
 
@@ -680,7 +713,12 @@ class BaseProvider(abc.ABC):
                         name=tc.name,
                         content=json.dumps({"error": f"Unexpected error: {e}"}),
                     ),
-                    None,
+                    {
+                        "tool_name": tc.name,
+                        "error": f"Unexpected error: {e}",
+                        "status": "error",
+                        "severity": "fatal",
+                    },
                     True,
                 )
 
