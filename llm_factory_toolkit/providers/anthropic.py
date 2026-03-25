@@ -515,6 +515,8 @@ class AnthropicAdapter(BaseProvider):
                         block = getattr(event, "content_block", None)
                         if block:
                             block_type = getattr(block, "type", "")
+                            # Only handle function tool_use blocks; server_tool_use
+                            # (web_search) is handled server-side by Anthropic.
                             if block_type == "tool_use":
                                 current_tool_id = getattr(block, "id", "")
                                 current_tool_name = getattr(block, "name", "")

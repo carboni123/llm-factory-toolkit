@@ -679,3 +679,33 @@ class TestCallApiWebSearch:
         tool_types_or_names = [(t.get("type"), t.get("name")) for t in tools]
         assert ("web_search_20250305", "web_search") in tool_types_or_names
         assert any(name == "__json_output__" for _, name in tool_types_or_names)
+
+
+class TestServerToolUseHandling:
+    def test_parse_response_ignores_server_tool_use(self) -> None:
+        """server_tool_use blocks should not become ProviderToolCall objects."""
+        response = SimpleNamespace(content=[
+            SimpleNamespace(type="server_tool_use", id="srv_123", name="web_search",
+                           input={"query": "AI news"}),
+            SimpleNamespace(type="web_search_tool_result", tool_use_id="srv_123",
+                           content=[{"type": "web_search_result", "url": "https://example.com"}]),
+            SimpleNamespace(type="text", text="Here are the results."),
+        ])
+        content, tool_calls = AnthropicAdapter._parse_response(response)
+        assert content == "Here are the results."
+        assert tool_calls == []
+
+    def test_parse_response_mixed_server_and_function_tools(self) -> None:
+        """Function tool_use should still be extracted; server_tool_use should not."""
+        response = SimpleNamespace(content=[
+            SimpleNamespace(type="server_tool_use", id="srv_1", name="web_search",
+                           input={"query": "news"}),
+            SimpleNamespace(type="web_search_tool_result", tool_use_id="srv_1", content=[]),
+            SimpleNamespace(type="text", text="Found info. Let me also check the CRM."),
+            SimpleNamespace(type="tool_use", id="call_2", name="query_customers",
+                           input={"search": "John"}),
+        ])
+        content, tool_calls = AnthropicAdapter._parse_response(response)
+        assert content == "Found info. Let me also check the CRM."
+        assert len(tool_calls) == 1
+        assert tool_calls[0].name == "query_customers"
