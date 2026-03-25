@@ -235,15 +235,47 @@ class AnthropicAdapter(BaseProvider):
     # Web search tool building
     # ------------------------------------------------------------------
 
+    # Tool version with dynamic filtering (Opus 4.6 / Sonnet 4.6).
+    _WEB_SEARCH_TOOL_V2 = "web_search_20260209"
+    # Original tool version (all supported models).
+    _WEB_SEARCH_TOOL_V1 = "web_search_20250305"
+
+    # Models that support the v2 dynamic-filtering tool.
+    _DYNAMIC_FILTER_MODELS = frozenset(
+        {
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+        }
+    )
+
     @staticmethod
     def _build_web_search_tool(
         web_search: bool | Dict[str, Any],
+        model: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Build an Anthropic web_search_20250305 tool definition."""
+        """Build an Anthropic web search tool definition.
+
+        Selects ``web_search_20260209`` (dynamic filtering) for Opus 4.6
+        and Sonnet 4.6, falling back to ``web_search_20250305`` for all
+        other models.  Pass ``tool_version`` in the *web_search* dict to
+        force a specific version.
+        """
         if not web_search:
             return None
+
+        # Determine tool version: explicit override > model auto-detect > v1.
+        explicit_version = (
+            web_search.get("tool_version") if isinstance(web_search, dict) else None
+        )
+        if explicit_version:
+            tool_type = explicit_version
+        elif model and model in AnthropicAdapter._DYNAMIC_FILTER_MODELS:
+            tool_type = AnthropicAdapter._WEB_SEARCH_TOOL_V2
+        else:
+            tool_type = AnthropicAdapter._WEB_SEARCH_TOOL_V1
+
         tool: Dict[str, Any] = {
-            "type": "web_search_20250305",
+            "type": tool_type,
             "name": "web_search",
         }
         if isinstance(web_search, dict):
@@ -252,6 +284,7 @@ class AnthropicAdapter(BaseProvider):
                 "allowed_domains",
                 "blocked_domains",
                 "user_location",
+                "allowed_callers",
             }
             for key in _KNOWN_KEYS:
                 if key in web_search:
@@ -382,7 +415,7 @@ class AnthropicAdapter(BaseProvider):
         # so it's injected here alongside function tools rather than through
         # _prepare_native_tools (which only handles function tool definitions).
         effective_tools: list[Dict[str, Any]] = list(tools) if tools else []
-        ws_tool = self._build_web_search_tool(web_search)
+        ws_tool = self._build_web_search_tool(web_search, model=model)
         if ws_tool:
             effective_tools.append(ws_tool)
         if effective_tools:
@@ -488,7 +521,7 @@ class AnthropicAdapter(BaseProvider):
             request["temperature"] = temperature
 
         effective_tools: list[Dict[str, Any]] = list(tools) if tools else []
-        ws_tool = self._build_web_search_tool(web_search)
+        ws_tool = self._build_web_search_tool(web_search, model=model)
         if ws_tool:
             effective_tools.append(ws_tool)
         if effective_tools:

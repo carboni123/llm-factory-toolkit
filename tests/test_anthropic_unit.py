@@ -585,6 +585,37 @@ class TestWebSearchSupport:
             "blocked_domains": ["spam.com"],
         }
 
+    def test_build_web_search_tool_v2_for_sonnet_4_6(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(True, model="claude-sonnet-4-6")
+        assert tool == {"type": "web_search_20260209", "name": "web_search"}
+
+    def test_build_web_search_tool_v2_for_opus_4_6(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(True, model="claude-opus-4-6")
+        assert tool == {"type": "web_search_20260209", "name": "web_search"}
+
+    def test_build_web_search_tool_v1_for_older_models(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(True, model="claude-sonnet-4-20250514")
+        assert tool == {"type": "web_search_20250305", "name": "web_search"}
+
+    def test_build_web_search_tool_v1_without_model(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(True)
+        assert tool == {"type": "web_search_20250305", "name": "web_search"}
+
+    def test_build_web_search_tool_explicit_version_override(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(
+            {"tool_version": "web_search_20250305"},
+            model="claude-sonnet-4-6",
+        )
+        assert tool["type"] == "web_search_20250305"
+
+    def test_build_web_search_tool_allowed_callers(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(
+            {"allowed_callers": ["direct"]},
+            model="claude-sonnet-4-6",
+        )
+        assert tool["allowed_callers"] == ["direct"]
+        assert tool["type"] == "web_search_20260209"
+
     def test_build_web_search_tool_with_max_uses(self) -> None:
         tool = AnthropicAdapter._build_web_search_tool({
             "max_uses": 3,
@@ -623,6 +654,30 @@ class TestCallApiWebSearch:
         ws_tools = [t for t in tools if t.get("type") == "web_search_20250305"]
         assert len(ws_tools) == 1
         assert ws_tools[0]["allowed_domains"] == ["techcrunch.com"]
+
+    @pytest.mark.asyncio
+    async def test_web_search_v2_for_sonnet_4_6(self) -> None:
+        """Sonnet 4.6 should use web_search_20260209 (dynamic filtering)."""
+        adapter = AnthropicAdapter(api_key="k")
+
+        mock_response = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="Done")],
+            usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+        )
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        adapter._async_client = mock_client  # noqa: SLF001
+
+        await adapter._call_api(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "Search for AI news"}],
+            web_search=True,
+        )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        tools = call_kwargs.get("tools", [])
+        assert len(tools) == 1
+        assert tools[0]["type"] == "web_search_20260209"
 
     @pytest.mark.asyncio
     async def test_web_search_merged_with_function_tools(self) -> None:
