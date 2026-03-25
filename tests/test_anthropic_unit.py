@@ -550,3 +550,49 @@ class TestGetClient:
 
         with pytest.raises(ConfigurationError, match="API key not found"):
             adapter._get_client()  # noqa: SLF001
+
+
+class TestWebSearchSupport:
+    def test_supports_web_search_returns_true(self) -> None:
+        adapter = AnthropicAdapter(api_key="k")
+        assert adapter._supports_web_search() is True  # noqa: SLF001
+
+    def test_build_web_search_tool_bool_true(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(True)
+        assert tool == {"type": "web_search_20250305", "name": "web_search"}
+
+    def test_build_web_search_tool_false(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool(False)
+        assert tool is None
+
+    def test_build_web_search_tool_with_allowed_domains(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool({
+            "allowed_domains": ["techcrunch.com", "theverge.com"],
+        })
+        assert tool == {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "allowed_domains": ["techcrunch.com", "theverge.com"],
+        }
+
+    def test_build_web_search_tool_with_blocked_domains(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool({
+            "blocked_domains": ["spam.com"],
+        })
+        assert tool == {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "blocked_domains": ["spam.com"],
+        }
+
+    def test_build_web_search_tool_with_max_uses(self) -> None:
+        tool = AnthropicAdapter._build_web_search_tool({
+            "max_uses": 3,
+            "allowed_domains": ["example.com"],
+        })
+        assert tool == {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 3,
+            "allowed_domains": ["example.com"],
+        }

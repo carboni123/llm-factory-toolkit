@@ -110,6 +110,9 @@ class AnthropicAdapter(BaseProvider):
                     pass
         return None
 
+    def _supports_web_search(self) -> bool:
+        return True
+
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions → Anthropic Messages API
     # ------------------------------------------------------------------
@@ -227,6 +230,33 @@ class AnthropicAdapter(BaseProvider):
                 merged.append(msg)
 
         return merged
+
+    # ------------------------------------------------------------------
+    # Web search tool building
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_web_search_tool(
+        web_search: bool | Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Build an Anthropic web_search_20250305 tool definition."""
+        if not web_search:
+            return None
+        tool: Dict[str, Any] = {
+            "type": "web_search_20250305",
+            "name": "web_search",
+        }
+        if isinstance(web_search, dict):
+            _KNOWN_KEYS = {
+                "max_uses",
+                "allowed_domains",
+                "blocked_domains",
+                "user_location",
+            }
+            for key in _KNOWN_KEYS:
+                if key in web_search:
+                    tool[key] = web_search[key]
+        return tool
 
     # ------------------------------------------------------------------
     # Tool definition building
