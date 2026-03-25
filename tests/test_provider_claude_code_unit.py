@@ -953,6 +953,88 @@ class TestFingerprint:
 
 
 # =========================================================================
+# on_usage tool name injection tests
+# =========================================================================
+
+
+class TestUsageToolNames:
+    """Verify that on_usage receives tool names from the SDK's internal loop."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_sdk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.mock_sdk = _build_mock_sdk()
+        from llm_factory_toolkit.providers import claude_code
+
+        monkeypatch.setattr(
+            claude_code.ClaudeCodeAdapter,
+            "_get_sdk",
+            staticmethod(lambda: self.mock_sdk),
+        )
+        monkeypatch.setattr(
+            claude_code.ClaudeCodeAdapter,
+            "_cleanup_session",
+            lambda self, sid: None,
+        )
+
+    async def test_on_usage_receives_tool_names(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When MCP tools are called, on_usage event should list them."""
+        from llm_factory_toolkit.providers.claude_code import _call_ctx_var
+
+        adapter = _make_adapter()
+
+        # Patch _call_api to inject tool records into the ctx that
+        # generate() creates, simulating SDK-internal tool execution.
+        original = adapter._call_api
+
+        async def _injecting_call_api(*args: Any, **kwargs: Any) -> Any:
+            ctx = _call_ctx_var.get()
+            ctx.tool_call_records.append(
+                {"call_id": "cc_greet_0", "name": "greet",
+                 "arguments": {"name": "A"}, "result_content": "Hello A"}
+            )
+            ctx.tool_call_records.append(
+                {"call_id": "cc_search_0", "name": "search",
+                 "arguments": {"q": "x"}, "result_content": "found"}
+            )
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(adapter, "_call_api", _injecting_call_api)
+
+        events: List[Any] = []
+
+        async def capture_usage(event: Any) -> None:
+            events.append(event)
+
+        await adapter.generate(
+            input=[{"role": "user", "content": "Hi"}],
+            model="claude-sonnet-4-5",
+            on_usage=capture_usage,
+        )
+
+        assert len(events) == 1
+        assert events[0].tool_calls == ["greet", "search"]
+
+    async def test_on_usage_empty_when_no_tools(self) -> None:
+        """When no MCP tools are called, tool_calls stays empty."""
+        adapter = _make_adapter()
+        events: List[Any] = []
+
+        async def capture_usage(event: Any) -> None:
+            events.append(event)
+
+        await adapter.generate(
+            input=[{"role": "user", "content": "Hi"}],
+            model="claude-sonnet-4-5",
+            on_usage=capture_usage,
+        )
+
+        assert len(events) == 1
+        assert events[0].tool_calls == []
+
+
+# =========================================================================
 # Session cleanup tests
 # =========================================================================
 

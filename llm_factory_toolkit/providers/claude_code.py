@@ -40,7 +40,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from ..exceptions import ConfigurationError, ProviderError
-from ..tools.models import GenerationResult, StreamChunk
+from ..tools.models import GenerationResult, StreamChunk, UsageEvent
 from ..tools.tool_factory import ToolFactory
 from ._base import DEFAULT_MAX_TOOL_ITERATIONS, BaseProvider, ProviderResponse
 
@@ -303,6 +303,12 @@ class ClaudeCodeAdapter(BaseProvider):
         Creates a per-call :class:`_CallContext` stored in a
         :class:`~contextvars.ContextVar` so concurrent calls on the same
         adapter instance remain isolated.
+
+        The SDK manages its own agentic loop, so ``BaseProvider.generate()``
+        always sees ``tool_calls=[]``.  To keep the ``on_usage`` callback
+        accurate, the original callback is wrapped so tool names from
+        ``_CallContext.tool_call_records`` are injected into the
+        :class:`UsageEvent` before it reaches the caller.
         """
         ctx = _CallContext(
             tool_context=tool_execution_context,
@@ -311,6 +317,31 @@ class ClaudeCodeAdapter(BaseProvider):
             max_turns_override=max_tool_iterations,
         )
         token = _call_ctx_var.set(ctx)
+
+        # Wrap on_usage so the UsageEvent includes tool names from the
+        # SDK's internal loop (BaseProvider only sees tool_calls=[]).
+        original_on_usage = kwargs.get("on_usage")
+        if original_on_usage is not None:
+            import inspect as _inspect
+
+            async def _patched_on_usage(event: Any) -> None:
+                if ctx.tool_call_records and not event.tool_calls:
+                    names = [rec["name"] for rec in ctx.tool_call_records]
+                    event = UsageEvent(
+                        model=event.model,
+                        iteration=event.iteration,
+                        input_tokens=event.input_tokens,
+                        output_tokens=event.output_tokens,
+                        cost_usd=event.cost_usd,
+                        tool_calls=names,
+                        metadata=event.metadata,
+                    )
+                if _inspect.iscoroutinefunction(original_on_usage):
+                    await original_on_usage(event)
+                else:
+                    original_on_usage(event)
+
+            kwargs["on_usage"] = _patched_on_usage
 
         try:
             result = await super().generate(
@@ -337,6 +368,15 @@ class ClaudeCodeAdapter(BaseProvider):
             # Append payloads collected by MCP bridge handlers
             if ctx.payloads:
                 result.payloads.extend(ctx.payloads)
+
+            # Log tool calls that happened inside the SDK's agentic loop
+            if ctx.tool_call_records:
+                logger.info(
+                    "Claude Code SDK tool calls: %d (%s)",
+                    len(ctx.tool_call_records),
+                    ", ".join(rec["name"] for rec in ctx.tool_call_records),
+                )
+
             return result
         finally:
             _call_ctx_var.reset(token)
