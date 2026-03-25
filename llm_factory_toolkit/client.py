@@ -294,6 +294,27 @@ class LLMClient:
         logger.info("Tool '%s' registered.", name)
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Release resources held by the underlying provider.
+
+        For providers that keep a persistent subprocess (e.g. Claude Code
+        Agent SDK), this disconnects the session and frees the process.
+        Safe to call multiple times or on providers that have nothing to
+        clean up.
+        """
+        if hasattr(self.provider, "close") and callable(self.provider.close):
+            await self.provider.close()
+
+    async def __aenter__(self) -> "LLMClient":
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self.close()
+
+    # ------------------------------------------------------------------
     # Generation
     # ------------------------------------------------------------------
 

@@ -78,19 +78,28 @@ class _FakeClaudeAgentOptions:
 
 
 class _FakeClient:
-    """Mimics ClaudeSDKClient — async context manager with query/receive."""
+    """Mimics ClaudeSDKClient — supports connect/disconnect and query/receive."""
 
     def __init__(self, messages: List[Any], options: Any = None) -> None:
         self._messages = messages
         self._options = options
+        self.connected = False
 
+    # Still support async-with for backwards compat in any leftover paths
     async def __aenter__(self) -> _FakeClient:
+        await self.connect()
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        pass
+        await self.disconnect()
 
-    async def query(self, prompt: Any) -> None:
+    async def connect(self, prompt: Any = None) -> None:
+        self.connected = True
+
+    async def disconnect(self) -> None:
+        self.connected = False
+
+    async def query(self, prompt: Any, session_id: str = "default") -> None:
         pass
 
     async def receive_response(self):  # type: ignore[no-untyped-def]
@@ -244,6 +253,12 @@ class TestCallApi:
             "_get_sdk",
             staticmethod(lambda: self.mock_sdk),
         )
+        # Suppress session file cleanup in unit tests
+        monkeypatch.setattr(
+            claude_code.ClaudeCodeAdapter,
+            "_cleanup_session",
+            lambda self, sid: None,
+        )
 
     async def test_text_extraction(self) -> None:
         adapter = _make_adapter()
@@ -288,13 +303,13 @@ class TestCallApi:
             def __init__(self, options: Any = None) -> None:
                 pass
 
-            async def __aenter__(self) -> _FailingClient:
-                return self
-
-            async def __aexit__(self, *args: Any) -> None:
+            async def connect(self, prompt: Any = None) -> None:
                 pass
 
-            async def query(self, prompt: Any) -> None:
+            async def disconnect(self) -> None:
+                pass
+
+            async def query(self, prompt: Any, session_id: str = "default") -> None:
                 pass
 
             async def receive_response(self):  # type: ignore[no-untyped-def]
@@ -366,8 +381,6 @@ class TestMcpToolBridge:
         )
 
     def test_bridge_creates_mcp_tools(self) -> None:
-        from llm_factory_toolkit.providers.claude_code import _CallContext
-
         factory = ToolFactory()
         factory.register_tool(
             lambda name: f"Hello, {name}!",
@@ -382,15 +395,14 @@ class TestMcpToolBridge:
         adapter = _make_adapter(tool_factory=factory)
         defs = factory.get_tool_definitions()
 
-        ctx = _CallContext()
-        mcp_tools, allowed = adapter._bridge_tools_to_mcp(defs, ctx)
+        mcp_tools, allowed = adapter._bridge_tools_to_mcp(defs)
 
         assert len(mcp_tools) == 1
         assert mcp_tools[0]._tool_name == "greet"
         assert "mcp__toolkit__greet" in allowed
 
     async def test_handler_dispatches_to_factory(self) -> None:
-        from llm_factory_toolkit.providers.claude_code import _CallContext
+        from llm_factory_toolkit.providers.claude_code import _CallContext, _call_ctx_var
 
         factory = ToolFactory()
         factory.register_tool(
@@ -406,16 +418,19 @@ class TestMcpToolBridge:
         adapter = _make_adapter(tool_factory=factory)
         defs = factory.get_tool_definitions()
 
-        ctx = _CallContext()
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
         handler = mcp_tools[0]
 
-        # Call the handler directly
-        result = await handler({"text": "hello"})
-        assert result["content"][0]["text"] == "hello"
+        ctx = _CallContext()
+        token = _call_ctx_var.set(ctx)
+        try:
+            result = await handler({"text": "hello"})
+            assert result["content"][0]["text"] == "hello"
+        finally:
+            _call_ctx_var.reset(token)
 
     async def test_context_injection_flows_through(self) -> None:
-        from llm_factory_toolkit.providers.claude_code import _CallContext
+        from llm_factory_toolkit.providers.claude_code import _CallContext, _call_ctx_var
 
         factory = ToolFactory()
 
@@ -435,15 +450,19 @@ class TestMcpToolBridge:
         adapter = _make_adapter(tool_factory=factory)
         defs = factory.get_tool_definitions()
 
-        ctx = _CallContext(tool_context={"user_id": "u123"})
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
         handler = mcp_tools[0]
 
-        result = await handler({"name": "Alice"})
-        assert "u123" in result["content"][0]["text"]
+        ctx = _CallContext(tool_context={"user_id": "u123"})
+        token = _call_ctx_var.set(ctx)
+        try:
+            result = await handler({"name": "Alice"})
+            assert "u123" in result["content"][0]["text"]
+        finally:
+            _call_ctx_var.reset(token)
 
     async def test_payloads_collected(self) -> None:
-        from llm_factory_toolkit.providers.claude_code import _CallContext
+        from llm_factory_toolkit.providers.claude_code import _CallContext, _call_ctx_var
 
         factory = ToolFactory()
 
@@ -462,17 +481,21 @@ class TestMcpToolBridge:
         adapter = _make_adapter(tool_factory=factory)
         defs = factory.get_tool_definitions()
 
-        ctx = _CallContext()
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
         handler = mcp_tools[0]
 
-        result = await handler({})
-        assert result["content"][0]["text"] == "done"
-        assert len(ctx.payloads) == 1
-        assert ctx.payloads[0] == {"data": [1, 2, 3]}
+        ctx = _CallContext()
+        token = _call_ctx_var.set(ctx)
+        try:
+            result = await handler({})
+            assert result["content"][0]["text"] == "done"
+            assert len(ctx.payloads) == 1
+            assert ctx.payloads[0] == {"data": [1, 2, 3]}
+        finally:
+            _call_ctx_var.reset(token)
 
     async def test_mock_mode_propagates(self) -> None:
-        from llm_factory_toolkit.providers.claude_code import _CallContext
+        from llm_factory_toolkit.providers.claude_code import _CallContext, _call_ctx_var
 
         factory = ToolFactory()
         factory.register_tool(
@@ -488,13 +511,16 @@ class TestMcpToolBridge:
         adapter = _make_adapter(tool_factory=factory)
         defs = factory.get_tool_definitions()
 
-        ctx = _CallContext(mock_mode=True)
-        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs, ctx)
+        mcp_tools, _ = adapter._bridge_tools_to_mcp(defs)
         handler = mcp_tools[0]
 
-        # In mock mode, dispatch_tool returns a mock result
-        result = await handler({"x": 5})
-        assert "content" in result  # mock mode still returns valid structure
+        ctx = _CallContext(mock_mode=True)
+        token = _call_ctx_var.set(ctx)
+        try:
+            result = await handler({"x": 5})
+            assert "content" in result  # mock mode still returns valid structure
+        finally:
+            _call_ctx_var.reset(token)
 
 
 # =========================================================================
@@ -512,6 +538,11 @@ class TestCallApiStream:
             claude_code.ClaudeCodeAdapter,
             "_get_sdk",
             staticmethod(lambda: self.mock_sdk),
+        )
+        monkeypatch.setattr(
+            claude_code.ClaudeCodeAdapter,
+            "_cleanup_session",
+            lambda self, sid: None,
         )
 
     async def test_stream_event_text_deltas(
@@ -783,3 +814,180 @@ class TestBuildOptions:
             effort="high",
         )
         assert opts.effort == "high"
+
+
+# =========================================================================
+# Persistent client tests
+# =========================================================================
+
+
+class TestPersistentClient:
+    @pytest.fixture(autouse=True)
+    def _patch_sdk(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.mock_sdk = _build_mock_sdk()
+        from llm_factory_toolkit.providers import claude_code
+
+        monkeypatch.setattr(
+            claude_code.ClaudeCodeAdapter,
+            "_get_sdk",
+            staticmethod(lambda: self.mock_sdk),
+        )
+        monkeypatch.setattr(
+            claude_code.ClaudeCodeAdapter,
+            "_cleanup_session",
+            lambda self, sid: None,
+        )
+
+    async def test_client_reused_across_calls(self) -> None:
+        """Second _call_api reuses the same persistent client."""
+        adapter = _make_adapter()
+        await adapter._call_api(
+            "claude-sonnet-4-5",
+            [{"role": "user", "content": "First"}],
+        )
+        first_client = adapter._persistent_client
+        assert first_client is not None
+
+        await adapter._call_api(
+            "claude-sonnet-4-5",
+            [{"role": "user", "content": "Second"}],
+        )
+        assert adapter._persistent_client is first_client
+
+    async def test_client_recreated_on_model_change(self) -> None:
+        """Changing the model invalidates the fingerprint → new client."""
+        adapter = _make_adapter()
+        await adapter._call_api(
+            "claude-sonnet-4-5",
+            [{"role": "user", "content": "Hi"}],
+        )
+        first_client = adapter._persistent_client
+
+        await adapter._call_api(
+            "claude-opus-4",
+            [{"role": "user", "content": "Hi"}],
+        )
+        assert adapter._persistent_client is not first_client
+
+    async def test_close_disconnects(self) -> None:
+        adapter = _make_adapter()
+        await adapter._call_api(
+            "claude-sonnet-4-5",
+            [{"role": "user", "content": "Hi"}],
+        )
+        assert adapter._persistent_client is not None
+
+        await adapter.close()
+        assert adapter._persistent_client is None
+
+    async def test_error_resets_client(self) -> None:
+        """SDK errors during query should reset the persistent client."""
+
+        class _FailOnceClient:
+            def __init__(self, options: Any = None) -> None:
+                pass
+
+            async def connect(self, prompt: Any = None) -> None:
+                pass
+
+            async def disconnect(self) -> None:
+                pass
+
+            async def query(self, prompt: Any, session_id: str = "default") -> None:
+                pass
+
+            async def receive_response(self):  # type: ignore[no-untyped-def]
+                raise RuntimeError("transient error")
+                yield  # type: ignore[misc]  # pragma: no cover
+
+        self.mock_sdk.ClaudeSDKClient = _FailOnceClient
+        adapter = _make_adapter()
+
+        with pytest.raises(ProviderError, match="transient error"):
+            await adapter._call_api(
+                "claude-sonnet-4-5",
+                [{"role": "user", "content": "Boom"}],
+            )
+        # Client should be reset after the error
+        assert adapter._persistent_client is None
+
+
+# =========================================================================
+# Fingerprint tests
+# =========================================================================
+
+
+class TestFingerprint:
+    def test_same_inputs_same_fingerprint(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import ClaudeCodeAdapter
+
+        fp1 = ClaudeCodeAdapter._compute_fingerprint(
+            "m", "sys", frozenset({"a"}), 10, None, "bypassPermissions"
+        )
+        fp2 = ClaudeCodeAdapter._compute_fingerprint(
+            "m", "sys", frozenset({"a"}), 10, None, "bypassPermissions"
+        )
+        assert fp1 == fp2
+
+    def test_model_change_changes_fingerprint(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import ClaudeCodeAdapter
+
+        fp1 = ClaudeCodeAdapter._compute_fingerprint(
+            "m1", None, frozenset(), None, None, "bypassPermissions"
+        )
+        fp2 = ClaudeCodeAdapter._compute_fingerprint(
+            "m2", None, frozenset(), None, None, "bypassPermissions"
+        )
+        assert fp1 != fp2
+
+    def test_tool_change_changes_fingerprint(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import ClaudeCodeAdapter
+
+        fp1 = ClaudeCodeAdapter._compute_fingerprint(
+            "m", None, frozenset({"a"}), None, None, "bypassPermissions"
+        )
+        fp2 = ClaudeCodeAdapter._compute_fingerprint(
+            "m", None, frozenset({"a", "b"}), None, None, "bypassPermissions"
+        )
+        assert fp1 != fp2
+
+
+# =========================================================================
+# Session cleanup tests
+# =========================================================================
+
+
+class TestSessionCleanup:
+    def test_encode_cwd(self) -> None:
+        from llm_factory_toolkit.providers.claude_code import ClaudeCodeAdapter
+
+        result = ClaudeCodeAdapter._encode_cwd_to_project_dir(
+            r"C:\Users\Test\project"
+        )
+        assert result == "C--Users-Test-project"
+
+    def test_cleanup_deletes_jsonl(self, tmp_path: Any) -> None:
+        from llm_factory_toolkit.providers.claude_code import ClaudeCodeAdapter
+
+        adapter = ClaudeCodeAdapter(api_key="k", cwd=str(tmp_path))
+
+        # Create fake session file in the expected location
+        project_dir = (
+            tmp_path.parent.parent.parent.parent  # placeholder — override below
+        )
+        # Directly test the cleanup logic by creating the structure
+        encoded = ClaudeCodeAdapter._encode_cwd_to_project_dir(str(tmp_path))
+        import pathlib
+
+        home_claude = pathlib.Path.home() / ".claude" / "projects" / encoded
+        home_claude.mkdir(parents=True, exist_ok=True)
+        fake_session = home_claude / "test-session-id.jsonl"
+        fake_session.write_text("{}")
+        fake_dir = home_claude / "test-session-id"
+        fake_dir.mkdir(exist_ok=True)
+        (fake_dir / "subagent.jsonl").write_text("{}")
+
+        adapter._cleanup_session("test-session-id")
+
+        assert not fake_session.exists()
+        assert not fake_dir.exists()

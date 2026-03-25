@@ -14,9 +14,13 @@ mock mode, blocking offload, tool timeout, and payloads.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import json
 import logging
+import os
+import re
+import shutil
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -29,6 +33,9 @@ from typing import (
     Type,
     Union,
 )
+
+from pathlib import Path
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -119,6 +126,130 @@ class ClaudeCodeAdapter(BaseProvider):
         self._default_cwd = cwd
         self._default_max_turns = max_turns
         self._default_allowed_tools = allowed_tools or []
+
+        # Persistent client state — one CLI subprocess reused across calls
+        self._persistent_client: Any | None = None
+        self._client_lock: asyncio.Lock | None = None
+        self._client_fingerprint: tuple[Any, ...] | None = None
+        self._stderr_lines: List[str] = []
+
+    # ------------------------------------------------------------------
+    # Persistent client management
+    # ------------------------------------------------------------------
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """Lazy lock creation to avoid event-loop binding at ``__init__``."""
+        if self._client_lock is None:
+            self._client_lock = asyncio.Lock()
+        return self._client_lock
+
+    @staticmethod
+    def _compute_fingerprint(
+        model: str,
+        system_prompt: Optional[str],
+        tool_names: frozenset[str],
+        max_turns: Optional[int],
+        response_format: Optional[Any],
+        permission_mode: str,
+    ) -> tuple[Any, ...]:
+        """Return a hashable fingerprint of the significant client options.
+
+        When the fingerprint changes between calls the persistent client
+        is torn down and a fresh one is created with the new options.
+        """
+        rf_key: Any = None
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            rf_key = response_format.__qualname__
+        elif isinstance(response_format, dict):
+            rf_key = json.dumps(response_format, sort_keys=True)
+        return (
+            model,
+            system_prompt or "",
+            tool_names,
+            max_turns,
+            rf_key,
+            permission_mode,
+        )
+
+    @staticmethod
+    def _encode_cwd_to_project_dir(cwd: str) -> str:
+        """Encode *cwd* to the directory name Claude Code uses under
+        ``~/.claude/projects/``."""
+        return re.sub(r"[^a-zA-Z0-9]", "-", cwd)
+
+    async def _ensure_client(
+        self,
+        sdk: Any,
+        options: Any,
+        fingerprint: tuple[Any, ...],
+    ) -> Any:
+        """Return the persistent ``ClaudeSDKClient``, creating or
+        recreating it when the *fingerprint* changes."""
+        async with self._lock:
+            if (
+                self._persistent_client is not None
+                and self._client_fingerprint == fingerprint
+            ):
+                return self._persistent_client
+
+            # Tear down stale client
+            if self._persistent_client is not None:
+                try:
+                    await self._persistent_client.disconnect()
+                except Exception:
+                    logger.debug("Error disconnecting stale client", exc_info=True)
+                self._persistent_client = None
+
+            client = sdk.ClaudeSDKClient(options=options)
+            await client.connect()
+            self._persistent_client = client
+            self._client_fingerprint = fingerprint
+            return client
+
+    async def _reset_client(self) -> None:
+        """Tear down the persistent client (e.g. on unrecoverable error)."""
+        async with self._lock:
+            if self._persistent_client is not None:
+                try:
+                    await self._persistent_client.disconnect()
+                except Exception:
+                    logger.debug("Error disconnecting client", exc_info=True)
+                self._persistent_client = None
+                self._client_fingerprint = None
+
+    async def close(self) -> None:
+        """Disconnect the persistent Claude Code client.
+
+        Call this when the adapter (or the owning ``LLMClient``) is no
+        longer needed, to free the underlying CLI subprocess.
+        """
+        await self._reset_client()
+
+    def _cleanup_session(self, session_id: str) -> None:
+        """Best-effort removal of session files after a call.
+
+        Claude Code stores sessions as
+        ``~/.claude/projects/<encoded-cwd>/<session-id>.jsonl``
+        with an optional ``<session-id>/`` directory for sub-agents.
+        """
+        try:
+            cwd = self._default_cwd or os.getcwd()
+            project_dir_name = self._encode_cwd_to_project_dir(cwd)
+            claude_projects = Path.home() / ".claude" / "projects" / project_dir_name
+
+            if not claude_projects.is_dir():
+                return
+
+            jsonl = claude_projects / f"{session_id}.jsonl"
+            if jsonl.exists():
+                jsonl.unlink(missing_ok=True)
+
+            session_dir = claude_projects / session_id
+            if session_dir.is_dir():
+                shutil.rmtree(session_dir, ignore_errors=True)
+        except Exception:
+            logger.debug("Session cleanup failed for %s", session_id, exc_info=True)
 
     # ------------------------------------------------------------------
     # SDK import
@@ -337,15 +468,14 @@ class ClaudeCodeAdapter(BaseProvider):
     def _bridge_tools_to_mcp(
         self,
         tool_definitions: List[Dict[str, Any]],
-        ctx: _CallContext,
     ) -> Tuple[List[Any], List[str]]:
         """Bridge ToolFactory tool definitions to MCP ``@tool`` objects.
 
         Returns ``(mcp_tools, allowed_tool_names)`` where
         ``allowed_tool_names`` uses the ``mcp__<server>__<name>`` pattern.
 
-        MCP handlers close over the provided *ctx* so concurrent
-        ``generate()`` calls remain isolated.
+        Handlers read per-call state from :data:`_call_ctx_var` so the
+        same MCP server can serve multiple calls without recreation.
         """
         sdk = self._get_sdk()
         mcp_tools: List[Any] = []
@@ -358,11 +488,13 @@ class ClaudeCodeAdapter(BaseProvider):
             desc = func.get("description", "")
             params = func.get("parameters", {})
 
-            # Closure captures _name by default-arg trick, ctx by lexical scope
+            # Closure captures _name by default-arg trick; ctx read from
+            # contextvar at call time for per-call isolation.
             async def _handler(
                 args: Dict[str, Any], _name: str = name
             ) -> Dict[str, Any]:
                 assert self.tool_factory is not None  # noqa: S101
+                ctx = _call_ctx_var.get()
                 call_id = f"cc_{_name}_{len(ctx.tool_call_records)}"
                 result = await self.tool_factory.dispatch_tool(
                     _name,
@@ -458,8 +590,8 @@ class ClaudeCodeAdapter(BaseProvider):
 
         # Capture stderr so we get actual error details when the CLI crashes
         # instead of the useless "Check stderr output for details" message.
-        stderr_lines: List[str] = kwargs.pop("_stderr_lines", [])
-        opts["stderr"] = lambda line: stderr_lines.append(line)
+        # Uses the adapter-level buffer which is cleared per-call.
+        opts["stderr"] = lambda line: self._stderr_lines.append(line)
 
         # Forward remaining SDK-specific params
         for key in list(kwargs):
@@ -485,12 +617,11 @@ class ClaudeCodeAdapter(BaseProvider):
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ProviderResponse:
-        """Make a single SDK call via ``ClaudeSDKClient``.
+        """Make a single SDK call via a persistent ``ClaudeSDKClient``.
 
-        Uses the client context manager for proper MCP server lifecycle
-        management.  Extracts system message, converts remaining messages
-        to a prompt, bridges ToolFactory tools to MCP, and iterates SDK
-        messages to collect the final text response.
+        The client subprocess is kept alive across calls.  A unique
+        ``session_id`` is passed to each ``query()`` so conversations
+        remain isolated.  Session files are cleaned up after each call.
         """
         sdk = self._get_sdk()
         filtered = self._filter_kwargs(kwargs)
@@ -503,71 +634,108 @@ class ClaudeCodeAdapter(BaseProvider):
         # Bridge tools to MCP
         mcp_servers: Optional[Dict[str, Any]] = None
         mcp_allowed: Optional[List[str]] = None
+        tool_names: frozenset[str] = frozenset()
         if tools and self.tool_factory:
-            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools, ctx)
+            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
             if mcp_tools:
                 server = sdk.create_sdk_mcp_server(_MCP_SERVER_NAME, tools=mcp_tools)
                 mcp_servers = {_MCP_SERVER_NAME: server}
+                tool_names = frozenset(t.get("function", t).get("name") for t in tools)
 
-        stderr_lines: List[str] = []
+        # Compute fingerprint — client is reused when this matches
+        permission_mode = filtered.get("permission_mode", self._default_permission_mode)
+        max_turns_raw = filtered.get("max_turns")
+        if max_turns_raw is None and ctx.max_turns_override is not None:
+            max_turns_raw = ctx.max_turns_override
+        if max_turns_raw is None:
+            max_turns_raw = self._default_max_turns
+        fingerprint = self._compute_fingerprint(
+            model,
+            system_prompt,
+            tool_names,
+            max_turns_raw,
+            response_format,
+            permission_mode,
+        )
+
+        self._stderr_lines.clear()
         options = self._build_options(
             model=model,
             system_prompt=system_prompt,
             response_format=response_format,
             mcp_servers=mcp_servers,
             allowed_tools=mcp_allowed,
-            _stderr_lines=stderr_lines,
             **filtered,
         )
 
-        # Call the SDK via ClaudeSDKClient for proper MCP lifecycle
+        # Reuse persistent client (or create on first call / fingerprint change)
+        try:
+            client = await self._ensure_client(sdk, options, fingerprint)
+        except Exception as e:
+            stderr_text = (
+                "\n".join(self._stderr_lines[-20:]) if self._stderr_lines else ""
+            )
+            detail = f"Claude Code SDK connection error: {e}"
+            if stderr_text:
+                detail += f"\nStderr:\n{stderr_text}"
+            raise ProviderError(detail) from e
+
+        # Unique session_id → fresh conversation, no history bleed
+        call_session_id = f"call_{uuid4().hex[:8]}"
+        result_session_id: Optional[str] = None
+
         text_parts: List[str] = []
         usage: Optional[Dict[str, int]] = None
         parsed_content: Optional[BaseModel] = None
         raw_messages: List[Dict[str, Any]] = []
 
         try:
-            async with sdk.ClaudeSDKClient(options=options) as client:
-                await client.query(prompt)
-                async for message in client.receive_response():
-                    if isinstance(message, sdk.AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, sdk.TextBlock):
-                                text_parts.append(block.text)
-                        raw_messages.append(
-                            {"role": "assistant", "content": "".join(text_parts)}
-                        )
-                    elif isinstance(message, sdk.ResultMessage):
-                        if message.usage:
-                            usage = {
-                                "prompt_tokens": message.usage.get("input_tokens", 0),
-                                "completion_tokens": message.usage.get(
-                                    "output_tokens", 0
-                                ),
-                                "total_tokens": message.usage.get("input_tokens", 0)
-                                + message.usage.get("output_tokens", 0),
-                            }
-                        # Structured output
-                        if message.structured_output is not None:
-                            if isinstance(response_format, type) and issubclass(
-                                response_format, BaseModel
-                            ):
-                                try:
-                                    parsed_content = response_format.model_validate(
-                                        message.structured_output
-                                    )
-                                except (ValueError, TypeError) as exc:
-                                    logger.debug(
-                                        "Failed to parse structured output: %s (%s)",
-                                        message.structured_output,
-                                        exc,
-                                    )
+            await client.query(prompt, session_id=call_session_id)
+            async for message in client.receive_response():
+                if isinstance(message, sdk.AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, sdk.TextBlock):
+                            text_parts.append(block.text)
+                    raw_messages.append(
+                        {"role": "assistant", "content": "".join(text_parts)}
+                    )
+                elif isinstance(message, sdk.ResultMessage):
+                    result_session_id = getattr(message, "session_id", None)
+                    if message.usage:
+                        usage = {
+                            "prompt_tokens": message.usage.get("input_tokens", 0),
+                            "completion_tokens": message.usage.get("output_tokens", 0),
+                            "total_tokens": message.usage.get("input_tokens", 0)
+                            + message.usage.get("output_tokens", 0),
+                        }
+                    # Structured output
+                    if message.structured_output is not None:
+                        if isinstance(response_format, type) and issubclass(
+                            response_format, BaseModel
+                        ):
+                            try:
+                                parsed_content = response_format.model_validate(
+                                    message.structured_output
+                                )
+                            except (ValueError, TypeError) as exc:
+                                logger.debug(
+                                    "Failed to parse structured output: %s (%s)",
+                                    message.structured_output,
+                                    exc,
+                                )
         except Exception as e:
-            stderr_text = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
+            await self._reset_client()
+            stderr_text = (
+                "\n".join(self._stderr_lines[-20:]) if self._stderr_lines else ""
+            )
             detail = f"Claude Code SDK error: {e}"
             if stderr_text:
                 detail += f"\nStderr:\n{stderr_text}"
             raise ProviderError(detail) from e
+
+        # Best-effort session cleanup
+        cleanup_id = result_session_id or call_session_id
+        self._cleanup_session(cleanup_id)
 
         content = "".join(text_parts)
 
@@ -628,7 +796,7 @@ class ClaudeCodeAdapter(BaseProvider):
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         **kwargs: Any,
     ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
-        """Stream a response via ``ClaudeSDKClient``.
+        """Stream a response via the persistent ``ClaudeSDKClient``.
 
         Uses ``include_partial_messages=True`` to receive ``StreamEvent``
         objects with text deltas, falling back to full ``AssistantMessage``
@@ -644,65 +812,99 @@ class ClaudeCodeAdapter(BaseProvider):
         # Bridge tools to MCP
         mcp_servers: Optional[Dict[str, Any]] = None
         mcp_allowed: Optional[List[str]] = None
+        tool_names: frozenset[str] = frozenset()
         if tools and self.tool_factory:
-            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools, ctx)
+            mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
             if mcp_tools:
                 server = sdk.create_sdk_mcp_server(_MCP_SERVER_NAME, tools=mcp_tools)
                 mcp_servers = {_MCP_SERVER_NAME: server}
+                tool_names = frozenset(t.get("function", t).get("name") for t in tools)
 
-        stderr_lines: List[str] = []
+        # Compute fingerprint
+        permission_mode = filtered.get("permission_mode", self._default_permission_mode)
+        max_turns_raw = filtered.get("max_turns")
+        if max_turns_raw is None and ctx.max_turns_override is not None:
+            max_turns_raw = ctx.max_turns_override
+        if max_turns_raw is None:
+            max_turns_raw = self._default_max_turns
+        fingerprint = self._compute_fingerprint(
+            model,
+            system_prompt,
+            tool_names,
+            max_turns_raw,
+            response_format,
+            permission_mode,
+        )
+
+        self._stderr_lines.clear()
         options = self._build_options(
             model=model,
             system_prompt=system_prompt,
             response_format=response_format,
             mcp_servers=mcp_servers,
             allowed_tools=mcp_allowed,
-            _stderr_lines=stderr_lines,
             **filtered,
         )
         # Enable partial messages for streaming
         options.include_partial_messages = True
 
+        # Reuse persistent client
+        try:
+            client = await self._ensure_client(sdk, options, fingerprint)
+        except Exception as e:
+            stderr_text = (
+                "\n".join(self._stderr_lines[-20:]) if self._stderr_lines else ""
+            )
+            detail = f"Claude Code SDK connection error: {e}"
+            if stderr_text:
+                detail += f"\nStderr:\n{stderr_text}"
+            raise ProviderError(detail) from e
+
+        call_session_id = f"call_{uuid4().hex[:8]}"
+        result_session_id: Optional[str] = None
         usage: Optional[Dict[str, int]] = None
 
         try:
-            async with sdk.ClaudeSDKClient(options=options) as client:
-                await client.query(prompt)
-                async for message in client.receive_response():
-                    if hasattr(sdk, "StreamEvent") and isinstance(
-                        message, sdk.StreamEvent
-                    ):
-                        # Only content_block_delta events carry text deltas
-                        event = getattr(message, "event", {})
-                        if isinstance(event, dict):
-                            event_type = event.get("type", "")
-                            if event_type == "content_block_delta":
-                                delta = event.get("delta", {})
-                                if isinstance(delta, dict):
-                                    delta_text = delta.get("text", "")
-                                    if delta_text:
-                                        yield StreamChunk(content=delta_text)
-                    elif isinstance(message, sdk.AssistantMessage):
-                        # Fallback: yield full text blocks
-                        for block in message.content:
-                            if isinstance(block, sdk.TextBlock):
-                                yield StreamChunk(content=block.text)
-                    elif isinstance(message, sdk.ResultMessage):
-                        if message.usage:
-                            usage = {
-                                "prompt_tokens": message.usage.get("input_tokens", 0),
-                                "completion_tokens": message.usage.get(
-                                    "output_tokens", 0
-                                ),
-                                "total_tokens": message.usage.get("input_tokens", 0)
-                                + message.usage.get("output_tokens", 0),
-                            }
+            await client.query(prompt, session_id=call_session_id)
+            async for message in client.receive_response():
+                if hasattr(sdk, "StreamEvent") and isinstance(message, sdk.StreamEvent):
+                    # Only content_block_delta events carry text deltas
+                    event = getattr(message, "event", {})
+                    if isinstance(event, dict):
+                        event_type = event.get("type", "")
+                        if event_type == "content_block_delta":
+                            delta = event.get("delta", {})
+                            if isinstance(delta, dict):
+                                delta_text = delta.get("text", "")
+                                if delta_text:
+                                    yield StreamChunk(content=delta_text)
+                elif isinstance(message, sdk.AssistantMessage):
+                    # Fallback: yield full text blocks
+                    for block in message.content:
+                        if isinstance(block, sdk.TextBlock):
+                            yield StreamChunk(content=block.text)
+                elif isinstance(message, sdk.ResultMessage):
+                    result_session_id = getattr(message, "session_id", None)
+                    if message.usage:
+                        usage = {
+                            "prompt_tokens": message.usage.get("input_tokens", 0),
+                            "completion_tokens": message.usage.get("output_tokens", 0),
+                            "total_tokens": message.usage.get("input_tokens", 0)
+                            + message.usage.get("output_tokens", 0),
+                        }
         except Exception as e:
-            stderr_text = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
+            await self._reset_client()
+            stderr_text = (
+                "\n".join(self._stderr_lines[-20:]) if self._stderr_lines else ""
+            )
             detail = f"Claude Code SDK streaming error: {e}"
             if stderr_text:
                 detail += f"\nStderr:\n{stderr_text}"
             raise ProviderError(detail) from e
+
+        # Best-effort session cleanup
+        cleanup_id = result_session_id or call_session_id
+        self._cleanup_session(cleanup_id)
 
         yield StreamChunk(content="", done=True, usage=usage)
 

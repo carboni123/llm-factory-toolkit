@@ -231,6 +231,12 @@ class ProviderRouter:
 
         return self._adapters[provider_key], effective_model
 
+    async def close(self) -> None:
+        """Close all cached adapters that support it."""
+        for adapter in self._adapters.values():
+            if hasattr(adapter, "close") and callable(adapter.close):
+                await adapter.close()
+
     async def generate(
         self,
         input: List[Dict[str, Any]],
