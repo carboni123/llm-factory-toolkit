@@ -596,3 +596,86 @@ class TestWebSearchSupport:
             "max_uses": 3,
             "allowed_domains": ["example.com"],
         }
+
+
+class TestCallApiWebSearch:
+    @pytest.mark.asyncio
+    async def test_web_search_tool_injected_into_request(self) -> None:
+        """When web_search is enabled, the request tools list includes the web search tool."""
+        adapter = AnthropicAdapter(api_key="k")
+
+        mock_response = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="Search results here")],
+            usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+        )
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        adapter._async_client = mock_client  # noqa: SLF001
+
+        await adapter._call_api(
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": "Search for AI news"}],
+            web_search={"allowed_domains": ["techcrunch.com"]},
+        )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        tools = call_kwargs.get("tools", [])
+        ws_tools = [t for t in tools if t.get("type") == "web_search_20250305"]
+        assert len(ws_tools) == 1
+        assert ws_tools[0]["allowed_domains"] == ["techcrunch.com"]
+
+    @pytest.mark.asyncio
+    async def test_web_search_merged_with_function_tools(self) -> None:
+        """Web search tool is appended alongside function tools."""
+        adapter = AnthropicAdapter(api_key="k")
+
+        mock_response = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="Done")],
+            usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+        )
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        adapter._async_client = mock_client  # noqa: SLF001
+
+        function_tools = [{"name": "get_weather", "description": "Get weather", "input_schema": {}}]
+        await adapter._call_api(
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": "Weather and news"}],
+            tools=function_tools,
+            web_search=True,
+        )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        tools = call_kwargs["tools"]
+        assert len(tools) == 2
+        assert tools[0]["name"] == "get_weather"
+        assert tools[1]["type"] == "web_search_20250305"
+
+    @pytest.mark.asyncio
+    async def test_web_search_not_lost_with_structured_output(self) -> None:
+        """web_search tool must coexist with the __json_output__ structured output tool."""
+        adapter = AnthropicAdapter(api_key="k")
+
+        mock_response = SimpleNamespace(
+            content=[SimpleNamespace(
+                type="tool_use", id="tc1", name="__json_output__",
+                input={"name": "test", "value": 1},
+            )],
+            usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+        )
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        adapter._async_client = mock_client  # noqa: SLF001
+
+        await adapter._call_api(
+            model="claude-sonnet-4-5",
+            messages=[{"role": "user", "content": "Search and return JSON"}],
+            web_search=True,
+            response_format=_FakeModel,
+        )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        tools = call_kwargs["tools"]
+        tool_types_or_names = [(t.get("type"), t.get("name")) for t in tools]
+        assert ("web_search_20250305", "web_search") in tool_types_or_names
+        assert any(name == "__json_output__" for _, name in tool_types_or_names)

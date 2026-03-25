@@ -377,8 +377,16 @@ class AnthropicAdapter(BaseProvider):
         if temperature is not None:
             request["temperature"] = temperature
 
-        if tools:
-            request["tools"] = tools
+        # Merge function tools with built-in web_search tool.
+        # Note: Anthropic's web_search is a different tool type (not a function tool),
+        # so it's injected here alongside function tools rather than through
+        # _prepare_native_tools (which only handles function tool definitions).
+        effective_tools: list[Dict[str, Any]] = list(tools) if tools else []
+        ws_tool = self._build_web_search_tool(web_search)
+        if ws_tool:
+            effective_tools.append(ws_tool)
+        if effective_tools:
+            request["tools"] = effective_tools
 
         # Structured output: force a tool call to a "json_output" tool
         structured_tool_name: Optional[str] = None
@@ -393,8 +401,9 @@ class AnthropicAdapter(BaseProvider):
                 ),
                 "input_schema": schema,
             }
-            if tools:
-                request["tools"] = list(tools) + [output_tool]
+            existing = request.get("tools", [])
+            if existing:
+                request["tools"] = list(existing) + [output_tool]
             else:
                 request["tools"] = [output_tool]
                 request["tool_choice"] = {"type": "tool", "name": structured_tool_name}
@@ -478,8 +487,12 @@ class AnthropicAdapter(BaseProvider):
         if temperature is not None:
             request["temperature"] = temperature
 
-        if tools:
-            request["tools"] = tools
+        effective_tools: list[Dict[str, Any]] = list(tools) if tools else []
+        ws_tool = self._build_web_search_tool(web_search)
+        if ws_tool:
+            effective_tools.append(ws_tool)
+        if effective_tools:
+            request["tools"] = effective_tools
 
         # Forward any remaining kwargs to the API request
         if kwargs:
