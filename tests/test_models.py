@@ -24,18 +24,12 @@ class TestListModels:
         assert len(models) == len(MODEL_CATALOG)
         assert all(isinstance(m, ModelInfo) for m in models)
 
-    @pytest.mark.parametrize(
-        "provider, expected_count",
-        [
-            ("openai", 4),
-            ("anthropic", 3),
-            ("gemini", 4),
-            ("xai", 3),
-        ],
-    )
-    def test_filter_by_provider(self, provider: str, expected_count: int) -> None:
+    @pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini", "xai"])
+    def test_filter_by_provider(self, provider: str) -> None:
         models = list_models(provider)
-        assert len(models) == expected_count
+        expected = [m for m in MODEL_CATALOG.values() if m.provider == provider]
+        assert len(models) == len(expected)
+        assert len(models) > 0
         assert all(m.provider == provider for m in models)
 
     def test_unknown_provider_returns_empty(self) -> None:
