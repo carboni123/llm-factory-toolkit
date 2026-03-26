@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import inspect as _inspect
 import logging
 import os
 import re
@@ -322,7 +323,6 @@ class ClaudeCodeAdapter(BaseProvider):
         # SDK's internal loop (BaseProvider only sees tool_calls=[]).
         original_on_usage = kwargs.get("on_usage")
         if original_on_usage is not None:
-            import inspect as _inspect
 
             async def _patched_on_usage(event: Any) -> None:
                 if ctx.tool_call_records and not event.tool_calls:
@@ -533,7 +533,10 @@ class ClaudeCodeAdapter(BaseProvider):
             async def _handler(
                 args: Dict[str, Any], _name: str = name
             ) -> Dict[str, Any]:
-                assert self.tool_factory is not None  # noqa: S101
+                if self.tool_factory is None:
+                    raise ConfigurationError(
+                        "ToolFactory is required for MCP bridge tools"
+                    )
                 ctx = _call_ctx_var.get()
                 call_id = f"cc_{_name}_{len(ctx.tool_call_records)}"
                 result = await self.tool_factory.dispatch_tool(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import warnings
 from typing import (
     Any,
@@ -158,8 +159,6 @@ class OpenAIAdapter(BaseProvider):
                 pass
 
         # 3. Parse "Please try again in Xs" / "in Xms" from the error message
-        import re
-
         msg = str(error)
         match = re.search(r"try again in (\d+(?:\.\d+)?)\s*ms", msg, re.IGNORECASE)
         if match:

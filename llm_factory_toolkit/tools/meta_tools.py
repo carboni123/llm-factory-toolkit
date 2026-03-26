@@ -18,6 +18,8 @@ from .session import ToolSession
 
 logger = logging.getLogger(__name__)
 
+_MAX_GROUP_SEARCH = 10_000  # Upper bound when fetching all tools in a group.
+
 
 def _suggest_similar_names(
     invalid_name: str, catalog: ToolCatalog, max_suggestions: int = 3
@@ -278,8 +280,8 @@ def load_tool_group(
             error="No catalog configured",
         )
 
-    # Find all tools in the group (use a high limit to get all)
-    entries = tool_catalog.search(group=group, limit=10_000)
+    # Find all tools in the group
+    entries = tool_catalog.search(group=group, limit=_MAX_GROUP_SEARCH)
     tool_names = [e.name for e in entries]
 
     loaded: List[str] = []

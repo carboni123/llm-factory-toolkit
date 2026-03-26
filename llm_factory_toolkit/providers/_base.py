@@ -711,11 +711,13 @@ class BaseProvider(abc.ABC):
                     ToolResultMessage(
                         call_id=tc.call_id,
                         name=tc.name,
-                        content=json.dumps({"error": f"Unexpected error: {e}"}),
+                        content=json.dumps(
+                            {"error": "Tool execution failed unexpectedly"}
+                        ),
                     ),
                     {
                         "tool_name": tc.name,
-                        "error": f"Unexpected error: {e}",
+                        "error": str(e),
                         "status": "error",
                         "severity": "fatal",
                     },

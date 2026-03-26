@@ -632,7 +632,7 @@ class LLMClient:
             raise
         except Exception as e:
             logger.error("Unexpected error during generation: %s", e, exc_info=True)
-            raise LLMToolkitError(f"Unexpected generation error: {e}") from e
+            raise LLMToolkitError("Unexpected generation error") from e
 
     async def _generate_stream_with_fallback(
         self,
@@ -744,9 +744,7 @@ class LLMClient:
                 e,
                 exc_info=True,
             )
-            raise LLMToolkitError(
-                f"Unexpected tool intent generation error: {e}"
-            ) from e
+            raise LLMToolkitError("Unexpected tool intent generation error") from e
 
     async def execute_tool_intents(
         self,
