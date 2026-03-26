@@ -136,13 +136,38 @@ class OpenAIAdapter(BaseProvider):
             from openai import APIStatusError
         except ImportError:
             return None
-        if isinstance(error, APIStatusError):
-            raw = error.response.headers.get("retry-after")
-            if raw:
-                try:
-                    return float(raw)
-                except (ValueError, TypeError):
-                    pass
+        if not isinstance(error, APIStatusError):
+            return None
+
+        headers = error.response.headers
+
+        # 1. Standard Retry-After header (seconds)
+        raw = headers.get("retry-after")
+        if raw:
+            try:
+                return float(raw)
+            except (ValueError, TypeError):
+                pass
+
+        # 2. retry-after-ms header (milliseconds, used by some OpenAI endpoints)
+        raw_ms = headers.get("retry-after-ms")
+        if raw_ms:
+            try:
+                return float(raw_ms) / 1000.0
+            except (ValueError, TypeError):
+                pass
+
+        # 3. Parse "Please try again in Xs" / "in Xms" from the error message
+        import re
+
+        msg = str(error)
+        match = re.search(r"try again in (\d+(?:\.\d+)?)\s*ms", msg, re.IGNORECASE)
+        if match:
+            return float(match.group(1)) / 1000.0
+        match = re.search(r"try again in (\d+(?:\.\d+)?)\s*s", msg, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+
         return None
 
     # ------------------------------------------------------------------
