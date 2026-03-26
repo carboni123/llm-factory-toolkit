@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 _GPT5_PREFIXES = ("gpt-5",)
 _REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
 
+_RE_RETRY_MS = re.compile(r"try again in (\d+(?:\.\d+)?)\s*ms", re.IGNORECASE)
+_RE_RETRY_S = re.compile(r"try again in (\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
+
 
 class OpenAIAdapter(BaseProvider):
     """Provider adapter for OpenAI using the Responses API."""
@@ -160,10 +163,10 @@ class OpenAIAdapter(BaseProvider):
 
         # 3. Parse "Please try again in Xs" / "in Xms" from the error message
         msg = str(error)
-        match = re.search(r"try again in (\d+(?:\.\d+)?)\s*ms", msg, re.IGNORECASE)
+        match = _RE_RETRY_MS.search(msg)
         if match:
             return float(match.group(1)) / 1000.0
-        match = re.search(r"try again in (\d+(?:\.\d+)?)\s*s", msg, re.IGNORECASE)
+        match = _RE_RETRY_S.search(msg)
         if match:
             return float(match.group(1))
 
@@ -351,6 +354,72 @@ class OpenAIAdapter(BaseProvider):
         return tools_list
 
     # ------------------------------------------------------------------
+    # Shared extraction helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_tool_calls(output_items: List[Any]) -> List[ProviderToolCall]:
+        """Extract ProviderToolCall list from Responses API output items."""
+        tool_calls: List[ProviderToolCall] = []
+        for item in output_items:
+            item_type = getattr(item, "type", None)
+            if item_type in {"function_call", "custom_tool_call"}:
+                tool_calls.append(
+                    ProviderToolCall(
+                        call_id=getattr(item, "call_id", None)
+                        or getattr(item, "id", None)
+                        or "",
+                        name=getattr(item, "name", None) or "",
+                        arguments=getattr(
+                            item, "arguments", getattr(item, "input", None)
+                        )
+                        or "{}",
+                    )
+                )
+        return tool_calls
+
+    @staticmethod
+    def _serialize_output_items(output_items: List[Any]) -> List[Dict[str, Any]]:
+        """Serialize Responses API output items to dicts for round-tripping.
+
+        Suppresses harmless Pydantic serializer warnings and strips fields
+        that the Responses API rejects on round-tripped items (``status``,
+        ``parsed_arguments``, nested ``parsed``).
+        """
+        raw_items: List[Dict[str, Any]] = []
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+            )
+            for item in output_items:
+                dump = item.model_dump()
+                dump.pop("parsed_arguments", None)
+                dump.pop("status", None)
+                content_list = dump.get("content")
+                if isinstance(content_list, list):
+                    for entry in content_list:
+                        if isinstance(entry, dict):
+                            entry.pop("parsed", None)
+                raw_items.append(dump)
+        return raw_items
+
+    @staticmethod
+    def _extract_usage(response_obj: Any) -> Optional[Dict[str, int]]:
+        """Extract normalised usage dict from a Responses API object."""
+        comp_usage = getattr(response_obj, "usage", None)
+        if not comp_usage:
+            return None
+        input_tokens = getattr(comp_usage, "input_tokens", 0) or 0
+        output_tokens = getattr(comp_usage, "output_tokens", 0) or 0
+        return {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+
+    # ------------------------------------------------------------------
     # Built-in tool handling (file_search, web_search)
     # ------------------------------------------------------------------
 
@@ -533,16 +602,7 @@ class OpenAIAdapter(BaseProvider):
             raise ProviderError(f"OpenAI Responses API error: {e}") from e
 
         # Extract usage
-        usage: Optional[Dict[str, int]] = None
-        comp_usage = getattr(completion, "usage", None)
-        if comp_usage:
-            input_tokens = getattr(comp_usage, "input_tokens", 0) or 0
-            output_tokens = getattr(comp_usage, "output_tokens", 0) or 0
-            usage = {
-                "prompt_tokens": input_tokens,
-                "completion_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
-            }
+        usage = self._extract_usage(completion)
 
         # Extract content and tool calls from output items
         assistant_text = getattr(completion, "output_text", "") or ""
@@ -557,47 +617,10 @@ class OpenAIAdapter(BaseProvider):
         ):
             parsed_content = getattr(completion, "output_parsed", None)
 
-        tool_calls: List[ProviderToolCall] = []
-        for item in output_items:
-            item_type = getattr(item, "type", None)
-            if item_type in {"function_call", "custom_tool_call"}:
-                tool_calls.append(
-                    ProviderToolCall(
-                        call_id=getattr(item, "call_id", None)
-                        or getattr(item, "id", None)
-                        or "",
-                        name=getattr(item, "name", None) or "",
-                        arguments=getattr(
-                            item, "arguments", getattr(item, "input", None)
-                        )
-                        or "{}",
-                    )
-                )
+        tool_calls = self._extract_tool_calls(output_items)
 
         # Convert output items to Chat Completions format for raw_messages.
-        # Suppress Pydantic serialization warnings from ParsedResponseOutputText
-        # whose 'parsed' field holds the deserialized BotResponseBatch — the
-        # OpenAI SDK's generic wrapper class doesn't match the base schema's
-        # expected types, causing harmless but noisy UserWarnings.
-        raw_items: List[Dict[str, Any]] = []
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="Pydantic serializer warnings",
-                category=UserWarning,
-            )
-            for item in output_items:
-                dump = item.model_dump()
-                dump.pop("parsed_arguments", None)
-                # Strip status from all output items — the Responses API
-                # rejects unknown params on round-tripped items.
-                dump.pop("status", None)
-                content_list = dump.get("content")
-                if isinstance(content_list, list):
-                    for entry in content_list:
-                        if isinstance(entry, dict):
-                            entry.pop("parsed", None)
-                raw_items.append(dump)
+        raw_items = self._serialize_output_items(output_items)
         chat_messages = self._responses_to_chat_messages(raw_items)
 
         return ProviderResponse(
@@ -666,28 +689,9 @@ class OpenAIAdapter(BaseProvider):
         # After stream ends, check for tool calls
         if response_obj:
             output_items = getattr(response_obj, "output", [])
-            tool_calls: List[ProviderToolCall] = []
+            tool_calls = self._extract_tool_calls(output_items)
 
-            raw_items: List[Dict[str, Any]] = []
-            for item in output_items:
-                item_type = getattr(item, "type", None)
-                if item_type in {"function_call", "custom_tool_call"}:
-                    tool_calls.append(
-                        ProviderToolCall(
-                            call_id=getattr(item, "call_id", None)
-                            or getattr(item, "id", None)
-                            or "",
-                            name=getattr(item, "name", None) or "",
-                            arguments=getattr(
-                                item, "arguments", getattr(item, "input", None)
-                            )
-                            or "{}",
-                        )
-                    )
-                dump = item.model_dump()
-                dump.pop("parsed_arguments", None)
-                dump.pop("status", None)
-                raw_items.append(dump)
+            raw_items = self._serialize_output_items(output_items)
 
             if tool_calls:
                 chat_messages = self._responses_to_chat_messages(raw_items)
@@ -700,17 +704,7 @@ class OpenAIAdapter(BaseProvider):
                 return
 
             # No tool calls — extract usage and signal done
-            usage_data: Optional[Dict[str, int]] = None
-            comp_usage = getattr(response_obj, "usage", None)
-            if comp_usage:
-                input_tokens = getattr(comp_usage, "input_tokens", 0) or 0
-                output_tokens = getattr(comp_usage, "output_tokens", 0) or 0
-                usage_data = {
-                    "prompt_tokens": input_tokens,
-                    "completion_tokens": output_tokens,
-                    "total_tokens": input_tokens + output_tokens,
-                }
-            yield StreamChunk(done=True, usage=usage_data)
+            yield StreamChunk(done=True, usage=self._extract_usage(response_obj))
         else:
             yield StreamChunk(done=True, usage=None)
 
