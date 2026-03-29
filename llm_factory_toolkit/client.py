@@ -91,6 +91,15 @@ class LLMClient:
         saving 20-40% tokens.  Core tools (listed in ``core_tools``)
         always retain full definitions.  Can be overridden per-call
         via ``generate(compact_tools=...)``.  Default ``False``.
+    fallback:
+        An explicit :class:`LLMClient` to try when the primary provider
+        fails with ``QuotaExhaustedError`` or ``RetryExhaustedError``.
+        The fallback client can itself have a fallback, forming a chain.
+    fallback_models:
+        Shorthand for building a fallback chain from model strings.
+        ``["anthropic/claude-sonnet-4-5", "gemini/gemini-2.5-flash"]``
+        auto-creates nested ``LLMClient`` instances sharing the same
+        ``tool_factory`` and settings.  Ignored if ``fallback`` is set.
     **kwargs:
         Extra keyword arguments forwarded to provider adapters.
 
@@ -146,6 +155,7 @@ class LLMClient:
         usage_metadata: dict[str, Any] | None = None,
         pricing: dict[str, float] | None = None,
         fallback: LLMClient | None = None,
+        fallback_models: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         logger.info("Initialising LLMClient for model: %s", model)
@@ -167,6 +177,20 @@ class LLMClient:
             **kwargs,
         )
 
+        # Build fallback chain: fallback_models auto-creates nested LLMClients
+        # that share tool_factory, timeout, and retry settings.
+        if fallback_models and fallback is None:
+            fallback = self._build_fallback_chain(
+                fallback_models,
+                tool_factory=self.tool_factory,
+                timeout=timeout,
+                max_retries=max_retries,
+                retry_min_wait=retry_min_wait,
+                on_usage=on_usage,
+                usage_metadata=usage_metadata,
+                pricing=pricing,
+                compact_tools=compact_tools,
+            )
         self.fallback = fallback
 
         # Dynamic tool loading setup — normalise str to True + model name
@@ -286,6 +310,49 @@ class LLMClient:
             blocking=blocking,
         )
         logger.info("Tool '%s' registered.", name)
+
+    # ------------------------------------------------------------------
+    # Fallback chain builder
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_fallback_chain(
+        models: list[str],
+        *,
+        tool_factory: ToolFactory,
+        timeout: float,
+        max_retries: int,
+        retry_min_wait: float,
+        on_usage: Callable[..., Any] | None,
+        usage_metadata: dict[str, Any] | None,
+        pricing: dict[str, float] | None,
+        compact_tools: bool,
+    ) -> LLMClient:
+        """Build a nested fallback chain from a list of model strings.
+
+        ``["model-a", "model-b"]`` produces::
+
+            LLMClient("model-a", fallback=LLMClient("model-b"))
+
+        All clients share the same ``tool_factory`` and settings.
+        """
+        # Build right-to-left so the last model has no fallback
+        chain: LLMClient | None = None
+        for model_str in reversed(models):
+            chain = LLMClient(
+                model=model_str,
+                tool_factory=tool_factory,
+                timeout=timeout,
+                max_retries=max_retries,
+                retry_min_wait=retry_min_wait,
+                on_usage=on_usage,
+                usage_metadata=usage_metadata,
+                pricing=pricing,
+                compact_tools=compact_tools,
+                fallback=chain,
+            )
+        assert chain is not None  # noqa: S101
+        return chain
 
     # ------------------------------------------------------------------
     # Lifecycle
