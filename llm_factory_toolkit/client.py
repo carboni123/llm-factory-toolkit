@@ -334,6 +334,7 @@ class LLMClient:
         max_tool_output_chars: int | None = None,
         max_concurrent_tools: int | None = None,
         tool_timeout: float | None = None,
+        max_validation_retries: int = 0,
         usage_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> GenerationResult: ...
@@ -361,6 +362,7 @@ class LLMClient:
         max_tool_output_chars: int | None = None,
         max_concurrent_tools: int | None = None,
         tool_timeout: float | None = None,
+        max_validation_retries: int = 0,
         usage_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]: ...
@@ -387,6 +389,7 @@ class LLMClient:
         max_tool_output_chars: int | None = None,
         max_concurrent_tools: int | None = None,
         tool_timeout: float | None = None,
+        max_validation_retries: int = 0,
         usage_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> GenerationResult | AsyncGenerator[StreamChunk, None]:
@@ -485,6 +488,11 @@ class LLMClient:
             tool_timeout: Maximum seconds a single tool execution may
                 take before being cancelled with a timeout error.
                 ``None`` (default) means no limit.
+            max_validation_retries: When ``response_format`` is a Pydantic
+                model and the LLM returns unparseable output, retry up
+                to this many times.  Each retry feeds the parse error back
+                to the model so it can self-correct.  ``0`` (default)
+                disables retries and returns raw content on failure.
             **kwargs: Forwarded to the underlying provider (e.g.
                 ``reasoning_effort``, ``thinking``, ``top_p``).
 
@@ -593,6 +601,7 @@ class LLMClient:
             "max_tool_output_chars": max_tool_output_chars,
             "max_concurrent_tools": max_concurrent_tools,
             "tool_timeout": tool_timeout,
+            "max_validation_retries": max_validation_retries,
             "on_usage": self.on_usage,
             "usage_metadata": effective_usage_metadata,
             "pricing": self.pricing,
@@ -670,6 +679,7 @@ class LLMClient:
                 max_tool_output_chars=max_tool_output_chars,
                 max_concurrent_tools=max_concurrent_tools,
                 tool_timeout=tool_timeout,
+                max_validation_retries=max_validation_retries,
                 usage_metadata=usage_metadata,
                 **kwargs,
             )

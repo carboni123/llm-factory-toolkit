@@ -156,6 +156,9 @@ Key files: `tools/catalog.py`, `tools/session.py`, `tools/meta_tools.py`. Contex
 ### Auto-Schema Generation
 When `register_tool(parameters=None)`, `ToolFactory._auto_generate_schema()` inspects the function's type hints via `tools/_schema_gen.py`. Supported types: `str`, `int`, `float`, `bool`, `Optional[X]`, `List[X]`, `Dict`, `Literal`, `Enum`, Pydantic `BaseModel`. Parameters with defaults become optional; those without become required. Use `exclude_params=["user_id", "db"]` to omit context-injected parameters from the generated schema. Falls back gracefully (registers tool without parameters) if schema generation fails.
 
+### Structured Output Validation Retries
+`BaseProvider.generate()` accepts `max_validation_retries` (default `0`). When `response_format` is a Pydantic model and the LLM returns unparseable output, the error is fed back to the model as a user message so it can self-correct, up to `max_validation_retries` times. If the adapter already populates `ProviderResponse.parsed_content` (e.g. OpenAI native parsing), the retry logic is bypassed. Exhausted retries fall through to returning raw content (no exception). Plumbed through `LLMClient.generate()` and `ProviderRouter.generate()`.
+
 ### Agentic Loop Safety
 `BaseProvider.generate()` and `generate_stream()` include five safety mechanisms:
 
@@ -216,6 +219,8 @@ Streaming (`generate_stream()`) does not yet support usage callbacks or cost tra
 - `test_usage_event.py` -- UsageEvent dataclass construction, frozen immutability (3 tests)
 - `test_client_observability.py` -- on_usage, usage_metadata, pricing params, metadata merge, passthrough (10 tests)
 - `test_observability.py` -- compute_cost, usage callback emission (async/sync), cost_usd accumulation (14 tests)
+- `test_validation_retry.py` -- structured output validation retries, error feedback injection, adapter bypass (8 tests)
+- `test_mcp_dispatch.py` -- MCP dispatch hook routing, extra_tool_definitions merging, mixed dispatch (16 tests)
 
 ### Integration Tests (require API keys, 54 tests)
 - `test_llmcall.py` -- basic generation (OpenAI)
