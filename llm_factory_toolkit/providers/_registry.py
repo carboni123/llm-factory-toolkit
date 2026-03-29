@@ -296,6 +296,9 @@ class ProviderRouter:
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         tool_session: ToolSession | None = None,
         compact_tools: bool = False,
+        on_usage: Callable[..., Any] | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+        pricing: dict[str, float] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, routing to the correct provider adapter."""
@@ -317,6 +320,9 @@ class ProviderRouter:
             file_search=file_search,
             tool_session=tool_session,
             compact_tools=compact_tools,
+            on_usage=on_usage,
+            usage_metadata=usage_metadata,
+            pricing=pricing,
             **kwargs,
         ):
             yield chunk

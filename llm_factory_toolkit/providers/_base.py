@@ -1327,9 +1327,44 @@ class BaseProvider(abc.ABC):
         max_tool_output_chars: int | None = None,
         max_concurrent_tools: int | None = None,
         tool_timeout: float | None = None,
+        on_usage: Callable[..., Any] | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+        pricing: dict[str, float] | None = None,
+        deadline: float | None = None,
+        max_validation_retries: int = 0,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
-        """Stream a response, handling tool calls transparently."""
+        """Stream a response, handling tool calls transparently.
+
+        Parameters
+        ----------
+        on_usage:
+            Usage callback.  Accepted for API symmetry with ``generate()``
+            but streaming usage callbacks are **not yet implemented**.
+            A warning is logged if a callback is provided.
+        usage_metadata:
+            Metadata dict forwarded alongside usage events.  Accepted for
+            API symmetry; stored for future use when streaming observability
+            is implemented.
+        pricing:
+            Pricing override dict.  Accepted for API symmetry; stored for
+            future use.
+        deadline:
+            Absolute wall-clock cutoff (``time.monotonic()`` value).  The
+            tool loop will stop starting new iterations once the deadline
+            is reached, yielding a final ``StreamChunk`` with a warning.
+        max_validation_retries:
+            Accepted for API symmetry with ``generate()``.  Has no effect
+            on streaming (structured-output validation retries are not
+            applicable in streaming mode).
+        """
+        if on_usage is not None:
+            logger.warning(
+                "on_usage callback was provided to generate_stream() but "
+                "streaming usage callbacks are not yet implemented. "
+                "The callback will not be invoked."
+            )
+
         (
             current_messages,
             tool_execution_context,
@@ -1348,6 +1383,15 @@ class BaseProvider(abc.ABC):
         iteration_count = 0
 
         while iteration_count < max_tool_iterations:
+            # Wall-clock deadline check — stop starting new iterations
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.warning(
+                    "Deadline reached after %d streaming iterations "
+                    "— returning partial result.",
+                    iteration_count,
+                )
+                yield StreamChunk(content="\n\n[Warning: Deadline reached.]", done=True)
+                return
             native_tools, effective_temp = self._resolve_tools_for_iteration(
                 model=model,
                 use_tools=use_tools,

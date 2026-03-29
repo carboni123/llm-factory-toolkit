@@ -626,21 +626,13 @@ class LLMClient:
 
         try:
             if stream:
-                # Streaming doesn't support usage callbacks or cost tracking
-                # yet — strip observability keys to prevent them leaking into
-                # the provider SDK call via **kwargs.
-                stream_kwargs = {
-                    k: v
-                    for k, v in common_kwargs.items()
-                    if k not in {"on_usage", "usage_metadata", "pricing"}
-                }
                 if self.fallback is not None:
                     return self._generate_stream_with_fallback(
-                        stream_kwargs=stream_kwargs,
+                        stream_kwargs=common_kwargs,
                         file_search=file_search,
                     )
                 return self.provider.generate_stream(
-                    **stream_kwargs, file_search=file_search
+                    **common_kwargs, file_search=file_search
                 )
 
             return await self.provider.generate(
