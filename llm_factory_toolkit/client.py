@@ -8,6 +8,8 @@ import logging
 from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import (
     Any,
+    Literal,
+    overload,
 )
 
 from pydantic import BaseModel
@@ -309,6 +311,60 @@ class LLMClient:
     # Generation
     # ------------------------------------------------------------------
 
+    @overload
+    async def generate(
+        self,
+        input: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
+        mock_tools: bool = False,
+        parallel_tools: bool = False,
+        merge_history: bool = False,
+        stream: Literal[False] = ...,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
+        compact_tools: bool | None = None,
+        repetition_threshold: int = 3,
+        max_tool_output_chars: int | None = None,
+        max_concurrent_tools: int | None = None,
+        tool_timeout: float | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> GenerationResult: ...
+
+    @overload
+    async def generate(
+        self,
+        input: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
+        mock_tools: bool = False,
+        parallel_tools: bool = False,
+        merge_history: bool = False,
+        stream: Literal[True] = ...,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
+        compact_tools: bool | None = None,
+        repetition_threshold: int = 3,
+        max_tool_output_chars: int | None = None,
+        max_concurrent_tools: int | None = None,
+        tool_timeout: float | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamChunk, None]: ...
+
     async def generate(
         self,
         input: list[dict[str, Any]],
@@ -594,7 +650,7 @@ class LLMClient:
             # Forward all original call args except model.
             # model is an explicit named param so it's NOT in **kwargs.
             # The fallback client uses its own default model.
-            return await self.fallback.generate(
+            return await self.fallback.generate(  # type: ignore[call-overload,no-any-return,misc]
                 input,
                 temperature=temperature,
                 max_output_tokens=max_output_tokens,
