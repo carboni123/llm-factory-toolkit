@@ -14,6 +14,7 @@ from typing import (
 
 from pydantic import BaseModel
 
+from .cache import BaseCache, build_cache_key
 from .exceptions import (
     ConfigurationError,
     LLMToolkitError,
@@ -335,6 +336,7 @@ class LLMClient:
         max_concurrent_tools: int | None = None,
         tool_timeout: float | None = None,
         max_validation_retries: int = 0,
+        cache: BaseCache | None = None,
         usage_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> GenerationResult: ...
@@ -363,6 +365,7 @@ class LLMClient:
         max_concurrent_tools: int | None = None,
         tool_timeout: float | None = None,
         max_validation_retries: int = 0,
+        cache: BaseCache | None = None,
         usage_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]: ...
@@ -390,6 +393,7 @@ class LLMClient:
         max_concurrent_tools: int | None = None,
         tool_timeout: float | None = None,
         max_validation_retries: int = 0,
+        cache: BaseCache | None = None,
         usage_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> GenerationResult | AsyncGenerator[StreamChunk, None]:
@@ -493,6 +497,11 @@ class LLMClient:
                 to this many times.  Each retry feeds the parse error back
                 to the model so it can self-correct.  ``0`` (default)
                 disables retries and returns raw content on failure.
+            cache: A :class:`BaseCache` instance for response caching.
+                When provided and the call is non-streaming with no tools
+                (``use_tools=None``), results are cached by a hash of the
+                request parameters.  Subsequent identical calls return the
+                cached result instantly.  ``None`` (default) disables caching.
             **kwargs: Forwarded to the underlying provider (e.g.
                 ``reasoning_effort``, ``thinking``, ``top_p``).
 
@@ -624,6 +633,22 @@ class LLMClient:
             }
         }
 
+        # --- Cache lookup (non-streaming, no tools) ---
+        _cache_key: str | None = None
+        if cache is not None and not stream and use_tools is None:
+            effective_model = model or self.model
+            _cache_key = build_cache_key(
+                effective_model,
+                processed_input,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                response_format=response_format,
+            )
+            cached: GenerationResult | None = cache.get(_cache_key)
+            if cached is not None:
+                logger.debug("Cache hit for key %s", _cache_key[:12])
+                return cached
+
         try:
             if stream:
                 if self.fallback is not None:
@@ -635,10 +660,16 @@ class LLMClient:
                     **common_kwargs, file_search=file_search
                 )
 
-            return await self.provider.generate(
+            result = await self.provider.generate(
                 **common_kwargs,
                 file_search=file_search,
             )
+
+            # --- Cache store ---
+            if _cache_key is not None and cache is not None:
+                cache.set(_cache_key, result)
+
+            return result
         except (QuotaExhaustedError, RetryExhaustedError) as e:
             if self.fallback is None:
                 raise

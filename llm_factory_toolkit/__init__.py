@@ -109,6 +109,7 @@ import re
 
 from dotenv import load_dotenv
 
+from .cache import BaseCache, InMemoryCache
 from .client import LLMClient
 from .exceptions import (
     ConfigurationError,
@@ -156,9 +157,11 @@ def extract_json_from_markdown(markdown_text: str) -> str | None:
 
 
 __all__ = [
+    "BaseCache",
     "BaseTool",
     "ConfigurationError",
     "GenerationResult",
+    "InMemoryCache",
     "InMemoryToolCatalog",
     "LLMClient",
     "LLMToolkitError",
