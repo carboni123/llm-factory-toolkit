@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 from collections.abc import AsyncGenerator, Callable, Sequence
@@ -854,21 +853,24 @@ class LLMClient:
         for message in messages:
             role = message.get("role")
             if role not in {"user", "assistant"}:
-                merged.append(copy.deepcopy(message))
+                # Shallow copy: appended messages are not mutated after insertion.
+                merged.append(dict(message))
                 continue
 
             if not merged:
-                merged.append(copy.deepcopy(message))
+                merged.append(dict(message))
                 continue
 
             last_message = merged[-1]
             last_role = last_message.get("role")
 
             if last_role != role or last_role not in {"user", "assistant"}:
-                merged.append(copy.deepcopy(message))
+                merged.append(dict(message))
                 continue
 
-            combined = copy.deepcopy(last_message)
+            # Merge path: shallow copy is safe because we replace `content`
+            # entirely (not mutated in-place) and `setdefault` only adds new keys.
+            combined = dict(last_message)
             combined["content"] = LLMClient._merge_message_content(
                 last_message.get("content"), message.get("content")
             )
@@ -886,9 +888,9 @@ class LLMClient:
     def _merge_message_content(first: Any, second: Any) -> Any:
         """Merge message content values depending on their type."""
         if first is None:
-            return copy.deepcopy(second)
+            return second
         if second is None:
-            return copy.deepcopy(first)
+            return first
 
         if isinstance(first, str) and isinstance(second, str):
             if not first:
@@ -901,11 +903,9 @@ class LLMClient:
             return [*first, *second]
 
         if isinstance(first, dict) and isinstance(second, dict):
-            merged_dict = copy.deepcopy(first)
-            merged_dict.update(second)
-            return merged_dict
+            return {**first, **second}
 
         if first == second:
-            return copy.deepcopy(first)
+            return first
 
-        return [copy.deepcopy(first), copy.deepcopy(second)]
+        return [first, second]
