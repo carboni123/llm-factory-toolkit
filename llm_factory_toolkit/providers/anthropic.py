@@ -13,7 +13,7 @@ from typing import (
 
 from pydantic import BaseModel
 
-from ..exceptions import ConfigurationError, ProviderError
+from ..exceptions import ConfigurationError, ProviderError, QuotaExhaustedError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
 from ._base import (
@@ -127,6 +127,25 @@ class AnthropicAdapter(BaseProvider):
                 except (ValueError, TypeError):
                     pass
         return None
+
+    @staticmethod
+    def _is_quota_error(error: Exception) -> bool:
+        """Detect permanent quota exhaustion vs transient rate limit.
+
+        Anthropic raises ``PermissionDeniedError`` (403) or ``RateLimitError``
+        (429) for quota issues.  We check the error type name to avoid
+        importing the SDK at module level.
+        """
+        error_type = type(error).__name__
+        # PermissionDeniedError (403) typically means billing/quota issues
+        if error_type == "PermissionDeniedError":
+            return True
+        # RateLimitError (429) with "quota" or "exceeded" in message
+        if error_type == "RateLimitError":
+            msg = str(error).lower()
+            if "quota" in msg or "exceeded" in msg or "billing" in msg:
+                return True
+        return False
 
     def _supports_web_search(self) -> bool:
         return True
@@ -450,6 +469,11 @@ class AnthropicAdapter(BaseProvider):
         try:
             response = await client.messages.create(**request)
         except Exception as e:
+            if self._is_quota_error(e):
+                raise QuotaExhaustedError(
+                    "Anthropic quota exhausted — check billing at "
+                    "https://console.anthropic.com/settings/billing"
+                ) from e
             raise ProviderError(f"Anthropic API error: {e}") from e
 
         content_text, tool_calls = self._parse_response(response)
@@ -602,4 +626,9 @@ class AnthropicAdapter(BaseProvider):
                     yield StreamChunk(done=True, usage=usage)
 
         except Exception as e:
+            if self._is_quota_error(e):
+                raise QuotaExhaustedError(
+                    "Anthropic quota exhausted — check billing at "
+                    "https://console.anthropic.com/settings/billing"
+                ) from e
             raise ProviderError(f"Anthropic API stream error: {e}") from e

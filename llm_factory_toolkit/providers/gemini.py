@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from ..exceptions import ConfigurationError, ProviderError
+from ..exceptions import ConfigurationError, ProviderError, QuotaExhaustedError
 from ..tools.models import StreamChunk
 from ..tools.tool_factory import ToolFactory
 from ._base import (
@@ -146,6 +146,21 @@ class GeminiAdapter(BaseProvider):
             return float(match.group(1))
 
         return None
+
+    @staticmethod
+    def _is_quota_error(error: Exception) -> bool:
+        """Detect permanent quota exhaustion vs transient rate limit.
+
+        Google API errors include a status code in the exception.  HTTP 403
+        with quota-related messages indicates billing/quota issues.
+        """
+        status = getattr(error, "status_code", None) or getattr(error, "code", None)
+        if status == 403:
+            return True
+        msg = str(error).lower()
+        if "quota" in msg and ("exceeded" in msg or "exhausted" in msg):
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions → Gemini native
@@ -491,6 +506,11 @@ class GeminiAdapter(BaseProvider):
                 model=model, contents=contents, config=config, **kwargs
             )
         except Exception as e:
+            if self._is_quota_error(e):
+                raise QuotaExhaustedError(
+                    "Gemini quota exhausted — check billing at "
+                    "https://console.cloud.google.com/billing"
+                ) from e
             raise ProviderError(f"Google Gemini API error: {e}") from e
 
         content, tool_calls, thought_sigs = self._parse_response(response)
@@ -562,6 +582,11 @@ class GeminiAdapter(BaseProvider):
                 model=model, contents=contents, config=config, **kwargs
             )
         except Exception as e:
+            if self._is_quota_error(e):
+                raise QuotaExhaustedError(
+                    "Gemini quota exhausted — check billing at "
+                    "https://console.cloud.google.com/billing"
+                ) from e
             raise ProviderError(f"Google Gemini API stream error: {e}") from e
 
         accumulated_text = ""

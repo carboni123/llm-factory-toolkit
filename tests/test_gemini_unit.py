@@ -344,7 +344,7 @@ class TestCallApi:
     async def test_api_error_wrapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         adapter = GeminiAdapter(api_key="k")
 
-        generate_mock = AsyncMock(side_effect=RuntimeError("quota exceeded"))
+        generate_mock = AsyncMock(side_effect=RuntimeError("connection reset"))
         fake_client = SimpleNamespace(
             aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_mock))
         )
