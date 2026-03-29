@@ -452,15 +452,6 @@ class ClaudeCodeAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_system(
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
-        """Extract a leading system message, returning ``(system, rest)``."""
-        if messages and messages[0].get("role") == "system":
-            return messages[0].get("content", ""), messages[1:]
-        return None, messages
-
-    @staticmethod
     def _messages_to_prompt(messages: List[Dict[str, Any]]) -> str:
         """Convert Chat Completions messages to a single prompt string.
 

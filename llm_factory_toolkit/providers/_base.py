@@ -198,6 +198,23 @@ class BaseProvider(abc.ABC):
         """Return ``True`` if *model* rejects the ``temperature`` param."""
         return False
 
+    # ------------------------------------------------------------------
+    # Message helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_system(
+        messages: List[Dict[str, Any]],
+    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+        """Extract system message from the start of a message list.
+
+        Returns ``(system_content, remaining_messages)``.  If no system
+        message is present, returns ``(None, messages)``.
+        """
+        if messages and messages[0].get("role") == "system":
+            return messages[0].get("content", ""), messages[1:]
+        return None, messages
+
     def _supports_reasoning_effort(self, model: str) -> bool:
         """Return ``True`` if *model* accepts ``reasoning_effort``."""
         return False
@@ -920,6 +937,85 @@ class BaseProvider(abc.ABC):
         }
 
     # ------------------------------------------------------------------
+    # Agentic loop — shared helpers
+    # ------------------------------------------------------------------
+
+    def _init_loop(
+        self,
+        input: List[Dict[str, Any]],
+        *,
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tool_session: Optional[ToolSession] = None,
+        tool_execution_context: Optional[Dict[str, Any]] = None,
+        extra_tool_definitions: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[
+        List[Dict[str, Any]],  # current_messages
+        Optional[Dict[str, Any]],  # tool_execution_context
+        set[str],  # _core_names
+        Optional[List[Dict[str, Any]]],  # _extra_native
+        Dict[Tuple[str, str], int],  # _failed_call_counts
+        Dict[Tuple[str, str], int],  # _all_call_counts
+    ]:
+        """Common initialisation shared by ``generate`` and ``generate_stream``."""
+        if file_search and not self._supports_file_search():
+            raise UnsupportedFeatureError(
+                "file_search is not supported by this provider."
+            )
+
+        tool_execution_context = self._inject_dynamic_tool_context(
+            tool_session, tool_execution_context
+        )
+        _core_names = self._extract_core_tool_names(tool_execution_context)
+
+        _extra_native: Optional[List[Dict[str, Any]]] = None
+        if extra_tool_definitions:
+            _extra_native = self._build_tool_definitions(extra_tool_definitions)
+
+        return (
+            list(input),
+            tool_execution_context,
+            _core_names,
+            _extra_native,
+            {},  # _failed_call_counts
+            {},  # _all_call_counts
+        )
+
+    def _resolve_tools_for_iteration(
+        self,
+        *,
+        model: str,
+        use_tools: Optional[Sequence[str]],
+        tool_session: Optional[ToolSession],
+        compact_tools: bool,
+        core_tool_names: Optional[set[str]],
+        web_search: bool | Dict[str, Any],
+        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...],
+        extra_native: Optional[List[Dict[str, Any]]],
+        temperature: Optional[float],
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[float]]:
+        """Compute native tools and effective temperature for one loop iteration."""
+        effective_tools = self._get_effective_tools(use_tools, tool_session)
+        native_tools = self._prepare_native_tools(
+            effective_tools,
+            compact_tools=compact_tools,
+            core_tool_names=core_tool_names,
+            web_search=web_search,
+            file_search=file_search,
+        )
+
+        if extra_native:
+            if native_tools is not None:
+                native_tools = list(native_tools) + extra_native
+            else:
+                native_tools = extra_native
+
+        effective_temp = temperature
+        if effective_temp is not None and self._should_omit_temperature(model):
+            effective_temp = None
+
+        return native_tools, effective_temp
+
+    # ------------------------------------------------------------------
     # Public API — agentic loop
     # ------------------------------------------------------------------
 
@@ -962,21 +1058,23 @@ class BaseProvider(abc.ABC):
             forwarded to ``_call_api_with_retry`` so that retries respect the
             same budget.
         """
-        # Feature gate: file_search
-        if file_search and not self._supports_file_search():
-            raise UnsupportedFeatureError(
-                "file_search is not supported by this provider."
-            )
-
-        # Dynamic tool loading: inject session and catalog into context
-        tool_execution_context = self._inject_dynamic_tool_context(
-            tool_session, tool_execution_context
+        (
+            current_messages,
+            tool_execution_context,
+            _core_names,
+            _extra_native,
+            _failed_call_counts,
+            _all_call_counts,
+        ) = self._init_loop(
+            input,
+            file_search=file_search,
+            tool_session=tool_session,
+            tool_execution_context=tool_execution_context,
+            extra_tool_definitions=extra_tool_definitions,
         )
-        _core_names = self._extract_core_tool_names(tool_execution_context)
 
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
-        current_messages = list(input)
         iteration_count = 0
         accumulated_usage: Dict[str, int] = {
             "prompt_tokens": 0,
@@ -984,13 +1082,6 @@ class BaseProvider(abc.ABC):
             "total_tokens": 0,
         }
         accumulated_cost: Optional[float] = 0.0
-        _failed_call_counts: Dict[Tuple[str, str], int] = {}
-        _all_call_counts: Dict[Tuple[str, str], int] = {}
-
-        # Pre-compute extra tool definitions once (they don't change per iteration)
-        _extra_native: Optional[List[Dict[str, Any]]] = None
-        if extra_tool_definitions:
-            _extra_native = self._build_tool_definitions(extra_tool_definitions)
 
         while iteration_count < max_tool_iterations:
             # Wall-clock deadline check — stop starting new iterations
@@ -1000,27 +1091,17 @@ class BaseProvider(abc.ABC):
                     iteration_count,
                 )
                 break
-            effective_tools = self._get_effective_tools(use_tools, tool_session)
-
-            native_tools = self._prepare_native_tools(
-                effective_tools,
+            native_tools, effective_temp = self._resolve_tools_for_iteration(
+                model=model,
+                use_tools=use_tools,
+                tool_session=tool_session,
                 compact_tools=compact_tools,
                 core_tool_names=_core_names,
                 web_search=web_search,
                 file_search=file_search,
+                extra_native=_extra_native,
+                temperature=temperature,
             )
-
-            # Merge MCP / external tool definitions alongside factory tools
-            if _extra_native:
-                if native_tools is not None:
-                    native_tools = list(native_tools) + _extra_native
-                else:
-                    native_tools = _extra_native
-
-            # Adapt temperature for models that don't accept it
-            effective_temp = temperature
-            if effective_temp is not None and self._should_omit_temperature(model):
-                effective_temp = None
 
             response = await self._call_api_with_retry(
                 model,
@@ -1223,47 +1304,35 @@ class BaseProvider(abc.ABC):
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, handling tool calls transparently."""
-        if file_search and not self._supports_file_search():
-            raise UnsupportedFeatureError(
-                "file_search is not supported by this provider."
-            )
-
-        tool_execution_context = self._inject_dynamic_tool_context(
-            tool_session, tool_execution_context
+        (
+            current_messages,
+            tool_execution_context,
+            _core_names,
+            _extra_native,
+            _failed_call_counts,
+            _all_call_counts,
+        ) = self._init_loop(
+            input,
+            file_search=file_search,
+            tool_session=tool_session,
+            tool_execution_context=tool_execution_context,
+            extra_tool_definitions=extra_tool_definitions,
         )
-        _core_names = self._extract_core_tool_names(tool_execution_context)
 
-        current_messages = list(input)
         iteration_count = 0
-        _failed_call_counts: Dict[Tuple[str, str], int] = {}
-        _all_call_counts: Dict[Tuple[str, str], int] = {}
-
-        # Pre-compute extra tool definitions once (they don't change per iteration)
-        _extra_native: Optional[List[Dict[str, Any]]] = None
-        if extra_tool_definitions:
-            _extra_native = self._build_tool_definitions(extra_tool_definitions)
 
         while iteration_count < max_tool_iterations:
-            effective_tools = self._get_effective_tools(use_tools, tool_session)
-
-            native_tools = self._prepare_native_tools(
-                effective_tools,
+            native_tools, effective_temp = self._resolve_tools_for_iteration(
+                model=model,
+                use_tools=use_tools,
+                tool_session=tool_session,
                 compact_tools=compact_tools,
                 core_tool_names=_core_names,
                 web_search=web_search,
                 file_search=file_search,
+                extra_native=_extra_native,
+                temperature=temperature,
             )
-
-            # Merge MCP / external tool definitions alongside factory tools
-            if _extra_native:
-                if native_tools is not None:
-                    native_tools = list(native_tools) + _extra_native
-                else:
-                    native_tools = _extra_native
-
-            effective_temp = temperature
-            if effective_temp is not None and self._should_omit_temperature(model):
-                effective_temp = None
 
             pending_response: Optional[ProviderResponse] = None
 

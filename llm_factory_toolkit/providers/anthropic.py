@@ -142,15 +142,6 @@ class AnthropicAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_system(
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
-        """Extract system message from the start of the conversation."""
-        if messages and messages[0].get("role") == "system":
-            return messages[0].get("content", ""), messages[1:]
-        return None, messages
-
-    @staticmethod
     def _convert_messages(
         messages: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:

@@ -158,18 +158,6 @@ class GeminiAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_system_instruction(
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
-        """Extract system instruction from messages.
-
-        Returns ``(system_instruction, remaining_messages)``.
-        """
-        if messages and messages[0].get("role") == "system":
-            return messages[0].get("content"), messages[1:]
-        return None, messages
-
-    @staticmethod
     def _convert_messages(messages: List[Dict[str, Any]]) -> Any:
         """Convert Chat Completions messages to Gemini ``types.Content`` list."""
         from google.genai import types
@@ -487,7 +475,7 @@ class GeminiAdapter(BaseProvider):
         client = self._get_client()
 
         # Extract system instruction
-        system_instruction, remaining = self._extract_system_instruction(messages)
+        system_instruction, remaining = self._extract_system(messages)
 
         # Build native tools
         native_tools = self._build_native_tools(tools, web_search)
@@ -562,7 +550,7 @@ class GeminiAdapter(BaseProvider):
         kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
-        system_instruction, remaining = self._extract_system_instruction(messages)
+        system_instruction, remaining = self._extract_system(messages)
         native_tools = self._build_native_tools(tools, web_search)
 
         config = self._build_config(

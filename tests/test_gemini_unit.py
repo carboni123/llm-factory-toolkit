@@ -19,19 +19,19 @@ class _FakeModel(BaseModel):
     value: int
 
 
-class TestExtractSystemInstruction:
+class TestExtractSystem:
     def test_with_system(self) -> None:
         msgs = [
             {"role": "system", "content": "Be helpful"},
             {"role": "user", "content": "Hi"},
         ]
-        system, remaining = GeminiAdapter._extract_system_instruction(msgs)
+        system, remaining = GeminiAdapter._extract_system(msgs)
         assert system == "Be helpful"
         assert len(remaining) == 1
 
     def test_without_system(self) -> None:
         msgs = [{"role": "user", "content": "Hi"}]
-        system, remaining = GeminiAdapter._extract_system_instruction(msgs)
+        system, remaining = GeminiAdapter._extract_system(msgs)
         assert system is None
         assert remaining == msgs
 
