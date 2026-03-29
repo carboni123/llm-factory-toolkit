@@ -1045,6 +1045,7 @@ class BaseProvider(abc.ABC):
         usage_metadata: Optional[Dict[str, Any]] = None,
         pricing: Optional[Dict[str, float]] = None,
         deadline: Optional[float] = None,
+        max_validation_retries: int = 0,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, executing tool calls iteratively.
@@ -1057,6 +1058,11 @@ class BaseProvider(abc.ABC):
             returning whatever content has been accumulated so far.  Also
             forwarded to ``_call_api_with_retry`` so that retries respect the
             same budget.
+        max_validation_retries:
+            When ``response_format`` is a Pydantic model and the LLM output
+            fails validation, retry up to this many times with the validation
+            error appended to the conversation.  Default ``0`` (no retries,
+            falls through to raw content — backward-compatible).
         """
         (
             current_messages,
@@ -1076,6 +1082,7 @@ class BaseProvider(abc.ABC):
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
         iteration_count = 0
+        _validation_retries_left = max_validation_retries
         accumulated_usage: Dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -1188,9 +1195,36 @@ class BaseProvider(abc.ABC):
                                 usage=accumulated_usage,
                                 cost_usd=accumulated_cost,
                             )
-                        except (json.JSONDecodeError, ValueError, TypeError):
+                        except (
+                            json.JSONDecodeError,
+                            ValueError,
+                            TypeError,
+                        ) as parse_err:
+                            if _validation_retries_left > 0:
+                                _validation_retries_left -= 1
+                                current_messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            f"Your response could not be "
+                                            f"parsed as "
+                                            f"{response_format.__name__}.\n"
+                                            f"Error: {parse_err}\n\n"
+                                            f"Return a valid JSON object "
+                                            f"matching the required schema."
+                                        ),
+                                    }
+                                )
+                                logger.info(
+                                    "Validation retry (%d left): %s",
+                                    _validation_retries_left,
+                                    parse_err,
+                                )
+                                iteration_count += 1
+                                continue
                             logger.warning(
-                                "Failed to parse response as %s, returning raw content.",
+                                "Failed to parse response as %s, "
+                                "returning raw content.",
                                 response_format.__name__,
                             )
 
