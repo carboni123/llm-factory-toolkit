@@ -634,13 +634,24 @@ class BaseProvider(abc.ABC):
                 )
 
             try:
-                result: ToolExecutionResult = await factory.dispatch_tool(
-                    tc.name,
-                    tc.arguments or "{}",
-                    tool_execution_context=tool_execution_context,
-                    use_mock=mock_tools,
-                    tool_timeout=tool_timeout,
+                # Check for MCP dispatch before ToolFactory
+                _mcp_dispatch = (tool_execution_context or {}).get("_mcp_dispatch")
+                _mcp_tool_names = (tool_execution_context or {}).get(
+                    "_mcp_tool_names", set()
                 )
+
+                if _mcp_dispatch and tc.name in _mcp_tool_names:
+                    # Route to MCP server
+                    content = await _mcp_dispatch(tc.name, tc.arguments or "{}")
+                    result = ToolExecutionResult(content=content)
+                else:
+                    result = await factory.dispatch_tool(
+                        tc.name,
+                        tc.arguments or "{}",
+                        tool_execution_context=tool_execution_context,
+                        use_mock=mock_tools,
+                        tool_timeout=tool_timeout,
+                    )
                 is_error = result.error is not None
                 payload: Dict[str, Any] = {
                     "tool_name": tc.name,
@@ -912,6 +923,7 @@ class BaseProvider(abc.ABC):
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
+        extra_tool_definitions: Optional[List[Dict[str, Any]]] = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
         max_tool_output_chars: Optional[int] = None,
@@ -960,6 +972,11 @@ class BaseProvider(abc.ABC):
         _failed_call_counts: Dict[Tuple[str, str], int] = {}
         _all_call_counts: Dict[Tuple[str, str], int] = {}
 
+        # Pre-compute extra tool definitions once (they don't change per iteration)
+        _extra_native: Optional[List[Dict[str, Any]]] = None
+        if extra_tool_definitions:
+            _extra_native = self._build_tool_definitions(extra_tool_definitions)
+
         while iteration_count < max_tool_iterations:
             # Wall-clock deadline check — stop starting new iterations
             if deadline is not None and time.monotonic() >= deadline:
@@ -977,6 +994,13 @@ class BaseProvider(abc.ABC):
                 web_search=web_search,
                 file_search=file_search,
             )
+
+            # Merge MCP / external tool definitions alongside factory tools
+            if _extra_native:
+                if native_tools is not None:
+                    native_tools = list(native_tools) + _extra_native
+                else:
+                    native_tools = _extra_native
 
             # Adapt temperature for models that don't accept it
             effective_temp = temperature
@@ -1176,6 +1200,7 @@ class BaseProvider(abc.ABC):
         web_search: bool | Dict[str, Any] = False,
         file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
         tool_session: Optional[ToolSession] = None,
+        extra_tool_definitions: Optional[List[Dict[str, Any]]] = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
         max_tool_output_chars: Optional[int] = None,
@@ -1199,6 +1224,11 @@ class BaseProvider(abc.ABC):
         _failed_call_counts: Dict[Tuple[str, str], int] = {}
         _all_call_counts: Dict[Tuple[str, str], int] = {}
 
+        # Pre-compute extra tool definitions once (they don't change per iteration)
+        _extra_native: Optional[List[Dict[str, Any]]] = None
+        if extra_tool_definitions:
+            _extra_native = self._build_tool_definitions(extra_tool_definitions)
+
         while iteration_count < max_tool_iterations:
             effective_tools = self._get_effective_tools(use_tools, tool_session)
 
@@ -1209,6 +1239,13 @@ class BaseProvider(abc.ABC):
                 web_search=web_search,
                 file_search=file_search,
             )
+
+            # Merge MCP / external tool definitions alongside factory tools
+            if _extra_native:
+                if native_tools is not None:
+                    native_tools = list(native_tools) + _extra_native
+                else:
+                    native_tools = _extra_native
 
             effective_temp = temperature
             if effective_temp is not None and self._should_omit_temperature(model):
