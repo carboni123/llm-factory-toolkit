@@ -76,7 +76,7 @@ class StreamChunk:
 
     content: str = ""
     done: bool = False
-    usage: Optional[Dict[str, Any]] = None
+    usage: Optional[Dict[str, int]] = None
 
 
 # ---------------------------------------------------------------------------

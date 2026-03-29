@@ -522,9 +522,7 @@ class LLMClient:
         )
 
         processed_input = (
-            self._merge_conversation_history(input)
-            if merge_history
-            else copy.deepcopy(input)
+            self._merge_conversation_history(input) if merge_history else list(input)
         )
 
         # Merge usage metadata: init-level defaults + per-call overrides

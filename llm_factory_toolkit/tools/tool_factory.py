@@ -47,6 +47,9 @@ class ToolRegistration:
     tags: List[str] = field(default_factory=list)
     group: Optional[str] = None
     blocking: bool = False
+    _compact_cache: Optional[Dict[str, Any]] = field(
+        default=None, repr=False, compare=False
+    )
 
 
 BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
@@ -488,9 +491,24 @@ class ToolFactory:
             )
 
         if compact:
-            definitions = [self._compact_definition(d) for d in definitions]
+            if filter_tool_names is None:
+                definitions = [
+                    self._get_compact(reg) for reg in self._registry.values()
+                ]
+            else:
+                definitions = [
+                    self._get_compact(reg)
+                    for reg in self._registry.values()
+                    if reg.name in allowed
+                ]
 
         return definitions
+
+    def _get_compact(self, reg: ToolRegistration) -> Dict[str, Any]:
+        """Return cached compact definition for a registration."""
+        if reg._compact_cache is None:
+            reg._compact_cache = self._compact_definition(reg.definition)
+        return reg._compact_cache
 
     # ------------------------------------------------------------------
     # Compact mode helpers

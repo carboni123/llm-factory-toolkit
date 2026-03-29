@@ -235,7 +235,10 @@ async def test_exponential_backoff_timing(mock_sleep: AsyncMock) -> None:
     assert result.content == "ok"
     assert mock_sleep.call_count == 3
     delays = [call.args[0] for call in mock_sleep.call_args_list]
-    assert delays == [1.0, 2.0, 4.0]
+    # Full jitter: each delay in [0, retry_min_wait * 2^attempt]
+    assert 0 <= delays[0] <= 1.0
+    assert 0 <= delays[1] <= 2.0
+    assert 0 <= delays[2] <= 4.0
 
 
 @patch("asyncio.sleep", new_callable=AsyncMock)

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import abc
 import asyncio
-import copy
 import inspect
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from typing import (
@@ -203,6 +203,18 @@ class BaseProvider(abc.ABC):
         return False
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Release resources held by this adapter.
+
+        The default implementation is a no-op.  Subclasses that create
+        persistent HTTP clients should override this to close them.
+        """
+        pass
+
+    # ------------------------------------------------------------------
     # Retry logic
     # ------------------------------------------------------------------
 
@@ -281,6 +293,7 @@ class BaseProvider(abc.ABC):
                 ):
                     raise
                 wait = self.retry_min_wait * (2**attempt)
+                wait = random.uniform(0, wait)
                 retry_after = self._extract_retry_after(retry_error)
                 if retry_after is not None:
                     wait = max(wait, retry_after)
@@ -292,11 +305,14 @@ class BaseProvider(abc.ABC):
                     e,
                 )
                 await asyncio.sleep(wait)
+            except (KeyboardInterrupt, SystemExit, GeneratorExit):
+                raise
             except Exception as e:
                 last_error = e
                 if attempt == self.max_retries or not self._is_retryable_error(e):
-                    raise ProviderError(str(e)) from e
+                    raise ProviderError(f"{type(e).__name__}: {e}") from e
                 wait = self.retry_min_wait * (2**attempt)
+                wait = random.uniform(0, wait)
                 retry_after = self._extract_retry_after(e)
                 if retry_after is not None:
                     wait = max(wait, retry_after)
@@ -960,7 +976,7 @@ class BaseProvider(abc.ABC):
 
         collected_payloads: List[Any] = []
         tool_result_messages: List[Dict[str, Any]] = []
-        current_messages = copy.deepcopy(input)
+        current_messages = list(input)
         iteration_count = 0
         accumulated_usage: Dict[str, int] = {
             "prompt_tokens": 0,
@@ -968,7 +984,6 @@ class BaseProvider(abc.ABC):
             "total_tokens": 0,
         }
         accumulated_cost: Optional[float] = 0.0
-        iteration_number = 0
         _failed_call_counts: Dict[Tuple[str, str], int] = {}
         _all_call_counts: Dict[Tuple[str, str], int] = {}
 
@@ -1026,7 +1041,6 @@ class BaseProvider(abc.ABC):
                     accumulated_usage[key] += response.usage.get(key, 0)
 
             # --- Usage callback + cost tracking ---
-            iteration_number += 1
             iteration_input = (
                 response.usage.get("prompt_tokens", 0) if response.usage else 0
             )
@@ -1049,7 +1063,7 @@ class BaseProvider(abc.ABC):
             if on_usage is not None:
                 event = UsageEvent(
                     model=model,
-                    iteration=iteration_number,
+                    iteration=iteration_count + 1,
                     input_tokens=iteration_input,
                     output_tokens=iteration_output,
                     cost_usd=iteration_cost,
@@ -1074,8 +1088,8 @@ class BaseProvider(abc.ABC):
                         return GenerationResult(
                             content=response.parsed_content,
                             payloads=list(collected_payloads),
-                            tool_messages=copy.deepcopy(tool_result_messages),
-                            messages=copy.deepcopy(current_messages),
+                            tool_messages=tool_result_messages,
+                            messages=current_messages,
                             usage=accumulated_usage,
                             cost_usd=accumulated_cost,
                         )
@@ -1088,8 +1102,8 @@ class BaseProvider(abc.ABC):
                             return GenerationResult(
                                 content=parsed,
                                 payloads=list(collected_payloads),
-                                tool_messages=copy.deepcopy(tool_result_messages),
-                                messages=copy.deepcopy(current_messages),
+                                tool_messages=tool_result_messages,
+                                messages=current_messages,
                                 usage=accumulated_usage,
                                 cost_usd=accumulated_cost,
                             )
@@ -1103,8 +1117,8 @@ class BaseProvider(abc.ABC):
                 return GenerationResult(
                     content=final or None,
                     payloads=list(collected_payloads),
-                    tool_messages=copy.deepcopy(tool_result_messages),
-                    messages=copy.deepcopy(current_messages),
+                    tool_messages=tool_result_messages,
+                    messages=current_messages,
                     usage=accumulated_usage,
                     cost_usd=accumulated_cost,
                 )
@@ -1132,7 +1146,7 @@ class BaseProvider(abc.ABC):
 
             # Record in tool_result_messages (always Chat Completions format)
             chat_msgs = [self._tool_result_to_chat_message(r) for r in results]
-            tool_result_messages.extend(copy.deepcopy(chat_msgs))
+            tool_result_messages.extend(chat_msgs)
             collected_payloads.extend(payloads)
             iteration_count += 1
 
@@ -1160,8 +1174,8 @@ class BaseProvider(abc.ABC):
                 return GenerationResult(
                     content=final_content,
                     payloads=list(collected_payloads),
-                    tool_messages=copy.deepcopy(tool_result_messages),
-                    messages=copy.deepcopy(current_messages),
+                    tool_messages=tool_result_messages,
+                    messages=current_messages,
                     usage=accumulated_usage,
                     cost_usd=accumulated_cost,
                 )
@@ -1178,8 +1192,8 @@ class BaseProvider(abc.ABC):
         return GenerationResult(
             content=final_content,
             payloads=list(collected_payloads),
-            tool_messages=copy.deepcopy(tool_result_messages),
-            messages=copy.deepcopy(current_messages),
+            tool_messages=tool_result_messages,
+            messages=current_messages,
             usage=accumulated_usage,
             cost_usd=accumulated_cost,
         )
@@ -1219,7 +1233,7 @@ class BaseProvider(abc.ABC):
         )
         _core_names = self._extract_core_tool_names(tool_execution_context)
 
-        current_messages = copy.deepcopy(input)
+        current_messages = list(input)
         iteration_count = 0
         _failed_call_counts: Dict[Tuple[str, str], int] = {}
         _all_call_counts: Dict[Tuple[str, str], int] = {}
@@ -1346,7 +1360,7 @@ class BaseProvider(abc.ABC):
 
         response = await self._call_api_with_retry(
             model,
-            copy.deepcopy(input),
+            list(input),
             tools=native_tools,
             temperature=effective_temp,
             max_output_tokens=max_output_tokens,

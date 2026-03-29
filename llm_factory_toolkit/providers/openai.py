@@ -92,6 +92,19 @@ class OpenAIAdapter(BaseProvider):
         return self._async_client
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Close the underlying ``AsyncOpenAI`` HTTP client."""
+        if self._async_client is not None:
+            try:
+                await self._async_client.close()
+            except Exception:
+                logger.debug("Error closing OpenAI client", exc_info=True)
+            self._async_client = None
+
+    # ------------------------------------------------------------------
     # Feature flags
     # ------------------------------------------------------------------
 

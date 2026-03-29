@@ -34,6 +34,17 @@ logger = logging.getLogger(__name__)
 # Default max_tokens for Anthropic (required parameter)
 _DEFAULT_MAX_TOKENS = 4096
 
+# Keys recognised in the web_search configuration dict.
+_WEB_SEARCH_KNOWN_KEYS = frozenset(
+    {
+        "max_uses",
+        "allowed_domains",
+        "blocked_domains",
+        "user_location",
+        "allowed_callers",
+    }
+)
+
 
 class AnthropicAdapter(BaseProvider):
     """Provider adapter for Anthropic using the Messages API."""
@@ -80,6 +91,19 @@ class AnthropicAdapter(BaseProvider):
 
         self._async_client = anthropic.AsyncAnthropic(api_key=key, timeout=self.timeout)
         return self._async_client
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Close the underlying ``AsyncAnthropic`` HTTP client."""
+        if self._async_client is not None:
+            try:
+                await self._async_client.close()
+            except Exception:
+                logger.debug("Error closing Anthropic client", exc_info=True)
+            self._async_client = None
 
     # ------------------------------------------------------------------
     # Retry support
@@ -279,14 +303,7 @@ class AnthropicAdapter(BaseProvider):
             "name": "web_search",
         }
         if isinstance(web_search, dict):
-            _KNOWN_KEYS = {
-                "max_uses",
-                "allowed_domains",
-                "blocked_domains",
-                "user_location",
-                "allowed_callers",
-            }
-            for key in _KNOWN_KEYS:
+            for key in _WEB_SEARCH_KNOWN_KEYS:
                 if key in web_search:
                     tool[key] = web_search[key]
         return tool

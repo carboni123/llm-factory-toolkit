@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import (
     Any,
     AsyncGenerator,
@@ -30,6 +31,9 @@ from ._base import (
 )
 
 logger = logging.getLogger(__name__)
+
+_RE_RETRY_S = re.compile(r"retry after (\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
+_RE_RETRY_MS = re.compile(r"retry after (\d+(?:\.\d+)?)\s*ms", re.IGNORECASE)
 
 
 class GeminiAdapter(BaseProvider):
@@ -75,6 +79,24 @@ class GeminiAdapter(BaseProvider):
         return self._client
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Close the underlying Google GenAI client."""
+        if self._client is not None:
+            try:
+                close = getattr(self._client, "close", None)
+                if close is not None and callable(close):
+                    result = close()
+                    # Support both sync and async close methods.
+                    if hasattr(result, "__await__"):
+                        await result
+            except Exception:
+                logger.debug("Error closing Gemini client", exc_info=True)
+            self._client = None
+
+    # ------------------------------------------------------------------
     # Feature flags
     # ------------------------------------------------------------------
 
@@ -97,6 +119,39 @@ class GeminiAdapter(BaseProvider):
         ):
             return True
         return False
+
+    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+        """Extract ``Retry-After`` delay from a Google API error.
+
+        Checks, in order:
+        1. ``error.headers`` dict for ``Retry-After`` / ``retry-after``.
+        2. Error message body for ``retry after N seconds`` / ``retry after N ms``.
+
+        Returns seconds as ``float``, or ``None`` if not found.
+        """
+        # 1. Check headers (google-genai errors may carry a headers dict)
+        headers = getattr(error, "headers", None) or {}
+        if isinstance(headers, dict):
+            raw = headers.get("Retry-After") or headers.get("retry-after")
+        else:
+            # Support httpx-style Headers objects with case-insensitive lookup
+            raw = headers.get("retry-after")
+        if raw:
+            try:
+                return float(raw)
+            except (ValueError, TypeError):
+                pass
+
+        # 2. Parse "retry after X seconds" / "retry after X ms" from message
+        msg = str(error)
+        match = _RE_RETRY_MS.search(msg)
+        if match:
+            return float(match.group(1)) / 1000.0
+        match = _RE_RETRY_S.search(msg)
+        if match:
+            return float(match.group(1))
+
+        return None
 
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions → Gemini native
