@@ -5,15 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import AsyncGenerator
 from typing import (
     Any,
-    AsyncGenerator,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Type,
-    Union,
     cast,
 )
 
@@ -57,8 +51,8 @@ class AnthropicAdapter(BaseProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        tool_factory: Optional[ToolFactory] = None,
+        api_key: str | None = None,
+        tool_factory: ToolFactory | None = None,
         timeout: float = 180.0,
         max_tokens: int = _DEFAULT_MAX_TOKENS,
         **kwargs: Any,
@@ -80,7 +74,7 @@ class AnthropicAdapter(BaseProvider):
             raise ConfigurationError(
                 "Anthropic models require the 'anthropic' package. "
                 "Install it with: pip install llm_factory_toolkit[anthropic]"
-            )
+            ) from None
 
         key = self.api_key or os.environ.get(self.API_ENV_VAR)
         if not key:
@@ -120,7 +114,7 @@ class AnthropicAdapter(BaseProvider):
             return error.status_code in RETRYABLE_STATUS_CODES
         return False
 
-    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+    def _extract_retry_after(self, error: Exception) -> float | None:
         try:
             from anthropic import APIStatusError
         except ImportError:
@@ -143,8 +137,8 @@ class AnthropicAdapter(BaseProvider):
 
     @staticmethod
     def _convert_messages(
-        messages: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Convert Chat Completions messages to Anthropic format.
 
         Handles:
@@ -152,7 +146,7 @@ class AnthropicAdapter(BaseProvider):
         - tool result messages → user messages with tool_result blocks
         - Consecutive same-role messages → merged
         """
-        converted: List[Dict[str, Any]] = []
+        converted: list[dict[str, Any]] = []
 
         for msg in messages:
             role = msg.get("role")
@@ -178,7 +172,7 @@ class AnthropicAdapter(BaseProvider):
                 converted.append({"role": "user", "content": blocks})
 
             elif role == "assistant":
-                assistant_blocks: List[Dict[str, Any]] = []
+                assistant_blocks: list[dict[str, Any]] = []
                 content = msg.get("content")
                 if content:
                     assistant_blocks.append({"type": "text", "text": content})
@@ -214,8 +208,8 @@ class AnthropicAdapter(BaseProvider):
 
     @staticmethod
     def _merge_consecutive(
-        messages: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Merge consecutive messages with the same role.
 
         Anthropic requires alternating user/assistant messages.
@@ -223,7 +217,7 @@ class AnthropicAdapter(BaseProvider):
         if not messages:
             return messages
 
-        merged: List[Dict[str, Any]] = [messages[0]]
+        merged: list[dict[str, Any]] = [messages[0]]
         for msg in messages[1:]:
             if msg["role"] == merged[-1]["role"]:
                 # Merge content blocks
@@ -265,9 +259,9 @@ class AnthropicAdapter(BaseProvider):
 
     @staticmethod
     def _build_web_search_tool(
-        web_search: bool | Dict[str, Any],
-        model: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        web_search: bool | dict[str, Any],
+        model: str | None = None,
+    ) -> dict[str, Any] | None:
         """Build an Anthropic web search tool definition.
 
         Selects ``web_search_20260209`` (dynamic filtering) for Opus 4.6
@@ -289,7 +283,7 @@ class AnthropicAdapter(BaseProvider):
         else:
             tool_type = AnthropicAdapter._WEB_SEARCH_TOOL_V1
 
-        tool: Dict[str, Any] = {
+        tool: dict[str, Any] = {
             "type": tool_type,
             "name": "web_search",
         }
@@ -304,10 +298,10 @@ class AnthropicAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     def _build_tool_definitions(
-        self, definitions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, definitions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert standard tool definitions to Anthropic format."""
-        tools: List[Dict[str, Any]] = []
+        tools: list[dict[str, Any]] = []
         for tool_def in definitions:
             if tool_def.get("type") == "function":
                 func = tool_def.get("function", {})
@@ -325,10 +319,10 @@ class AnthropicAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_response(response: Any) -> Tuple[str, List[ProviderToolCall]]:
+    def _parse_response(response: Any) -> tuple[str, list[ProviderToolCall]]:
         """Extract text content and tool calls from an Anthropic response."""
         content_text = ""
-        tool_calls: List[ProviderToolCall] = []
+        tool_calls: list[ProviderToolCall] = []
 
         for block in getattr(response, "content", []):
             block_type = getattr(block, "type", "")
@@ -348,10 +342,10 @@ class AnthropicAdapter(BaseProvider):
     @staticmethod
     def _build_raw_messages(
         content: str,
-        tool_calls: List[ProviderToolCall],
-    ) -> List[Dict[str, Any]]:
+        tool_calls: list[ProviderToolCall],
+    ) -> list[dict[str, Any]]:
         """Build Chat Completions format raw_messages."""
-        msg: Dict[str, Any] = {"role": "assistant"}
+        msg: dict[str, Any] = {"role": "assistant"}
         if content:
             msg["content"] = content
         if tool_calls:
@@ -369,7 +363,7 @@ class AnthropicAdapter(BaseProvider):
         return [msg]
 
     @staticmethod
-    def _extract_usage(response: Any) -> Optional[Dict[str, int]]:
+    def _extract_usage(response: Any) -> dict[str, int] | None:
         """Extract token usage from an Anthropic response."""
         usage = getattr(response, "usage", None)
         if usage:
@@ -389,14 +383,14 @@ class AnthropicAdapter(BaseProvider):
     async def _call_api(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via Anthropic Messages API."""
@@ -406,7 +400,7 @@ class AnthropicAdapter(BaseProvider):
         system, remaining = self._extract_system(messages)
         anthropic_messages = self._convert_messages(remaining)
 
-        request: Dict[str, Any] = {
+        request: dict[str, Any] = {
             "model": model,
             "messages": anthropic_messages,
             "max_tokens": max_output_tokens or self._default_max_tokens,
@@ -422,7 +416,7 @@ class AnthropicAdapter(BaseProvider):
         # Note: Anthropic's web_search is a different tool type (not a function tool),
         # so it's injected here alongside function tools rather than through
         # _prepare_native_tools (which only handles function tool definitions).
-        effective_tools: list[Dict[str, Any]] = list(tools) if tools else []
+        effective_tools: list[dict[str, Any]] = list(tools) if tools else []
         ws_tool = self._build_web_search_tool(web_search, model=model)
         if ws_tool:
             effective_tools.append(ws_tool)
@@ -430,7 +424,7 @@ class AnthropicAdapter(BaseProvider):
             request["tools"] = effective_tools
 
         # Structured output: force a tool call to a "json_output" tool
-        structured_tool_name: Optional[str] = None
+        structured_tool_name: str | None = None
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             schema = response_format.model_json_schema()
             structured_tool_name = "__json_output__"
@@ -462,13 +456,13 @@ class AnthropicAdapter(BaseProvider):
         usage = self._extract_usage(response)
 
         # Handle structured output tool response
-        parsed_content: Optional[BaseModel] = None
+        parsed_content: BaseModel | None = None
         if structured_tool_name and tool_calls:
             for tc in tool_calls:
                 if tc.name == structured_tool_name:
                     try:
                         args = json.loads(tc.arguments)
-                        pydantic_cls = cast(Type[BaseModel], response_format)
+                        pydantic_cls = cast(type[BaseModel], response_format)
                         parsed_content = pydantic_cls.model_validate(args)
                         # Remove the synthetic tool call and return as content
                         tool_calls = [
@@ -499,16 +493,16 @@ class AnthropicAdapter(BaseProvider):
     async def _call_api_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
-    ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
+    ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream via Anthropic Messages API."""
         kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
@@ -516,7 +510,7 @@ class AnthropicAdapter(BaseProvider):
         system, remaining = self._extract_system(messages)
         anthropic_messages = self._convert_messages(remaining)
 
-        request: Dict[str, Any] = {
+        request: dict[str, Any] = {
             "model": model,
             "messages": anthropic_messages,
             "max_tokens": max_output_tokens or self._default_max_tokens,
@@ -528,7 +522,7 @@ class AnthropicAdapter(BaseProvider):
         if temperature is not None:
             request["temperature"] = temperature
 
-        effective_tools: list[Dict[str, Any]] = list(tools) if tools else []
+        effective_tools: list[dict[str, Any]] = list(tools) if tools else []
         ws_tool = self._build_web_search_tool(web_search, model=model)
         if ws_tool:
             effective_tools.append(ws_tool)
@@ -542,11 +536,11 @@ class AnthropicAdapter(BaseProvider):
         try:
             async with client.messages.stream(**request) as stream:
                 accumulated_text = ""
-                all_tool_calls: List[ProviderToolCall] = []
+                all_tool_calls: list[ProviderToolCall] = []
 
                 # Track current tool call being built
-                current_tool_id: Optional[str] = None
-                current_tool_name: Optional[str] = None
+                current_tool_id: str | None = None
+                current_tool_name: str | None = None
                 current_tool_args = ""
 
                 async for event in stream:

@@ -9,16 +9,11 @@ import importlib
 import inspect
 import json
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Sequence,
     cast,
 )
 
@@ -42,17 +37,17 @@ class ToolRegistration:
     name: str
     executor: ToolHandler
     mock_executor: ToolHandler
-    definition: Dict[str, Any]
-    category: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
-    group: Optional[str] = None
+    definition: dict[str, Any]
+    category: str | None = None
+    tags: list[str] = field(default_factory=list)
+    group: str | None = None
     blocking: bool = False
-    _compact_cache: Optional[Dict[str, Any]] = field(
+    _compact_cache: dict[str, Any] | None = field(
         default=None, repr=False, compare=False
     )
 
 
-BUILTIN_TOOLS: Dict[str, Dict[str, Any]] = {
+BUILTIN_TOOLS: dict[str, dict[str, Any]] = {
     "safe_math_evaluator": {
         "function": "builtins.safe_math_evaluator",
         "description": "Safely evaluates mathematical expressions.",
@@ -117,27 +112,27 @@ class ToolFactory:
     """
 
     def __init__(self) -> None:
-        self._registry: Dict[str, ToolRegistration] = {}
-        self.tool_usage_counts: Dict[str, int] = {}
-        self._catalog: Optional[ToolCatalog] = None
+        self._registry: dict[str, ToolRegistration] = {}
+        self.tool_usage_counts: dict[str, int] = {}
+        self._catalog: ToolCatalog | None = None
         logger.info("ToolFactory initialized.")
 
     def set_catalog(self, catalog: ToolCatalog) -> None:
         """Attach a :class:`ToolCatalog` for dynamic tool loading."""
         self._catalog = catalog
 
-    def get_catalog(self) -> Optional[ToolCatalog]:
+    def get_catalog(self) -> ToolCatalog | None:
         """Return the attached catalog, if any."""
         return self._catalog
 
     @property
-    def tool_definitions(self) -> List[Dict[str, Any]]:
+    def tool_definitions(self) -> list[dict[str, Any]]:
         """Return provider ready tool definitions in registration order."""
 
         return [registration.definition for registration in self._registry.values()]
 
     @property
-    def tools(self) -> Dict[str, ToolHandler]:
+    def tools(self) -> dict[str, ToolHandler]:
         """Expose registered executors for compatibility with existing integrations."""
 
         return {
@@ -145,7 +140,7 @@ class ToolFactory:
         }
 
     @property
-    def mock_tool_handlers(self) -> Dict[str, ToolHandler]:
+    def mock_tool_handlers(self) -> dict[str, ToolHandler]:
         """Expose registered mock executors for compatibility."""
 
         return {
@@ -158,12 +153,12 @@ class ToolFactory:
         function: ToolHandler,
         name: str,
         description: str,
-        parameters: Optional[Dict[str, Any]] = None,
-        mock_function: Optional[ToolHandler] = None,
-        category: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        group: Optional[str] = None,
-        exclude_params: Optional[List[str]] = None,
+        parameters: dict[str, Any] | None = None,
+        mock_function: ToolHandler | None = None,
+        category: str | None = None,
+        tags: list[str] | None = None,
+        group: str | None = None,
+        exclude_params: list[str] | None = None,
         blocking: bool = False,
     ) -> None:
         """Register a callable tool the LLM can invoke during generation.
@@ -251,14 +246,14 @@ class ToolFactory:
     def register_tool_class(
         self,
         tool_class: type,
-        config: Optional[Dict[str, Any]] = None,
-        name_override: Optional[str] = None,
-        description_override: Optional[str] = None,
-        parameters_override: Optional[Dict[str, Any]] = None,
-        category_override: Optional[str] = None,
-        tags_override: Optional[List[str]] = None,
-        group_override: Optional[str] = None,
-        exclude_params: Optional[List[str]] = None,
+        config: dict[str, Any] | None = None,
+        name_override: str | None = None,
+        description_override: str | None = None,
+        parameters_override: dict[str, Any] | None = None,
+        category_override: str | None = None,
+        tags_override: list[str] | None = None,
+        group_override: str | None = None,
+        exclude_params: list[str] | None = None,
     ) -> None:
         """Register a :class:`BaseTool` subclass by wiring wrappers for execution."""
 
@@ -307,7 +302,7 @@ class ToolFactory:
         )
         logger.info("Registered tool class: %s as '%s'", tool_class.__name__, name)
 
-    def register_builtins(self, names: Optional[Sequence[str]] = None) -> None:
+    def register_builtins(self, names: Sequence[str] | None = None) -> None:
         """Register a selection of built-in tools by name."""
 
         selected = list(names) if names is not None else list(BUILTIN_TOOLS.keys())
@@ -452,9 +447,9 @@ class ToolFactory:
 
     def get_tool_definitions(
         self,
-        filter_tool_names: Optional[Sequence[str]] = None,
+        filter_tool_names: Sequence[str] | None = None,
         compact: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return definitions optionally filtered by ``filter_tool_names``.
 
         Args:
@@ -504,7 +499,7 @@ class ToolFactory:
 
         return definitions
 
-    def _get_compact(self, reg: ToolRegistration) -> Dict[str, Any]:
+    def _get_compact(self, reg: ToolRegistration) -> dict[str, Any]:
         """Return cached compact definition for a registration."""
         if reg._compact_cache is None:
             reg._compact_cache = self._compact_definition(reg.definition)
@@ -515,7 +510,7 @@ class ToolFactory:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compact_definition(definition: Dict[str, Any]) -> Dict[str, Any]:
+    def _compact_definition(definition: dict[str, Any]) -> dict[str, Any]:
         """Return a deep copy of *definition* with nested property
         ``description`` and ``default`` fields removed.
 
@@ -528,7 +523,7 @@ class ToolFactory:
         return out
 
     @staticmethod
-    def _strip_properties(schema: Dict[str, Any]) -> None:
+    def _strip_properties(schema: dict[str, Any]) -> None:
         """Recursively strip ``description`` and ``default`` from properties."""
         props = schema.get("properties")
         if isinstance(props, dict):
@@ -549,10 +544,10 @@ class ToolFactory:
         self,
         function_name: str,
         function_args_str: str,
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        tool_execution_context: dict[str, Any] | None = None,
         use_mock: bool = False,
-        runtime: Optional[ToolRuntime] = None,
-        tool_timeout: Optional[float] = None,
+        runtime: ToolRuntime | None = None,
+        tool_timeout: float | None = None,
     ) -> ToolExecutionResult:
         """Execute a registered tool and return its :class:`ToolExecutionResult`."""
 
@@ -606,7 +601,7 @@ class ToolFactory:
             error_msg = f"Tool '{function_name}' timed out after {tool_timeout}s."
             logger.error(error_msg)
             return self._build_error_result(error_msg, "timeout")
-        except Exception as exc:  # noqa: BLE001 - propagate sanitized error result
+        except Exception as exc:
             error_msg = (
                 f"Execution failed unexpectedly within tool '{function_name}': {exc}"
             )
@@ -642,7 +637,7 @@ class ToolFactory:
                 tool_name,
             )
 
-    def get_tool_usage_counts(self) -> Dict[str, int]:
+    def get_tool_usage_counts(self) -> dict[str, int]:
         """Return a copy of tool usage counters."""
 
         return dict(self.tool_usage_counts)
@@ -654,7 +649,7 @@ class ToolFactory:
             self.tool_usage_counts[name] = 0
         logger.info("All tool usage counts have been reset.")
 
-    def get_and_reset_tool_usage_counts(self) -> Dict[str, int]:
+    def get_and_reset_tool_usage_counts(self) -> dict[str, int]:
         """Return usage counts and reset them in a single operation."""
 
         counts = dict(self.tool_usage_counts)
@@ -665,18 +660,18 @@ class ToolFactory:
         return counts
 
     @property
-    def available_tool_names(self) -> List[str]:
+    def available_tool_names(self) -> list[str]:
         """Names of all registered tools."""
 
         return list(self._registry.keys())
 
     @property
-    def registrations(self) -> Dict[str, ToolRegistration]:
+    def registrations(self) -> dict[str, ToolRegistration]:
         """Return a copy of all tool registrations."""
 
         return dict(self._registry)
 
-    def list_groups(self) -> List[str]:
+    def list_groups(self) -> list[str]:
         """Return all unique groups from registered tools, sorted.
 
         Useful for discovering available groups before catalog construction
@@ -686,9 +681,9 @@ class ToolFactory:
         return sorted(groups)
 
     def _build_definition(
-        self, name: str, description: str, parameters: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        definition: Dict[str, Any] = {
+        self, name: str, description: str, parameters: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        definition: dict[str, Any] = {
             "type": "function",
             "function": {
                 "name": name,
@@ -710,8 +705,8 @@ class ToolFactory:
         self,
         function: ToolHandler,
         name: str,
-        exclude_params: Optional[List[str]],
-    ) -> Optional[Dict[str, Any]]:
+        exclude_params: list[str] | None,
+    ) -> dict[str, Any] | None:
         """Auto-generate JSON Schema from function type hints.
 
         Returns ``None`` when the function has no LLM-visible parameters.
@@ -744,7 +739,7 @@ class ToolFactory:
         self,
         name: str,
         function: ToolHandler,
-        explicit_mock: Optional[ToolHandler],
+        explicit_mock: ToolHandler | None,
     ) -> ToolHandler:
         if explicit_mock is not None:
             return explicit_mock
@@ -755,9 +750,7 @@ class ToolFactory:
 
         return self._default_mock_handler(name)
 
-    def _extract_mock_from_callable(
-        self, function: ToolHandler
-    ) -> Optional[ToolHandler]:
+    def _extract_mock_from_callable(self, function: ToolHandler) -> ToolHandler | None:
         bound_owner = getattr(function, "__self__", None)
         if bound_owner is not None:
             candidate = getattr(bound_owner, "mock_execute", None)
@@ -782,7 +775,7 @@ class ToolFactory:
     def _build_tool_class_callable(
         self,
         tool_class: type,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         method_name: str,
     ) -> ToolHandler:
         descriptor = tool_class.__dict__.get(method_name)
@@ -825,16 +818,16 @@ class ToolFactory:
                 signature = signature.replace(parameters=parameters[1:])
 
         if signature is not None:
-            setattr(_call, "__signature__", signature)
+            _call.__signature__ = signature  # type: ignore[attr-defined]
 
-        setattr(_call, "__wrapped_tool_class__", tool_class)
-        setattr(_call, "__tool_config__", dict(config))
-        setattr(_call, "__name__", f"{tool_class.__name__}_{method_name}")
+        _call.__wrapped_tool_class__ = tool_class  # type: ignore[attr-defined]
+        _call.__tool_config__ = dict(config)  # type: ignore[attr-defined]
+        _call.__name__ = f"{tool_class.__name__}_{method_name}"
         return _call
 
     def _parse_arguments(
         self, function_name: str, function_args_str: str
-    ) -> Dict[str, Any] | ToolExecutionResult:
+    ) -> dict[str, Any] | ToolExecutionResult:
         actual_args = function_args_str if function_args_str else "{}"
 
         try:
@@ -860,7 +853,7 @@ class ToolFactory:
     async def _call_handler(
         self,
         handler: ToolHandler,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         *,
         blocking: bool = False,
     ) -> Any:
@@ -918,10 +911,10 @@ class ToolFactory:
     def _inject_context(
         self,
         handler: ToolHandler,
-        arguments: Dict[str, Any],
-        context: Dict[str, Any],
+        arguments: dict[str, Any],
+        context: dict[str, Any],
         tool_name: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not context:
             return arguments
 

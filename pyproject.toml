@@ -73,6 +73,37 @@ ignore_missing_imports = true
 module = "claude_agent_sdk.*"
 ignore_missing_imports = true
 
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade (modernize syntax for 3.10+)
+    "B",      # flake8-bugbear (common bugs)
+    "A",      # flake8-builtins (shadowing builtins)
+    "C4",     # flake8-comprehensions
+    "ASYNC",  # flake8-async (async antipatterns)
+    "S",      # flake8-bandit (security)
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "A002",    # builtin-argument-shadowing — `input` param is API design choice
+    "E501",    # line-too-long — handled by ruff format
+    "N806",    # non-lowercase-variable-in-function — class references in locals are fine
+    "S311",    # suspicious-non-cryptographic-random — used for retry jitter, not security
+    "RUF002",  # ambiguous-unicode-character-docstring — intentional formatting chars
+    "B027",    # empty-method-without-abstract-decorator — intentional default no-ops
+    "RUF005",  # collection-literal-concatenation — style preference, not a bug
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [

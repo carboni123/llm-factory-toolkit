@@ -16,26 +16,18 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import json
 import inspect as _inspect
+import json
 import logging
 import os
 import re
 import shutil
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import (
     Any,
-    AsyncGenerator,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    Union,
 )
-
-from pathlib import Path
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -63,12 +55,12 @@ class _CallContext:
     same adapter instance do not corrupt each other's state.
     """
 
-    tool_context: Dict[str, Any] | None = None
+    tool_context: dict[str, Any] | None = None
     mock_mode: bool = False
     tool_timeout: float | None = None
     max_turns_override: int | None = None
-    payloads: List[Any] = field(default_factory=list)
-    tool_call_records: List[Dict[str, Any]] = field(default_factory=list)
+    payloads: list[Any] = field(default_factory=list)
+    tool_call_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 _call_ctx_var: contextvars.ContextVar[_CallContext] = contextvars.ContextVar(
@@ -108,13 +100,13 @@ class ClaudeCodeAdapter(BaseProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        tool_factory: Optional[ToolFactory] = None,
+        api_key: str | None = None,
+        tool_factory: ToolFactory | None = None,
         timeout: float = 600.0,
         permission_mode: str = "bypassPermissions",
-        cwd: Optional[str] = None,
-        max_turns: Optional[int] = None,
-        allowed_tools: Optional[List[str]] = None,
+        cwd: str | None = None,
+        max_turns: int | None = None,
+        allowed_tools: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -132,7 +124,7 @@ class ClaudeCodeAdapter(BaseProvider):
         self._persistent_client: Any | None = None
         self._client_lock: asyncio.Lock | None = None
         self._client_fingerprint: tuple[Any, ...] | None = None
-        self._stderr_lines: List[str] = []
+        self._stderr_lines: list[str] = []
 
     # ------------------------------------------------------------------
     # Persistent client management
@@ -148,10 +140,10 @@ class ClaudeCodeAdapter(BaseProvider):
     @staticmethod
     def _compute_fingerprint(
         model: str,
-        system_prompt: Optional[str],
+        system_prompt: str | None,
         tool_names: frozenset[str],
-        max_turns: Optional[int],
-        response_format: Optional[Any],
+        max_turns: int | None,
+        response_format: Any | None,
         permission_mode: str,
     ) -> tuple[Any, ...]:
         """Return a hashable fingerprint of the significant client options.
@@ -270,7 +262,7 @@ class ClaudeCodeAdapter(BaseProvider):
             raise ConfigurationError(
                 "Claude Code models require the 'claude-agent-sdk' package. "
                 "Install it with: pip install llm_factory_toolkit[claude-code]"
-            )
+            ) from None
 
     # ------------------------------------------------------------------
     # generate() override — set per-call context for MCP handlers
@@ -278,25 +270,25 @@ class ClaudeCodeAdapter(BaseProvider):
 
     async def generate(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
         model: str,
         max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[Any] = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: Any | None = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
-        max_tool_output_chars: Optional[int] = None,
-        max_concurrent_tools: Optional[int] = None,
-        tool_timeout: Optional[float] = None,
+        max_tool_output_chars: int | None = None,
+        max_concurrent_tools: int | None = None,
+        tool_timeout: float | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response via the Claude Code Agent SDK.
@@ -387,25 +379,25 @@ class ClaudeCodeAdapter(BaseProvider):
 
     async def generate_stream(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
         model: str,
         max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[Any] = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: Any | None = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
-        max_tool_output_chars: Optional[int] = None,
-        max_concurrent_tools: Optional[int] = None,
-        tool_timeout: Optional[float] = None,
+        max_tool_output_chars: int | None = None,
+        max_concurrent_tools: int | None = None,
+        tool_timeout: float | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response via the Claude Code Agent SDK.
@@ -452,7 +444,7 @@ class ClaudeCodeAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _messages_to_prompt(messages: List[Dict[str, Any]]) -> str:
+    def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
         """Convert Chat Completions messages to a single prompt string.
 
         Single user message -> use content directly.
@@ -465,7 +457,7 @@ class ClaudeCodeAdapter(BaseProvider):
         if len(messages) == 1 and messages[0].get("role") == "user":
             return str(messages[0].get("content", ""))
 
-        parts: List[str] = []
+        parts: list[str] = []
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
@@ -498,8 +490,8 @@ class ClaudeCodeAdapter(BaseProvider):
 
     def _bridge_tools_to_mcp(
         self,
-        tool_definitions: List[Dict[str, Any]],
-    ) -> Tuple[List[Any], List[str]]:
+        tool_definitions: list[dict[str, Any]],
+    ) -> tuple[list[Any], list[str]]:
         """Bridge ToolFactory tool definitions to MCP ``@tool`` objects.
 
         Returns ``(mcp_tools, allowed_tool_names)`` where
@@ -509,8 +501,8 @@ class ClaudeCodeAdapter(BaseProvider):
         same MCP server can serve multiple calls without recreation.
         """
         sdk = self._get_sdk()
-        mcp_tools: List[Any] = []
-        allowed_names: List[str] = []
+        mcp_tools: list[Any] = []
+        allowed_names: list[str] = []
         server_name = _MCP_SERVER_NAME
 
         for tool_def in tool_definitions:
@@ -522,8 +514,8 @@ class ClaudeCodeAdapter(BaseProvider):
             # Closure captures _name by default-arg trick; ctx read from
             # contextvar at call time for per-call isolation.
             async def _handler(
-                args: Dict[str, Any], _name: str = name
-            ) -> Dict[str, Any]:
+                args: dict[str, Any], _name: str = name
+            ) -> dict[str, Any]:
                 if self.tool_factory is None:
                     raise ConfigurationError(
                         "ToolFactory is required for MCP bridge tools"
@@ -563,16 +555,16 @@ class ClaudeCodeAdapter(BaseProvider):
         self,
         *,
         model: str,
-        system_prompt: Optional[str] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        mcp_servers: Optional[Dict[str, Any]] = None,
-        allowed_tools: Optional[List[str]] = None,
+        system_prompt: str | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        mcp_servers: dict[str, Any] | None = None,
+        allowed_tools: list[str] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Build ``ClaudeAgentOptions`` from adapter config and per-call params."""
         sdk = self._get_sdk()
 
-        opts: Dict[str, Any] = {
+        opts: dict[str, Any] = {
             "model": model,
             "permission_mode": kwargs.pop(
                 "permission_mode", self._default_permission_mode
@@ -641,14 +633,14 @@ class ClaudeCodeAdapter(BaseProvider):
     async def _call_api(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single SDK call via a persistent ``ClaudeSDKClient``.
@@ -666,8 +658,8 @@ class ClaudeCodeAdapter(BaseProvider):
         prompt = self._messages_to_prompt(rest_messages)
 
         # Bridge tools to MCP
-        mcp_servers: Optional[Dict[str, Any]] = None
-        mcp_allowed: Optional[List[str]] = None
+        mcp_servers: dict[str, Any] | None = None
+        mcp_allowed: list[str] | None = None
         tool_names: frozenset[str] = frozenset()
         if tools and self.tool_factory:
             mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
@@ -716,12 +708,12 @@ class ClaudeCodeAdapter(BaseProvider):
 
         # Unique session_id → fresh conversation, no history bleed
         call_session_id = f"call_{uuid4().hex[:8]}"
-        result_session_id: Optional[str] = None
+        result_session_id: str | None = None
 
-        text_parts: List[str] = []
-        usage: Optional[Dict[str, int]] = None
-        parsed_content: Optional[BaseModel] = None
-        raw_messages: List[Dict[str, Any]] = []
+        text_parts: list[str] = []
+        usage: dict[str, int] | None = None
+        parsed_content: BaseModel | None = None
+        raw_messages: list[dict[str, Any]] = []
 
         try:
             await client.query(prompt, session_id=call_session_id)
@@ -775,7 +767,7 @@ class ClaudeCodeAdapter(BaseProvider):
 
         # Inject tool call records into raw_messages so consumers (e.g.
         # benchmarks) can see which tools were called during the SDK loop.
-        tool_call_msgs: List[Dict[str, Any]] = []
+        tool_call_msgs: list[dict[str, Any]] = []
         if ctx.tool_call_records:
             tool_call_msgs.append(
                 {
@@ -820,16 +812,16 @@ class ClaudeCodeAdapter(BaseProvider):
     async def _call_api_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
-    ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
+    ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream a response via the persistent ``ClaudeSDKClient``.
 
         Uses ``include_partial_messages=True`` to receive ``StreamEvent``
@@ -844,8 +836,8 @@ class ClaudeCodeAdapter(BaseProvider):
         prompt = self._messages_to_prompt(rest_messages)
 
         # Bridge tools to MCP
-        mcp_servers: Optional[Dict[str, Any]] = None
-        mcp_allowed: Optional[List[str]] = None
+        mcp_servers: dict[str, Any] | None = None
+        mcp_allowed: list[str] | None = None
         tool_names: frozenset[str] = frozenset()
         if tools and self.tool_factory:
             mcp_tools, mcp_allowed = self._bridge_tools_to_mcp(tools)
@@ -895,8 +887,8 @@ class ClaudeCodeAdapter(BaseProvider):
             raise ProviderError(detail) from e
 
         call_session_id = f"call_{uuid4().hex[:8]}"
-        result_session_id: Optional[str] = None
-        usage: Optional[Dict[str, int]] = None
+        result_session_id: str | None = None
+        usage: dict[str, int] | None = None
 
         try:
             await client.query(prompt, session_id=call_session_id)
@@ -947,8 +939,8 @@ class ClaudeCodeAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     def _build_tool_definitions(
-        self, definitions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, definitions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Pass through standard tool definitions unchanged.
 
         These are used by ``_call_api()`` to build MCP tools, not sent

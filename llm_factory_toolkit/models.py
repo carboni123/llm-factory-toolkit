@@ -23,8 +23,6 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -345,7 +343,7 @@ MODEL_CATALOG: dict[str, ModelInfo] = {
 # ---------------------------------------------------------------------------
 
 
-def list_models(provider: Optional[str] = None) -> list[ModelInfo]:
+def list_models(provider: str | None = None) -> list[ModelInfo]:
     """Return cataloged models, optionally filtered by provider.
 
     Args:
@@ -360,7 +358,7 @@ def list_models(provider: Optional[str] = None) -> list[ModelInfo]:
     return [m for m in MODEL_CATALOG.values() if m.provider == provider]
 
 
-def get_model_info(model_id: str) -> Optional[ModelInfo]:
+def get_model_info(model_id: str) -> ModelInfo | None:
     """Look up metadata for a model by its ID.
 
     Accepts both prefixed (``"openai/gpt-5.2"``) and bare
@@ -390,8 +388,8 @@ def compute_cost(
     *,
     input_tokens: int,
     output_tokens: int,
-    pricing: Optional[dict[str, float]] = None,
-) -> Optional[float]:
+    pricing: dict[str, float] | None = None,
+) -> float | None:
     """Compute cost in USD for a given token count.
 
     Args:
@@ -404,8 +402,8 @@ def compute_cost(
     Returns:
         Cost in USD, or ``None`` if pricing is unknown.
     """
-    input_rate: Optional[float] = None
-    output_rate: Optional[float] = None
+    input_rate: float | None = None
+    output_rate: float | None = None
 
     if pricing is not None:
         input_rate = pricing.get("input_cost_per_1m")

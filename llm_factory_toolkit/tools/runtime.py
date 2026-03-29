@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Sequence
+from collections.abc import Awaitable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from ..exceptions import ToolError
 from .models import ToolExecutionResult
@@ -20,9 +21,9 @@ class ToolRuntime:
 
     def __init__(
         self,
-        factory: "ToolFactory",
+        factory: ToolFactory,
         *,
-        base_context: Optional[Dict[str, Any]] = None,
+        base_context: dict[str, Any] | None = None,
         use_mock: bool = False,
         depth: int = 0,
         max_depth: int = DEFAULT_MAX_DEPTH,
@@ -56,7 +57,7 @@ class ToolRuntime:
         return self._max_depth
 
     @property
-    def base_context(self) -> Dict[str, Any]:
+    def base_context(self) -> dict[str, Any]:
         """Return a shallow copy of the baseline context."""
 
         return dict(self._base_context)
@@ -64,9 +65,9 @@ class ToolRuntime:
     def _spawn_child(
         self,
         *,
-        context: Optional[Dict[str, Any]] = None,
-        use_mock: Optional[bool] = None,
-    ) -> "ToolRuntime":
+        context: dict[str, Any] | None = None,
+        use_mock: bool | None = None,
+    ) -> ToolRuntime:
         next_depth = self._depth + 1
         if next_depth > self._max_depth:
             raise ToolError(
@@ -89,11 +90,11 @@ class ToolRuntime:
         self,
         name: str,
         *,
-        arguments: Optional[Dict[str, Any]] = None,
-        json_arguments: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        use_mock: Optional[bool] = None,
-        tool_timeout: Optional[float] = None,
+        arguments: dict[str, Any] | None = None,
+        json_arguments: str | None = None,
+        context: dict[str, Any] | None = None,
+        use_mock: bool | None = None,
+        tool_timeout: float | None = None,
     ) -> ToolExecutionResult:
         """Invoke another registered tool and return its execution result.
 
@@ -121,7 +122,7 @@ class ToolRuntime:
             serialisable = arguments or {}
             try:
                 args_payload = json.dumps(serialisable)
-            except (TypeError, ValueError) as exc:  # noqa: TRY003
+            except (TypeError, ValueError) as exc:
                 raise ToolError(
                     f"Failed to serialise arguments for nested tool '{name}': {exc}"
                 ) from exc
@@ -145,14 +146,14 @@ class ToolRuntime:
 
     async def call_tools(
         self,
-        calls: Sequence[Dict[str, Any]],
+        calls: Sequence[dict[str, Any]],
         *,
         parallel: bool = False,
-        max_concurrent: Optional[int] = None,
-        shared_context: Optional[Dict[str, Any]] = None,
-        use_mock: Optional[bool] = None,
-        tool_timeout: Optional[float] = None,
-    ) -> List[ToolExecutionResult]:
+        max_concurrent: int | None = None,
+        shared_context: dict[str, Any] | None = None,
+        use_mock: bool | None = None,
+        tool_timeout: float | None = None,
+    ) -> list[ToolExecutionResult]:
         """Invoke multiple tools, optionally executing them concurrently.
 
         Args:
@@ -193,7 +194,7 @@ class ToolRuntime:
             )
 
         if not parallel:
-            results: List[ToolExecutionResult] = []
+            results: list[ToolExecutionResult] = []
             for task in tasks:
                 results.append(await task)
             return results

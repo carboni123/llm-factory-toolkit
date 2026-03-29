@@ -6,15 +6,9 @@ import json
 import logging
 import os
 import re
+from collections.abc import AsyncGenerator
 from typing import (
     Any,
-    AsyncGenerator,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    Type,
-    Union,
 )
 from uuid import uuid4
 
@@ -45,8 +39,8 @@ class GeminiAdapter(BaseProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        tool_factory: Optional[ToolFactory] = None,
+        api_key: str | None = None,
+        tool_factory: ToolFactory | None = None,
         timeout: float = 180.0,
         **kwargs: Any,
     ) -> None:
@@ -66,7 +60,7 @@ class GeminiAdapter(BaseProvider):
             raise ConfigurationError(
                 "Gemini models require the 'google-genai' package. "
                 "Install it with: pip install llm_factory_toolkit[gemini]"
-            )
+            ) from None
 
         key = self.api_key or os.environ.get(self.API_ENV_VAR)
         if not key:
@@ -120,7 +114,7 @@ class GeminiAdapter(BaseProvider):
             return True
         return False
 
-    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+    def _extract_retry_after(self, error: Exception) -> float | None:
         """Extract ``Retry-After`` delay from a Google API error.
 
         Checks, in order:
@@ -158,17 +152,17 @@ class GeminiAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _convert_messages(messages: List[Dict[str, Any]]) -> Any:
+    def _convert_messages(messages: list[dict[str, Any]]) -> Any:
         """Convert Chat Completions messages to Gemini ``types.Content`` list."""
         from google.genai import types
 
         converted = []
-        call_id_to_name: Dict[str, str] = {}
+        call_id_to_name: dict[str, str] = {}
 
         for msg in messages:
             role = msg.get("role")
             content = msg.get("content")
-            parts: List[Any] = []
+            parts: list[Any] = []
 
             # Track tool call IDs → names for result mapping
             if msg.get("tool_calls"):
@@ -198,7 +192,7 @@ class GeminiAdapter(BaseProvider):
                             name=tc["function"]["name"],
                             args=json.loads(tc["function"]["arguments"]),
                         )
-                        part_kwargs: Dict[str, Any] = {"function_call": function_call}
+                        part_kwargs: dict[str, Any] = {"function_call": function_call}
                         # Round-trip thought_signature for Gemini 3+ thinking models
                         thought_sig = tc.get("_thought_signature")
                         if thought_sig:
@@ -240,7 +234,7 @@ class GeminiAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_schema_for_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_schema_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
         """Convert JSON Schema nullable types to Gemini-compatible format.
 
         Gemini SDK rejects type arrays like ``["string", "null"]``. Convert to
@@ -272,8 +266,8 @@ class GeminiAdapter(BaseProvider):
         return schema
 
     def _build_tool_definitions(
-        self, definitions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, definitions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert standard tool definitions to Gemini FunctionDeclaration format.
 
         Returns a list with a single dict containing ``_gemini_tools`` key,
@@ -299,13 +293,13 @@ class GeminiAdapter(BaseProvider):
 
     def _build_native_tools(
         self,
-        tool_defs: Optional[List[Dict[str, Any]]],
-        web_search: bool | Dict[str, Any] = False,
-    ) -> Optional[List[Any]]:
+        tool_defs: list[dict[str, Any]] | None,
+        web_search: bool | dict[str, Any] = False,
+    ) -> list[Any] | None:
         """Convert internal tool defs to google-genai ``types.Tool`` objects."""
         from google.genai import types
 
-        native_tools: List[Any] = []
+        native_tools: list[Any] = []
 
         if tool_defs:
             for td in tool_defs:
@@ -330,16 +324,16 @@ class GeminiAdapter(BaseProvider):
     def _build_config(
         self,
         *,
-        tools: Optional[List[Any]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        system_instruction: Optional[str] = None,
+        tools: list[Any] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        system_instruction: str | None = None,
     ) -> Any:
         """Build a ``types.GenerateContentConfig``."""
         from google.genai import types
 
-        config_args: Dict[str, Any] = {}
+        config_args: dict[str, Any] = {}
 
         if tools:
             config_args["tools"] = tools
@@ -374,7 +368,7 @@ class GeminiAdapter(BaseProvider):
     @staticmethod
     def _parse_response(
         response: Any,
-    ) -> Tuple[str, List[ProviderToolCall], Dict[str, bytes]]:
+    ) -> tuple[str, list[ProviderToolCall], dict[str, bytes]]:
         """Extract text content, tool calls, and thought signatures from a Gemini response.
 
         Returns ``(text, tool_calls, thought_signatures)`` where
@@ -382,8 +376,8 @@ class GeminiAdapter(BaseProvider):
         required by Gemini 3+ thinking models for multi-turn tool use.
         """
         assistant_content = ""
-        tool_calls: List[ProviderToolCall] = []
-        thought_signatures: Dict[str, bytes] = {}
+        tool_calls: list[ProviderToolCall] = []
+        thought_signatures: dict[str, bytes] = {}
 
         candidates = getattr(response, "candidates", None)
         if candidates and candidates[0].content and candidates[0].content.parts:
@@ -412,20 +406,20 @@ class GeminiAdapter(BaseProvider):
     @staticmethod
     def _build_raw_messages(
         content: str,
-        tool_calls: List[ProviderToolCall],
-        thought_signatures: Optional[Dict[str, bytes]] = None,
-    ) -> List[Dict[str, Any]]:
+        tool_calls: list[ProviderToolCall],
+        thought_signatures: dict[str, bytes] | None = None,
+    ) -> list[dict[str, Any]]:
         """Build Chat Completions format raw_messages from parsed response.
 
         When *thought_signatures* is provided, each tool-call dict gets an
         extra ``_thought_signature`` key so that :meth:`_convert_messages`
         can round-trip it back to the Gemini API.
         """
-        msg: Dict[str, Any] = {"role": "assistant", "content": content}
+        msg: dict[str, Any] = {"role": "assistant", "content": content}
         if tool_calls:
-            tc_list: List[Dict[str, Any]] = []
+            tc_list: list[dict[str, Any]] = []
             for tc in tool_calls:
-                tc_dict: Dict[str, Any] = {
+                tc_dict: dict[str, Any] = {
                     "id": tc.call_id,
                     "type": "function",
                     "function": {
@@ -440,7 +434,7 @@ class GeminiAdapter(BaseProvider):
         return [msg]
 
     @staticmethod
-    def _extract_usage(response: Any) -> Optional[Dict[str, int]]:
+    def _extract_usage(response: Any) -> dict[str, int] | None:
         """Extract usage metadata from a Gemini response."""
         usage_meta = getattr(response, "usage_metadata", None)
         if usage_meta:
@@ -460,14 +454,14 @@ class GeminiAdapter(BaseProvider):
     async def _call_api(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via Google Gemini API."""
@@ -504,7 +498,7 @@ class GeminiAdapter(BaseProvider):
         usage = self._extract_usage(response)
 
         # Handle structured output parsing
-        parsed_content: Optional[BaseModel] = None
+        parsed_content: BaseModel | None = None
         if (
             not tool_calls
             and isinstance(response_format, type)
@@ -536,16 +530,16 @@ class GeminiAdapter(BaseProvider):
     async def _call_api_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
-    ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
+    ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream via Google Gemini API."""
         kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
@@ -571,9 +565,9 @@ class GeminiAdapter(BaseProvider):
             raise ProviderError(f"Google Gemini API stream error: {e}") from e
 
         accumulated_text = ""
-        all_tool_calls: List[ProviderToolCall] = []
-        all_thought_sigs: Dict[str, bytes] = {}
-        last_usage: Optional[Dict[str, int]] = None
+        all_tool_calls: list[ProviderToolCall] = []
+        all_thought_sigs: dict[str, bytes] = {}
+        last_usage: dict[str, int] | None = None
 
         async for chunk in stream:
             candidates = getattr(chunk, "candidates", None)

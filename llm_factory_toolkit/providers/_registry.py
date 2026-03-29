@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import (
-    Any,
-    AsyncGenerator,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
     TYPE_CHECKING,
+    Any,
 )
 
 from pydantic import BaseModel
@@ -31,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Explicit prefix map: "provider/model" → provider key
-_PREFIX_MAP: Dict[str, str] = {
+_PREFIX_MAP: dict[str, str] = {
     "openai/": "openai",
     "anthropic/": "anthropic",
     "gemini/": "gemini",
@@ -41,7 +34,7 @@ _PREFIX_MAP: Dict[str, str] = {
 }
 
 # Bare model name prefix → provider key (no explicit prefix)
-_BARE_PREFIX_MAP: Dict[str, str] = {
+_BARE_PREFIX_MAP: dict[str, str] = {
     "gpt-": "openai",
     "o1-": "openai",
     "o3-": "openai",
@@ -53,7 +46,7 @@ _BARE_PREFIX_MAP: Dict[str, str] = {
 }
 
 # Exact bare model names that don't have a dash suffix (e.g. "o1", "o3", "o4")
-_EXACT_MODEL_MAP: Dict[str, str] = {
+_EXACT_MODEL_MAP: dict[str, str] = {
     "o1": "openai",
     "o3": "openai",
     "o4": "openai",
@@ -93,13 +86,13 @@ def resolve_provider_key(model: str) -> str:
 def _create_adapter(
     provider_key: str,
     *,
-    api_key: Optional[str],
-    tool_factory: Optional[ToolFactory],
+    api_key: str | None,
+    tool_factory: ToolFactory | None,
     timeout: float,
     max_retries: int = 3,
     retry_min_wait: float = 1.0,
     **kwargs: Any,
-) -> "BaseProvider":
+) -> BaseProvider:
     """Lazily import and instantiate a provider adapter."""
     if provider_key == "openai":
         from .openai import OpenAIAdapter
@@ -182,8 +175,8 @@ class ProviderRouter:
     def __init__(
         self,
         model: str = "openai/gpt-4o-mini",
-        tool_factory: Optional[ToolFactory] = None,
-        api_key: Optional[str] = None,
+        tool_factory: ToolFactory | None = None,
+        api_key: str | None = None,
         timeout: float = 180.0,
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
@@ -196,7 +189,7 @@ class ProviderRouter:
         self.max_retries = max_retries
         self.retry_min_wait = retry_min_wait
         self._extra_kwargs = kwargs
-        self._adapters: Dict[str, "BaseProvider"] = {}
+        self._adapters: dict[str, BaseProvider] = {}
 
         if self.tool_factory:
             logger.info(
@@ -210,7 +203,7 @@ class ProviderRouter:
                 self.model,
             )
 
-    def get_adapter(self, model: str) -> Tuple["BaseProvider", str]:
+    def get_adapter(self, model: str) -> tuple[BaseProvider, str]:
         """Return ``(adapter, effective_model)`` for the given model string.
 
         Caches adapter instances per provider key.
@@ -239,24 +232,24 @@ class ProviderRouter:
 
     async def generate(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
-        model: Optional[str] = None,
+        model: str | None = None,
         max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[ToolSession] = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
         compact_tools: bool = False,
-        on_usage: Optional[Callable[..., Any]] = None,
-        usage_metadata: Optional[Dict[str, Any]] = None,
-        pricing: Optional[Dict[str, float]] = None,
+        on_usage: Callable[..., Any] | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+        pricing: dict[str, float] | None = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response, routing to the correct provider adapter."""
@@ -286,20 +279,20 @@ class ProviderRouter:
 
     async def generate_stream(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
-        model: Optional[str] = None,
+        model: str | None = None,
         max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[ToolSession] = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
         compact_tools: bool = False,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
@@ -328,14 +321,14 @@ class ProviderRouter:
 
     async def generate_tool_intent(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
-        model: Optional[str] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
+        model: str | None = None,
+        use_tools: Sequence[str] | None = (),
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """Plan tool calls without executing, routing to the correct adapter."""

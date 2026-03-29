@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .models import ToolExecutionResult
 
@@ -12,10 +12,10 @@ class BaseTool(ABC):
 
     NAME: str  # Unique name for the tool
     DESCRIPTION: str  # Description shown to the LLM
-    PARAMETERS: Optional[Dict[str, Any]] = None  # JSON schema for arguments
-    CATEGORY: Optional[str] = None  # Category for catalog discovery
-    TAGS: Optional[List[str]] = None  # Tags for catalog search
-    GROUP: Optional[str] = None  # Dotted namespace for group filtering
+    PARAMETERS: dict[str, Any] | None = None  # JSON schema for arguments
+    CATEGORY: str | None = None  # Category for catalog discovery
+    TAGS: list[str] | None = None  # Tags for catalog search
+    GROUP: str | None = None  # Dotted namespace for group filtering
     BLOCKING: bool = False  # Offload sync execute() to a thread
 
     @abstractmethod
@@ -42,7 +42,7 @@ class BaseTool(ABC):
         )
 
     @classmethod
-    def from_config(cls, **config: Any) -> "BaseTool":
+    def from_config(cls, **config: Any) -> BaseTool:
         """Instantiate the tool with optional config.
 
         Only passes config keys that the constructor actually accepts,

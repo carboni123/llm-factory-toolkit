@@ -31,7 +31,8 @@ import asyncio
 import inspect
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from ..exceptions import ConfigurationError
 from ..tools.models import ToolExecutionResult
@@ -47,15 +48,15 @@ def _import_sdk() -> Any:
         raise ConfigurationError(
             "The Claude Agent SDK adapter requires the 'claude-agent-sdk' package. "
             "Install it with: pip install claude-agent-sdk"
-        )
+        ) from None
     return claude_agent_sdk
 
 
 def _wrap_handler(
     handler: Callable[..., Any],
     tool_name: str,
-    context: Optional[Dict[str, Any]] = None,
-) -> Callable[[Dict[str, Any]], Any]:
+    context: dict[str, Any] | None = None,
+) -> Callable[[dict[str, Any]], Any]:
     """Wrap a ToolFactory handler into the Claude Agent SDK handler signature.
 
     ToolFactory handlers accept ``(**kwargs) -> ToolExecutionResult``.
@@ -69,7 +70,7 @@ def _wrap_handler(
             ToolFactory context injection.
     """
 
-    async def _sdk_handler(args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _sdk_handler(args: dict[str, Any]) -> dict[str, Any]:
         final_args = dict(args)
 
         # Context injection: match parameter names in handler signature
@@ -107,10 +108,10 @@ def _wrap_handler(
     return _sdk_handler
 
 
-def _to_mcp_result(raw: Any, tool_name: str) -> Dict[str, Any]:
+def _to_mcp_result(raw: Any, tool_name: str) -> dict[str, Any]:
     """Convert a tool handler's return value to MCP content format."""
     if isinstance(raw, ToolExecutionResult):
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "content": [{"type": "text", "text": raw.content}],
         }
         if raw.error:
@@ -135,9 +136,9 @@ def _to_mcp_result(raw: Any, tool_name: str) -> Dict[str, Any]:
 def to_sdk_tools(
     factory: Any,
     *,
-    tool_names: Optional[Sequence[str]] = None,
-    context: Optional[Dict[str, Any]] = None,
-) -> List[Any]:
+    tool_names: Sequence[str] | None = None,
+    context: dict[str, Any] | None = None,
+) -> list[Any]:
     """Convert ToolFactory registrations into Claude Agent SDK ``SdkMcpTool`` instances.
 
     Args:
@@ -161,7 +162,7 @@ def to_sdk_tools(
         allowed = set(tool_names)
         registrations = {k: v for k, v in registrations.items() if k in allowed}
 
-    sdk_tools: List[Any] = []
+    sdk_tools: list[Any] = []
     for name, reg in registrations.items():
         input_schema = _extract_input_schema(reg.definition)
         wrapped = _wrap_handler(reg.executor, name, context=context)
@@ -178,7 +179,7 @@ def to_sdk_tools(
     return sdk_tools
 
 
-def _extract_input_schema(definition: Dict[str, Any]) -> Dict[str, Any]:
+def _extract_input_schema(definition: dict[str, Any]) -> dict[str, Any]:
     """Pull the JSON Schema ``parameters`` from a ToolFactory definition.
 
     Returns the ``parameters`` dict directly (already JSON Schema format),

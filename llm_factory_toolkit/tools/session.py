@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -39,23 +39,23 @@ class ToolSession:
     (e.g. in Redis or a database).
     """
 
-    active_tools: Set[str] = field(default_factory=set)
+    active_tools: set[str] = field(default_factory=set)
     max_tools: int = 50
-    session_id: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    session_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # Token budget fields
-    token_budget: Optional[int] = None
-    _token_counts: Dict[str, int] = field(default_factory=dict)
+    token_budget: int | None = None
+    _token_counts: dict[str, int] = field(default_factory=dict)
 
     # Auto-compact: when True, provider enables compact definitions
     # automatically when budget utilisation reaches the warning threshold.
     auto_compact: bool = True
 
     # Analytics: per-tool event counters.
-    _analytics_loads: Dict[str, int] = field(default_factory=dict)
-    _analytics_unloads: Dict[str, int] = field(default_factory=dict)
-    _analytics_calls: Dict[str, int] = field(default_factory=dict)
+    _analytics_loads: dict[str, int] = field(default_factory=dict)
+    _analytics_unloads: dict[str, int] = field(default_factory=dict)
+    _analytics_calls: dict[str, int] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Mutators
@@ -63,9 +63,9 @@ class ToolSession:
 
     def load(
         self,
-        names: List[str],
-        token_counts: Optional[Dict[str, int]] = None,
-    ) -> List[str]:
+        names: list[str],
+        token_counts: dict[str, int] | None = None,
+    ) -> list[str]:
         """Add tools to the active set.
 
         Args:
@@ -79,7 +79,7 @@ class ToolSession:
         exceeded.
         """
         counts = token_counts or {}
-        failed: List[str] = []
+        failed: list[str] = []
         for name in names:
             if name in self.active_tools:
                 continue
@@ -104,7 +104,7 @@ class ToolSession:
             )
         return failed
 
-    def unload(self, names: List[str]) -> None:
+    def unload(self, names: list[str]) -> None:
         """Remove tools from the active set."""
         for name in names:
             if name in self.active_tools:
@@ -116,7 +116,7 @@ class ToolSession:
     # Queries
     # ------------------------------------------------------------------
 
-    def list_active(self) -> List[str]:
+    def list_active(self) -> list[str]:
         """Return a sorted list of currently active tool names."""
         return sorted(self.active_tools)
 
@@ -132,7 +132,7 @@ class ToolSession:
         """Increment the call counter for *name*."""
         self._analytics_calls[name] = self._analytics_calls.get(name, 0) + 1
 
-    def get_analytics(self) -> Dict[str, Any]:
+    def get_analytics(self) -> dict[str, Any]:
         """Return a snapshot of session-level tool analytics.
 
         Returns a dict with per-tool event counts::
@@ -182,13 +182,13 @@ class ToolSession:
         return sum(self._token_counts.get(n, 0) for n in self.active_tools)
 
     @property
-    def tokens_remaining(self) -> Optional[int]:
+    def tokens_remaining(self) -> int | None:
         """Tokens still available within the budget, or ``None`` if no budget."""
         if self.token_budget is None:
             return None
         return max(0, self.token_budget - self.tokens_used)
 
-    def get_budget_usage(self) -> Dict[str, Any]:
+    def get_budget_usage(self) -> dict[str, Any]:
         """Return a snapshot of the current token-budget state.
 
         Returns a dict suitable for JSON serialisation and for surfacing
@@ -234,7 +234,7 @@ class ToolSession:
     # Serialisation
     # ------------------------------------------------------------------
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict (for Redis / DB persistence)."""
         return {
             "active_tools": sorted(self.active_tools),
@@ -250,7 +250,7 @@ class ToolSession:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ToolSession":
+    def from_dict(cls, data: dict[str, Any]) -> ToolSession:
         """Deserialise from a dict produced by :meth:`to_dict`."""
         session = cls(
             active_tools=set(data.get("active_tools", [])),

@@ -9,18 +9,10 @@ import json
 import logging
 import random
 import time
+from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import (
     Any,
-    AsyncGenerator,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    Union,
 )
 
 from pydantic import BaseModel
@@ -72,10 +64,10 @@ class ProviderResponse:
     """Normalised response from a single provider API call."""
 
     content: str
-    tool_calls: List[ProviderToolCall] = field(default_factory=list)
-    raw_messages: List[Dict[str, Any]] = field(default_factory=list)
-    usage: Optional[Dict[str, int]] = None
-    parsed_content: Optional[BaseModel] = None
+    tool_calls: list[ProviderToolCall] = field(default_factory=list)
+    raw_messages: list[dict[str, Any]] = field(default_factory=list)
+    usage: dict[str, int] | None = None
+    parsed_content: BaseModel | None = None
 
 
 @dataclass(frozen=True)
@@ -108,8 +100,8 @@ class BaseProvider(abc.ABC):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        tool_factory: Optional[ToolFactory] = None,
+        api_key: str | None = None,
+        tool_factory: ToolFactory | None = None,
         timeout: float = 180.0,
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
@@ -129,14 +121,14 @@ class BaseProvider(abc.ABC):
     async def _call_api(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming API call.
@@ -150,16 +142,16 @@ class BaseProvider(abc.ABC):
     async def _call_api_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
-    ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
+    ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Make a streaming API call.
 
         Yields :class:`StreamChunk` for text deltas.  After the stream
@@ -173,8 +165,8 @@ class BaseProvider(abc.ABC):
 
     @abc.abstractmethod
     def _build_tool_definitions(
-        self, definitions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, definitions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert standard tool definitions to provider-native format.
 
         The input *definitions* are in Chat Completions format (``type:
@@ -204,8 +196,8 @@ class BaseProvider(abc.ABC):
 
     @staticmethod
     def _extract_system(
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+        messages: list[dict[str, Any]],
+    ) -> tuple[str | None, list[dict[str, Any]]]:
         """Extract system message from the start of a message list.
 
         Returns ``(system_content, remaining_messages)``.  If no system
@@ -244,7 +236,7 @@ class BaseProvider(abc.ABC):
         """
         return False
 
-    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+    def _extract_retry_after(self, error: Exception) -> float | None:
         """Extract a ``Retry-After`` delay (seconds) from *error*, if available.
 
         Subclasses override to parse SDK-specific headers.
@@ -274,9 +266,9 @@ class BaseProvider(abc.ABC):
     async def _call_api_with_retry(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        deadline: Optional[float] = None,
+        deadline: float | None = None,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Call ``_call_api`` with exponential-backoff retry on transient errors.
@@ -288,7 +280,7 @@ class BaseProvider(abc.ABC):
             retries that would start past the deadline are skipped and the last
             error is raised immediately.
         """
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         for attempt in range(1 + self.max_retries):
             # Respect wall-clock deadline — skip retry if budget exhausted
             if deadline is not None and attempt > 0 and time.monotonic() >= deadline:
@@ -352,7 +344,7 @@ class BaseProvider(abc.ABC):
     # Drop unsupported params
     # ------------------------------------------------------------------
 
-    def _filter_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _filter_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Remove kwargs not in this adapter's ``_EXTRA_PARAMS`` whitelist.
 
         Unknown params are logged at debug level and silently dropped.
@@ -374,9 +366,9 @@ class BaseProvider(abc.ABC):
 
     def _inject_dynamic_tool_context(
         self,
-        tool_session: Optional[ToolSession],
-        tool_execution_context: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
+        tool_session: ToolSession | None,
+        tool_execution_context: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
         """Inject *tool_session* and *tool_catalog* into the execution context."""
         if tool_session is None:
             return tool_execution_context
@@ -390,7 +382,7 @@ class BaseProvider(abc.ABC):
 
     @staticmethod
     def _extract_core_tool_names(
-        tool_execution_context: Optional[Dict[str, Any]],
+        tool_execution_context: dict[str, Any] | None,
     ) -> set[str]:
         """Return the set of core-tool names from *tool_execution_context*."""
         if not tool_execution_context:
@@ -399,7 +391,7 @@ class BaseProvider(abc.ABC):
 
     @staticmethod
     def _check_and_enable_auto_compact(
-        tool_session: Optional[ToolSession],
+        tool_session: ToolSession | None,
         compact_tools: bool,
     ) -> bool:
         """Check budget pressure and flip *compact_tools* on if needed."""
@@ -422,10 +414,10 @@ class BaseProvider(abc.ABC):
 
     def _resolve_tool_definitions(
         self,
-        use_tools: Optional[Sequence[str]],
+        use_tools: Sequence[str] | None,
         compact: bool = False,
-        core_tool_names: Optional[set[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        core_tool_names: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Return tool definitions, splitting core vs non-core for compact mode."""
         if use_tools is None or not self.tool_factory:
             return []
@@ -463,7 +455,7 @@ class BaseProvider(abc.ABC):
         return full_defs + compact_defs
 
     @staticmethod
-    def _maybe_strip_urls(content: str, web_search: bool | Dict[str, Any]) -> str:
+    def _maybe_strip_urls(content: str, web_search: bool | dict[str, Any]) -> str:
         """Conditionally strip URLs when web search citations are disabled."""
         if isinstance(web_search, dict) and not web_search.get("citations", True):
             return strip_urls(content)
@@ -471,12 +463,12 @@ class BaseProvider(abc.ABC):
 
     @staticmethod
     def _check_repetitive_calls(
-        call_error_info: List[Tuple[str, str, bool]],
-        failed_call_counts: Dict[Tuple[str, str], int],
+        call_error_info: list[tuple[str, str, bool]],
+        failed_call_counts: dict[tuple[str, str], int],
         repetition_threshold: int,
-        current_messages: List[Dict[str, Any]],
+        current_messages: list[dict[str, Any]],
         *,
-        all_call_counts: Optional[Dict[Tuple[str, str], int]] = None,
+        all_call_counts: dict[tuple[str, str], int] | None = None,
     ) -> bool:
         """Process tool call results for repetitive call detection.
 
@@ -500,7 +492,7 @@ class BaseProvider(abc.ABC):
 
         # De-duplicate within one iteration so parallel calls to the same
         # tool+args in a single LLM response count as one occurrence.
-        _seen_this_iteration: set[Tuple[str, str]] = set()
+        _seen_this_iteration: set[tuple[str, str]] = set()
 
         for tc_name, tc_args, tc_error in call_error_info:
             tc_key = (tc_name, tc_args)
@@ -593,8 +585,8 @@ class BaseProvider(abc.ABC):
 
     @staticmethod
     def _aggregate_final_content(
-        messages: List[Dict[str, Any]], max_iterations: int
-    ) -> Optional[str]:
+        messages: list[dict[str, Any]], max_iterations: int
+    ) -> str | None:
         """Extract final assistant text when max iterations are reached."""
         for m in reversed(messages):
             content = m.get("content")
@@ -617,16 +609,16 @@ class BaseProvider(abc.ABC):
 
     async def _dispatch_tool_calls(
         self,
-        tool_calls: List[ProviderToolCall],
+        tool_calls: list[ProviderToolCall],
         *,
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        max_concurrent_tools: Optional[int] = None,
-        max_tool_output_chars: Optional[int] = None,
-        tool_timeout: Optional[float] = None,
-    ) -> Tuple[
-        List[ToolResultMessage], List[Dict[str, Any]], List[Tuple[str, str, bool]]
+        max_concurrent_tools: int | None = None,
+        max_tool_output_chars: int | None = None,
+        tool_timeout: float | None = None,
+    ) -> tuple[
+        list[ToolResultMessage], list[dict[str, Any]], list[tuple[str, str, bool]]
     ]:
         """Dispatch tool calls and return ``(tool_results, payloads, call_info)``.
 
@@ -640,12 +632,12 @@ class BaseProvider(abc.ABC):
                 "Received tool calls but no ToolFactory is configured."
             )
         factory = self.tool_factory
-        results_list: List[ToolResultMessage] = []
-        collected_payloads: List[Dict[str, Any]] = []
+        results_list: list[ToolResultMessage] = []
+        collected_payloads: list[dict[str, Any]] = []
 
         async def _handle_one(
             tc: ProviderToolCall,
-        ) -> Tuple[ToolResultMessage, Optional[Dict[str, Any]], bool]:
+        ) -> tuple[ToolResultMessage, dict[str, Any] | None, bool]:
             if tc.name:
                 factory.increment_tool_usage(tc.name)
 
@@ -686,7 +678,7 @@ class BaseProvider(abc.ABC):
                         tool_timeout=tool_timeout,
                     )
                 is_error = result.error is not None
-                payload: Dict[str, Any] = {
+                payload: dict[str, Any] = {
                     "tool_name": tc.name,
                     "metadata": result.metadata or {},
                 }
@@ -774,7 +766,7 @@ class BaseProvider(abc.ABC):
 
                 async def _bounded(
                     tc: ProviderToolCall,
-                ) -> Tuple[ToolResultMessage, Optional[Dict[str, Any]], bool]:
+                ) -> tuple[ToolResultMessage, dict[str, Any] | None, bool]:
                     async with semaphore:
                         return await _handle_one(tc)
 
@@ -806,8 +798,8 @@ class BaseProvider(abc.ABC):
                         )
                 pairs.append((msg, payload, is_error))
 
-        call_error_info: List[Tuple[str, str, bool]] = []
-        for (msg, payload, is_error), tc in zip(pairs, tool_calls):
+        call_error_info: list[tuple[str, str, bool]] = []
+        for (msg, payload, is_error), tc in zip(pairs, tool_calls, strict=True):
             # Truncate oversized tool output
             if (
                 max_tool_output_chars is not None
@@ -845,9 +837,9 @@ class BaseProvider(abc.ABC):
 
     def _get_effective_tools(
         self,
-        use_tools: Optional[Sequence[str]],
-        tool_session: Optional[ToolSession],
-    ) -> Optional[Sequence[str]]:
+        use_tools: Sequence[str] | None,
+        tool_session: ToolSession | None,
+    ) -> Sequence[str] | None:
         """Return the effective tool list, considering dynamic session."""
         if tool_session is not None:
             active = tool_session.list_active()
@@ -857,13 +849,13 @@ class BaseProvider(abc.ABC):
 
     def _prepare_native_tools(
         self,
-        use_tools: Optional[Sequence[str]],
+        use_tools: Sequence[str] | None,
         *,
         compact_tools: bool = False,
-        core_tool_names: Optional[set[str]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-    ) -> Optional[List[Dict[str, Any]]]:
+        core_tool_names: set[str] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+    ) -> list[dict[str, Any]] | None:
         """Build provider-native tool definitions from standard definitions.
 
         Returns ``None`` when tools are explicitly disabled (``use_tools is
@@ -885,16 +877,16 @@ class BaseProvider(abc.ABC):
 
     def _parse_tool_calls_for_intent(
         self,
-        tool_calls: List[ProviderToolCall],
-    ) -> List[ParsedToolCall]:
+        tool_calls: list[ProviderToolCall],
+    ) -> list[ParsedToolCall]:
         """Convert :class:`ProviderToolCall` to :class:`ParsedToolCall`."""
-        parsed: List[ParsedToolCall] = []
+        parsed: list[ParsedToolCall] = []
         for tc in tool_calls:
             if tc.name and self.tool_factory:
                 self.tool_factory.increment_tool_usage(tc.name)
 
-            args_dict_or_str: Union[Dict[str, Any], str]
-            parsing_error: Optional[str] = None
+            args_dict_or_str: dict[str, Any] | str
+            parsing_error: str | None = None
             try:
                 parsed_args = json.loads(tc.arguments or "{}")
                 if not isinstance(parsed_args, dict):
@@ -927,7 +919,7 @@ class BaseProvider(abc.ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _tool_result_to_chat_message(result: ToolResultMessage) -> Dict[str, Any]:
+    def _tool_result_to_chat_message(result: ToolResultMessage) -> dict[str, Any]:
         """Convert a :class:`ToolResultMessage` to Chat Completions format."""
         return {
             "role": "tool",
@@ -942,19 +934,19 @@ class BaseProvider(abc.ABC):
 
     def _init_loop(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[ToolSession] = None,
-        tool_execution_context: Optional[Dict[str, Any]] = None,
-        extra_tool_definitions: Optional[List[Dict[str, Any]]] = None,
-    ) -> Tuple[
-        List[Dict[str, Any]],  # current_messages
-        Optional[Dict[str, Any]],  # tool_execution_context
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
+        tool_execution_context: dict[str, Any] | None = None,
+        extra_tool_definitions: list[dict[str, Any]] | None = None,
+    ) -> tuple[
+        list[dict[str, Any]],  # current_messages
+        dict[str, Any] | None,  # tool_execution_context
         set[str],  # _core_names
-        Optional[List[Dict[str, Any]]],  # _extra_native
-        Dict[Tuple[str, str], int],  # _failed_call_counts
-        Dict[Tuple[str, str], int],  # _all_call_counts
+        list[dict[str, Any]] | None,  # _extra_native
+        dict[tuple[str, str], int],  # _failed_call_counts
+        dict[tuple[str, str], int],  # _all_call_counts
     ]:
         """Common initialisation shared by ``generate`` and ``generate_stream``."""
         if file_search and not self._supports_file_search():
@@ -967,7 +959,7 @@ class BaseProvider(abc.ABC):
         )
         _core_names = self._extract_core_tool_names(tool_execution_context)
 
-        _extra_native: Optional[List[Dict[str, Any]]] = None
+        _extra_native: list[dict[str, Any]] | None = None
         if extra_tool_definitions:
             _extra_native = self._build_tool_definitions(extra_tool_definitions)
 
@@ -984,15 +976,15 @@ class BaseProvider(abc.ABC):
         self,
         *,
         model: str,
-        use_tools: Optional[Sequence[str]],
-        tool_session: Optional[ToolSession],
+        use_tools: Sequence[str] | None,
+        tool_session: ToolSession | None,
         compact_tools: bool,
-        core_tool_names: Optional[set[str]],
-        web_search: bool | Dict[str, Any],
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...],
-        extra_native: Optional[List[Dict[str, Any]]],
-        temperature: Optional[float],
-    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[float]]:
+        core_tool_names: set[str] | None,
+        web_search: bool | dict[str, Any],
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...],
+        extra_native: list[dict[str, Any]] | None,
+        temperature: float | None,
+    ) -> tuple[list[dict[str, Any]] | None, float | None]:
         """Compute native tools and effective temperature for one loop iteration."""
         effective_tools = self._get_effective_tools(use_tools, tool_session)
         native_tools = self._prepare_native_tools(
@@ -1021,30 +1013,30 @@ class BaseProvider(abc.ABC):
 
     async def generate(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
         model: str,
         max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[ToolSession] = None,
-        extra_tool_definitions: Optional[List[Dict[str, Any]]] = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
+        extra_tool_definitions: list[dict[str, Any]] | None = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
-        max_tool_output_chars: Optional[int] = None,
-        max_concurrent_tools: Optional[int] = None,
-        tool_timeout: Optional[float] = None,
-        on_usage: Optional[Callable[..., Any]] = None,
-        usage_metadata: Optional[Dict[str, Any]] = None,
-        pricing: Optional[Dict[str, float]] = None,
-        deadline: Optional[float] = None,
+        max_tool_output_chars: int | None = None,
+        max_concurrent_tools: int | None = None,
+        tool_timeout: float | None = None,
+        on_usage: Callable[..., Any] | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+        pricing: dict[str, float] | None = None,
+        deadline: float | None = None,
         max_validation_retries: int = 0,
         **kwargs: Any,
     ) -> GenerationResult:
@@ -1079,16 +1071,16 @@ class BaseProvider(abc.ABC):
             extra_tool_definitions=extra_tool_definitions,
         )
 
-        collected_payloads: List[Any] = []
-        tool_result_messages: List[Dict[str, Any]] = []
+        collected_payloads: list[Any] = []
+        tool_result_messages: list[dict[str, Any]] = []
         iteration_count = 0
         _validation_retries_left = max_validation_retries
-        accumulated_usage: Dict[str, int] = {
+        accumulated_usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
         }
-        accumulated_cost: Optional[float] = 0.0
+        accumulated_cost: float | None = 0.0
 
         while iteration_count < max_tool_iterations:
             # Wall-clock deadline check — stop starting new iterations
@@ -1315,26 +1307,26 @@ class BaseProvider(abc.ABC):
 
     async def generate_stream(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
         model: str,
         max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[ToolSession] = None,
-        extra_tool_definitions: Optional[List[Dict[str, Any]]] = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
+        extra_tool_definitions: list[dict[str, Any]] | None = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
-        max_tool_output_chars: Optional[int] = None,
-        max_concurrent_tools: Optional[int] = None,
-        tool_timeout: Optional[float] = None,
+        max_tool_output_chars: int | None = None,
+        max_concurrent_tools: int | None = None,
+        tool_timeout: float | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream a response, handling tool calls transparently."""
@@ -1368,7 +1360,7 @@ class BaseProvider(abc.ABC):
                 temperature=temperature,
             )
 
-            pending_response: Optional[ProviderResponse] = None
+            pending_response: ProviderResponse | None = None
 
             async for item in self._call_api_stream(
                 model,
@@ -1441,14 +1433,14 @@ class BaseProvider(abc.ABC):
 
     async def generate_tool_intent(
         self,
-        input: List[Dict[str, Any]],
+        input: list[dict[str, Any]],
         *,
         model: str,
-        use_tools: Optional[Sequence[str]] = (),
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
+        use_tools: Sequence[str] | None = (),
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """Plan tool calls without executing them."""
@@ -1487,8 +1479,8 @@ class BaseProvider(abc.ABC):
     # ------------------------------------------------------------------
 
     def _format_tool_results_for_conversation(
-        self, results: List[ToolResultMessage]
-    ) -> List[Dict[str, Any]]:
+        self, results: list[ToolResultMessage]
+    ) -> list[dict[str, Any]]:
         """Format tool results for the conversation history.
 
         Default: Chat Completions format.  Adapters that use a different

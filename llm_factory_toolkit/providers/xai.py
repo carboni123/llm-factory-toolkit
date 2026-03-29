@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..tools.tool_factory import ToolFactory
 from .openai import OpenAIAdapter
@@ -20,10 +20,10 @@ class XAIAdapter(OpenAIAdapter):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        tool_factory: Optional[ToolFactory] = None,
+        api_key: str | None = None,
+        tool_factory: ToolFactory | None = None,
         timeout: float = 180.0,
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -41,8 +41,8 @@ class XAIAdapter(OpenAIAdapter):
         return False
 
     def _build_tool_definitions(
-        self, definitions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, definitions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert tool definitions to xAI-compatible format.
 
         xAI does not support OpenAI's ``strict: True`` mode or forced
@@ -50,7 +50,7 @@ class XAIAdapter(OpenAIAdapter):
         these fields causes xAI to silently ignore all tool definitions,
         making the model respond in plain text instead of calling tools.
         """
-        tools_list: List[Dict[str, Any]] = []
+        tools_list: list[dict[str, Any]] = []
 
         for tool in definitions:
             if tool.get("type") == "function":

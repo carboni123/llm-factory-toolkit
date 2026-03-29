@@ -11,11 +11,7 @@ import inspect
 import types
 from typing import (
     Any,
-    Dict,
-    List,
     Literal,
-    Optional,
-    Set,
     Union,
     get_args,
     get_origin,
@@ -28,8 +24,8 @@ from pydantic import BaseModel
 def generate_schema_from_function(
     func: Any,
     *,
-    exclude_params: Optional[Set[str]] = None,
-) -> Dict[str, Any]:
+    exclude_params: set[str] | None = None,
+) -> dict[str, Any]:
     """Generate a JSON Schema ``object`` from a function's type hints.
 
     Args:
@@ -49,8 +45,8 @@ def generate_schema_from_function(
 
     sig = inspect.signature(func)
 
-    properties: Dict[str, Any] = {}
-    required: List[str] = []
+    properties: dict[str, Any] = {}
+    required: list[str] = []
 
     for param_name, param in sig.parameters.items():
         # Skip self/cls
@@ -83,7 +79,7 @@ def generate_schema_from_function(
 
         properties[param_name] = prop_schema
 
-    schema: Dict[str, Any] = {
+    schema: dict[str, Any] = {
         "type": "object",
         "properties": properties,
     }
@@ -93,7 +89,7 @@ def generate_schema_from_function(
     return schema
 
 
-def _type_to_schema(annotation: Any) -> Dict[str, Any]:
+def _type_to_schema(annotation: Any) -> dict[str, Any]:
     """Convert a Python type annotation to a JSON Schema property dict."""
     origin = get_origin(annotation)
     args = get_args(annotation)
@@ -152,7 +148,7 @@ def _type_to_schema(annotation: Any) -> Dict[str, Any]:
     return {"type": "string"}
 
 
-def _handle_union(args: tuple[Any, ...]) -> Dict[str, Any]:
+def _handle_union(args: tuple[Any, ...]) -> dict[str, Any]:
     """Handle Union / Optional types."""
     non_none = [a for a in args if a is not type(None)]
     if len(non_none) == 1 and len(args) == 2:
@@ -167,7 +163,7 @@ def _handle_union(args: tuple[Any, ...]) -> Dict[str, Any]:
     return {"anyOf": [_type_to_schema(a) for a in args]}
 
 
-def _handle_literal(args: tuple[Any, ...]) -> Dict[str, Any]:
+def _handle_literal(args: tuple[Any, ...]) -> dict[str, Any]:
     """Handle Literal types."""
     values = list(args)
     if all(isinstance(v, str) for v in values):
@@ -177,7 +173,7 @@ def _handle_literal(args: tuple[Any, ...]) -> Dict[str, Any]:
     return {"enum": values}
 
 
-def _handle_enum(annotation: type[enum.Enum]) -> Dict[str, Any]:
+def _handle_enum(annotation: type[enum.Enum]) -> dict[str, Any]:
     """Handle Enum subclasses."""
     values = [member.value for member in annotation]
     if all(isinstance(v, str) for v in values):

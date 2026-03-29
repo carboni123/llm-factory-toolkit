@@ -6,16 +6,9 @@ import logging
 import os
 import re
 import warnings
+from collections.abc import AsyncGenerator, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    Union,
 )
 
 from pydantic import BaseModel
@@ -49,10 +42,10 @@ class OpenAIAdapter(BaseProvider):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        tool_factory: Optional[ToolFactory] = None,
+        api_key: str | None = None,
+        tool_factory: ToolFactory | None = None,
         timeout: float = 180.0,
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -72,7 +65,7 @@ class OpenAIAdapter(BaseProvider):
             raise ConfigurationError(
                 "OpenAI models require the 'openai' package. "
                 "Install it with: pip install llm_factory_toolkit[openai]"
-            )
+            ) from None
 
         key = self.api_key or os.environ.get(self.API_ENV_VAR)
         if not key:
@@ -81,7 +74,7 @@ class OpenAIAdapter(BaseProvider):
                 f"set the {self.API_ENV_VAR} environment variable."
             )
 
-        client_kwargs: Dict[str, Any] = {
+        client_kwargs: dict[str, Any] = {
             "api_key": key,
             "timeout": self.timeout,
         }
@@ -148,7 +141,7 @@ class OpenAIAdapter(BaseProvider):
                 return True
         return False
 
-    def _extract_retry_after(self, error: Exception) -> Optional[float]:
+    def _extract_retry_after(self, error: Exception) -> float | None:
         try:
             from openai import APIStatusError
         except ImportError:
@@ -191,15 +184,15 @@ class OpenAIAdapter(BaseProvider):
 
     @staticmethod
     def _convert_to_responses_api(
-        messages: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Convert Chat Completions messages to Responses API format.
 
         When ``_raw_output_items`` are present on a message, they are
         emitted directly to preserve the exact item structure (including
         reasoning items required by reasoning models).
         """
-        converted: List[Dict[str, Any]] = []
+        converted: list[dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role")
             raw_items = msg.get("_raw_output_items")
@@ -239,25 +232,25 @@ class OpenAIAdapter(BaseProvider):
 
     @staticmethod
     def _responses_to_chat_messages(
-        items: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Convert Responses API output items to Chat Completions format.
 
         Raw Responses API items are preserved as ``_raw_output_items`` on
         assistant messages so they can be round-tripped in multi-turn
         conversations (required by reasoning models like o1, o3, gpt-5).
         """
-        result: List[Dict[str, Any]] = []
-        pending_content: Optional[str] = None
-        pending_tool_calls: List[Dict[str, Any]] = []
-        pending_raw_items: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
+        pending_content: str | None = None
+        pending_tool_calls: list[dict[str, Any]] = []
+        pending_raw_items: list[dict[str, Any]] = []
 
         has_reasoning = False
 
         def _flush() -> None:
             nonlocal pending_content, pending_tool_calls, pending_raw_items
             if pending_content is not None or pending_tool_calls:
-                msg: Dict[str, Any] = {"role": "assistant"}
+                msg: dict[str, Any] = {"role": "assistant"}
                 if pending_content:
                     msg["content"] = pending_content
                 if pending_tool_calls:
@@ -338,10 +331,10 @@ class OpenAIAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     def _build_tool_definitions(
-        self, definitions: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, definitions: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert standard tool definitions to OpenAI Responses API format with strict mode."""
-        tools_list: List[Dict[str, Any]] = []
+        tools_list: list[dict[str, Any]] = []
 
         for tool in definitions:
             if tool.get("type") == "function":
@@ -371,9 +364,9 @@ class OpenAIAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_tool_calls(output_items: List[Any]) -> List[ProviderToolCall]:
+    def _extract_tool_calls(output_items: list[Any]) -> list[ProviderToolCall]:
         """Extract ProviderToolCall list from Responses API output items."""
-        tool_calls: List[ProviderToolCall] = []
+        tool_calls: list[ProviderToolCall] = []
         for item in output_items:
             item_type = getattr(item, "type", None)
             if item_type in {"function_call", "custom_tool_call"}:
@@ -392,14 +385,14 @@ class OpenAIAdapter(BaseProvider):
         return tool_calls
 
     @staticmethod
-    def _serialize_output_items(output_items: List[Any]) -> List[Dict[str, Any]]:
+    def _serialize_output_items(output_items: list[Any]) -> list[dict[str, Any]]:
         """Serialize Responses API output items to dicts for round-tripping.
 
         Suppresses harmless Pydantic serializer warnings and strips fields
         that the Responses API rejects on round-tripped items (``status``,
         ``parsed_arguments``, nested ``parsed``).
         """
-        raw_items: List[Dict[str, Any]] = []
+        raw_items: list[dict[str, Any]] = []
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
@@ -419,7 +412,7 @@ class OpenAIAdapter(BaseProvider):
         return raw_items
 
     @staticmethod
-    def _extract_usage(response_obj: Any) -> Optional[Dict[str, int]]:
+    def _extract_usage(response_obj: Any) -> dict[str, int] | None:
         """Extract normalised usage dict from a Responses API object."""
         comp_usage = getattr(response_obj, "usage", None)
         if not comp_usage:
@@ -438,8 +431,8 @@ class OpenAIAdapter(BaseProvider):
 
     @staticmethod
     def _normalize_file_search(
-        value: bool | Dict[str, Any] | List[str] | Tuple[str, ...],
-    ) -> Optional[Dict[str, Any]]:
+        value: bool | dict[str, Any] | list[str] | tuple[str, ...],
+    ) -> dict[str, Any] | None:
         """Build an OpenAI ``file_search`` tool definition."""
         if isinstance(value, bool):
             if value:
@@ -456,7 +449,7 @@ class OpenAIAdapter(BaseProvider):
                 raise ConfigurationError(
                     "file_search requires at least one vector_store_id."
                 )
-            tool: Dict[str, Any] = {
+            tool: dict[str, Any] = {
                 "type": "file_search",
                 "vector_store_ids": list(ids),
             }
@@ -477,15 +470,15 @@ class OpenAIAdapter(BaseProvider):
 
     def _prepare_native_tools(
         self,
-        use_tools: Optional[Sequence[str]],
+        use_tools: Sequence[str] | None,
         *,
         compact_tools: bool = False,
-        core_tool_names: Optional[set[str]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-    ) -> Optional[List[Dict[str, Any]]]:
+        core_tool_names: set[str] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+    ) -> list[dict[str, Any]] | None:
         """Override to add file_search and web_search tools."""
-        tools_list: List[Dict[str, Any]] = []
+        tools_list: list[dict[str, Any]] = []
 
         # file_search
         if file_search:
@@ -495,11 +488,11 @@ class OpenAIAdapter(BaseProvider):
 
         # web_search
         if web_search:
-            ws_tool: Dict[str, Any] = {"type": "web_search"}
+            ws_tool: dict[str, Any] = {"type": "web_search"}
             if isinstance(web_search, dict):
                 # Domain filters must be nested under "filters" for the
                 # Responses API (not top-level on the tool config).
-                filters: Dict[str, Any] = {}
+                filters: dict[str, Any] = {}
                 for key in ("allowed_domains", "blocked_domains"):
                     if key in web_search:
                         filters[key] = web_search[key]
@@ -531,16 +524,16 @@ class OpenAIAdapter(BaseProvider):
     def _build_request(
         self,
         model: str,
-        input_messages: List[Dict[str, Any]],
+        input_messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build the request payload for ``client.responses``."""
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "input": input_messages,
         }
@@ -578,14 +571,14 @@ class OpenAIAdapter(BaseProvider):
     async def _call_api(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via OpenAI Responses API."""
@@ -622,7 +615,7 @@ class OpenAIAdapter(BaseProvider):
         output_items = getattr(completion, "output", [])
 
         # Extract already-parsed structured output when using text_format
-        parsed_content: Optional[BaseModel] = None
+        parsed_content: BaseModel | None = None
         if (
             response_format is not None
             and isinstance(response_format, type)
@@ -651,16 +644,16 @@ class OpenAIAdapter(BaseProvider):
     async def _call_api_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         *,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         **kwargs: Any,
-    ) -> AsyncGenerator[Union[StreamChunk, ProviderResponse], None]:
+    ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream via OpenAI Responses API."""
         client = self._get_client()
 
@@ -726,8 +719,8 @@ class OpenAIAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     def _format_tool_results_for_conversation(
-        self, results: List[ToolResultMessage]
-    ) -> List[Dict[str, Any]]:
+        self, results: list[ToolResultMessage]
+    ) -> list[dict[str, Any]]:
         """Format tool results in Chat Completions format.
 
         Since the base loop maintains Chat Completions messages and we

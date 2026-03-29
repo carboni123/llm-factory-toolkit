@@ -6,17 +6,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import (
     Any,
-    AsyncGenerator,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    Union,
 )
 
 from pydantic import BaseModel
@@ -30,8 +22,8 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
-from .providers._base import DEFAULT_MAX_TOOL_ITERATIONS
 from .providers import ProviderRouter
+from .providers._base import DEFAULT_MAX_TOOL_ITERATIONS
 from .tools.catalog import InMemoryToolCatalog
 from .tools.models import (
     GenerationResult,
@@ -140,18 +132,18 @@ class LLMClient:
     def __init__(
         self,
         model: str = "openai/gpt-4o-mini",
-        api_key: Optional[str] = None,
-        tool_factory: Optional[ToolFactory] = None,
+        api_key: str | None = None,
+        tool_factory: ToolFactory | None = None,
         timeout: float = 180.0,
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
-        core_tools: Optional[List[str]] = None,
-        dynamic_tool_loading: Union[bool, str] = False,
+        core_tools: list[str] | None = None,
+        dynamic_tool_loading: bool | str = False,
         compact_tools: bool = False,
-        on_usage: Optional[Callable[..., Any]] = None,
-        usage_metadata: Optional[Dict[str, Any]] = None,
-        pricing: Optional[Dict[str, float]] = None,
-        fallback: Optional["LLMClient"] = None,
+        on_usage: Callable[..., Any] | None = None,
+        usage_metadata: dict[str, Any] | None = None,
+        pricing: dict[str, float] | None = None,
+        fallback: LLMClient | None = None,
         **kwargs: Any,
     ) -> None:
         logger.info("Initialising LLMClient for model: %s", model)
@@ -178,12 +170,12 @@ class LLMClient:
         # Dynamic tool loading setup — normalise str to True + model name
         self.core_tools = core_tools or []
         if isinstance(dynamic_tool_loading, str):
-            self._search_agent_model: Optional[str] = dynamic_tool_loading
+            self._search_agent_model: str | None = dynamic_tool_loading
             self.dynamic_tool_loading: bool = True
         else:
             self._search_agent_model = None
             self.dynamic_tool_loading = dynamic_tool_loading
-        self._search_agent: Optional[LLMClient] = None
+        self._search_agent: LLMClient | None = None
 
         if self.dynamic_tool_loading:
             if tool_factory is None:
@@ -241,13 +233,13 @@ class LLMClient:
     def register_tool(
         self,
         function: Callable[..., ToolExecutionResult],
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-        category: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        group: Optional[str] = None,
-        exclude_params: Optional[List[str]] = None,
+        name: str | None = None,
+        description: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        category: str | None = None,
+        tags: list[str] | None = None,
+        group: str | None = None,
+        exclude_params: list[str] | None = None,
         blocking: bool = False,
     ) -> None:
         """Register a Python function as a tool for the LLM.
@@ -308,7 +300,7 @@ class LLMClient:
         if hasattr(self.provider, "close") and callable(self.provider.close):
             await self.provider.close()
 
-    async def __aenter__(self) -> "LLMClient":
+    async def __aenter__(self) -> LLMClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -320,29 +312,29 @@ class LLMClient:
 
     async def generate(
         self,
-        input: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
+        input: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
         max_tool_iterations: int = DEFAULT_MAX_TOOL_ITERATIONS,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        use_tools: Sequence[str] | None = (),
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
         parallel_tools: bool = False,
         merge_history: bool = False,
         stream: bool = False,
-        web_search: bool | Dict[str, Any] = False,
-        file_search: bool | Dict[str, Any] | List[str] | Tuple[str, ...] = False,
-        tool_session: Optional[ToolSession] = None,
-        compact_tools: Optional[bool] = None,
+        web_search: bool | dict[str, Any] = False,
+        file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        tool_session: ToolSession | None = None,
+        compact_tools: bool | None = None,
         repetition_threshold: int = 3,
-        max_tool_output_chars: Optional[int] = None,
-        max_concurrent_tools: Optional[int] = None,
-        tool_timeout: Optional[float] = None,
-        usage_metadata: Optional[Dict[str, Any]] = None,
+        max_tool_output_chars: int | None = None,
+        max_concurrent_tools: int | None = None,
+        tool_timeout: float | None = None,
+        usage_metadata: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> Union[GenerationResult, AsyncGenerator[StreamChunk, None]]:
+    ) -> GenerationResult | AsyncGenerator[StreamChunk, None]:
         """Generate a response from the configured LLM.
 
         Sends the conversation to the model and runs an **agentic tool loop**:
@@ -528,7 +520,7 @@ class LLMClient:
         # Merge usage metadata: init-level defaults + per-call overrides
         effective_usage_metadata = {**self.usage_metadata, **(usage_metadata or {})}
 
-        common_kwargs: Dict[str, Any] = {
+        common_kwargs: dict[str, Any] = {
             "input": processed_input,
             "model": model,
             "temperature": temperature,
@@ -635,7 +627,7 @@ class LLMClient:
     async def _generate_stream_with_fallback(
         self,
         *,
-        stream_kwargs: Dict[str, Any],
+        stream_kwargs: dict[str, Any],
         file_search: Any = False,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Wrap streaming with fallback — catches errors during async iteration.
@@ -682,13 +674,13 @@ class LLMClient:
 
     async def generate_tool_intent(
         self,
-        input: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
-        response_format: Optional[Dict[str, Any] | Type[BaseModel]] = None,
-        use_tools: Optional[Sequence[str]] = (),
-        web_search: bool | Dict[str, Any] = False,
+        input: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        response_format: dict[str, Any] | type[BaseModel] | None = None,
+        use_tools: Sequence[str] | None = (),
+        web_search: bool | dict[str, Any] = False,
         **kwargs: Any,
     ) -> ToolIntentOutput:
         """Plan tool calls without executing them.
@@ -696,7 +688,7 @@ class LLMClient:
         Returns a :class:`ToolIntentOutput` whose ``tool_calls`` can be
         inspected and later executed via :meth:`execute_tool_intents`.
         """
-        provider_args: Dict[str, Any] = {
+        provider_args: dict[str, Any] = {
             "input": input,
             "model": model,
             "temperature": temperature,
@@ -747,15 +739,15 @@ class LLMClient:
     async def execute_tool_intents(
         self,
         intent_output: ToolIntentOutput,
-        tool_execution_context: Optional[Dict[str, Any]] = None,
+        tool_execution_context: dict[str, Any] | None = None,
         mock_tools: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Execute previously planned tool calls.
 
         Returns a list of tool result dicts (``role: "tool"``) ready to be
         appended to the conversation history for a follow-up LLM call.
         """
-        tool_result_messages: List[Dict[str, Any]] = []
+        tool_result_messages: list[dict[str, Any]] = []
         if not self.tool_factory:
             raise ConfigurationError(
                 "LLMClient has no ToolFactory configured, cannot execute tool intents."
@@ -855,10 +847,10 @@ class LLMClient:
 
     @staticmethod
     def _merge_conversation_history(
-        messages: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Merge sequential user or assistant messages into single turns."""
-        merged: List[Dict[str, Any]] = []
+        merged: list[dict[str, Any]] = []
         for message in messages:
             role = message.get("role")
             if role not in {"user", "assistant"}:

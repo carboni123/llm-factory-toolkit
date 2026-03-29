@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .catalog import ToolCatalog
 from .models import ToolExecutionResult
@@ -23,14 +23,14 @@ _MAX_GROUP_SEARCH = 10_000  # Upper bound when fetching all tools in a group.
 
 def _suggest_similar_names(
     invalid_name: str, catalog: ToolCatalog, max_suggestions: int = 3
-) -> List[str]:
+) -> list[str]:
     """Return catalog tool names that are similar to *invalid_name*.
 
     Uses substring matching and token overlap to find plausible candidates.
     """
     name_lower = invalid_name.lower()
     tokens = set(name_lower.replace("-", "_").split("_"))
-    scored: List[tuple[str, int]] = []
+    scored: list[tuple[str, int]] = []
     for entry in catalog.list_all():
         entry_lower = entry.name.lower()
         entry_tokens = set(entry_lower.replace("-", "_").split("_"))
@@ -52,14 +52,14 @@ def _suggest_similar_names(
 
 
 def browse_toolkit(
-    query: Optional[str] = None,
-    category: Optional[str] = None,
-    group: Optional[str] = None,
+    query: str | None = None,
+    category: str | None = None,
+    group: str | None = None,
     limit: int = 10,
     offset: int = 0,
     *,
-    tool_catalog: Optional[ToolCatalog] = None,
-    tool_session: Optional[ToolSession] = None,
+    tool_catalog: ToolCatalog | None = None,
+    tool_session: ToolSession | None = None,
 ) -> ToolExecutionResult:
     """Search the tool catalog and return matching tools.
 
@@ -88,10 +88,10 @@ def browse_toolkit(
 
     active = tool_session.active_tools if tool_session else set()
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for entry in entries:
         is_active = entry.name in active
-        result_item: Dict[str, Any] = {
+        result_item: dict[str, Any] = {
             "name": entry.name,
             "description": entry.description,
             "category": entry.category,
@@ -116,7 +116,7 @@ def browse_toolkit(
     active_count = sum(1 for r in results if r.get("active"))
     available_count = len(results) - active_count
 
-    body: Dict[str, Any] = {
+    body: dict[str, Any] = {
         "results": results,
         "total_found": len(results),
         "total_matched": total_matched,
@@ -169,10 +169,10 @@ def browse_toolkit(
 
 
 def load_tools(
-    tool_names: List[str],
+    tool_names: list[str],
     *,
-    tool_catalog: Optional[ToolCatalog] = None,
-    tool_session: Optional[ToolSession] = None,
+    tool_catalog: ToolCatalog | None = None,
+    tool_session: ToolSession | None = None,
 ) -> ToolExecutionResult:
     """Load tools into the active session so the agent can use them.
 
@@ -187,12 +187,12 @@ def load_tools(
             error="No session configured",
         )
 
-    loaded: List[str] = []
-    already_active: List[str] = []
-    invalid: List[Any] = []
+    loaded: list[str] = []
+    already_active: list[str] = []
+    invalid: list[Any] = []
 
     # Build token_counts map from catalog for budget enforcement
-    token_counts: Dict[str, int] = {}
+    token_counts: dict[str, int] = {}
     for name in tool_names:
         # Validate against catalog if available (has_entry avoids lazy
         # parameter resolution, keeping the check lightweight).
@@ -214,7 +214,7 @@ def load_tools(
     # Remove any that hit the limit from the loaded list
     actually_loaded = [n for n in loaded if n not in failed_limit]
 
-    response: Dict[str, Any] = {
+    response: dict[str, Any] = {
         "loaded": actually_loaded,
         "already_active": already_active,
         "invalid": invalid,
@@ -250,8 +250,8 @@ def load_tools(
 def load_tool_group(
     group: str,
     *,
-    tool_catalog: Optional[ToolCatalog] = None,
-    tool_session: Optional[ToolSession] = None,
+    tool_catalog: ToolCatalog | None = None,
+    tool_session: ToolSession | None = None,
 ) -> ToolExecutionResult:
     """Load all tools matching a group prefix in one call.
 
@@ -284,11 +284,11 @@ def load_tool_group(
     entries = tool_catalog.search(group=group, limit=_MAX_GROUP_SEARCH)
     tool_names = [e.name for e in entries]
 
-    loaded: List[str] = []
-    already_active: List[str] = []
+    loaded: list[str] = []
+    already_active: list[str] = []
 
     # Build token_counts map and separate already-active tools
-    token_counts: Dict[str, int] = {}
+    token_counts: dict[str, int] = {}
     for name in tool_names:
         if name in tool_session.active_tools:
             already_active.append(name)
@@ -300,7 +300,7 @@ def load_tool_group(
     failed_limit = tool_session.load(loaded, token_counts=token_counts)
     actually_loaded = [n for n in loaded if n not in failed_limit]
 
-    response: Dict[str, Any] = {
+    response: dict[str, Any] = {
         "group": group,
         "loaded": actually_loaded,
         "already_active": already_active,
@@ -343,9 +343,9 @@ _META_TOOL_NAMES = frozenset(
 def unload_tool_group(
     group: str,
     *,
-    tool_catalog: Optional[ToolCatalog] = None,
-    tool_session: Optional[ToolSession] = None,
-    core_tools: Optional[List[str]] = None,
+    tool_catalog: ToolCatalog | None = None,
+    tool_session: ToolSession | None = None,
+    core_tools: list[str] | None = None,
 ) -> ToolExecutionResult:
     """Unload all tools matching a group prefix in one call.
 
@@ -377,9 +377,9 @@ def unload_tool_group(
 
     protected = _META_TOOL_NAMES | set(core_tools or [])
 
-    unloaded: List[str] = []
-    not_active: List[str] = []
-    refused: List[str] = []
+    unloaded: list[str] = []
+    not_active: list[str] = []
+    refused: list[str] = []
 
     for name in tool_names:
         if name in protected:
@@ -393,7 +393,7 @@ def unload_tool_group(
     if unloaded:
         tool_session.unload(unloaded)
 
-    response: Dict[str, Any] = {
+    response: dict[str, Any] = {
         "group": group,
         "unloaded": unloaded,
         "not_active": not_active,
@@ -420,10 +420,10 @@ def unload_tool_group(
 
 
 def unload_tools(
-    tool_names: List[str],
+    tool_names: list[str],
     *,
-    tool_session: Optional[ToolSession] = None,
-    core_tools: Optional[List[str]] = None,
+    tool_session: ToolSession | None = None,
+    core_tools: list[str] | None = None,
 ) -> ToolExecutionResult:
     """Remove tools from the active session to free context tokens.
 
@@ -443,9 +443,9 @@ def unload_tools(
 
     protected = _META_TOOL_NAMES | set(core_tools or [])
 
-    unloaded: List[str] = []
-    not_active: List[str] = []
-    refused: List[str] = []
+    unloaded: list[str] = []
+    not_active: list[str] = []
+    refused: list[str] = []
 
     for name in tool_names:
         if name in protected:
@@ -460,7 +460,7 @@ def unload_tools(
     if unloaded:
         tool_session.unload(unloaded)
 
-    response: Dict[str, Any] = {
+    response: dict[str, Any] = {
         "unloaded": unloaded,
         "not_active": not_active,
         "refused_protected": refused,
@@ -484,7 +484,7 @@ def unload_tools(
 # Parameter schemas (used by register_meta_tools)
 # ------------------------------------------------------------------
 
-BROWSE_TOOLKIT_PARAMETERS: Dict[str, Any] = {
+BROWSE_TOOLKIT_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "query": {
@@ -513,7 +513,7 @@ BROWSE_TOOLKIT_PARAMETERS: Dict[str, Any] = {
     "required": [],
 }
 
-LOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
+LOAD_TOOLS_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "tool_names": {
@@ -525,7 +525,7 @@ LOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
     "required": ["tool_names"],
 }
 
-LOAD_TOOL_GROUP_PARAMETERS: Dict[str, Any] = {
+LOAD_TOOL_GROUP_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "group": {
@@ -536,7 +536,7 @@ LOAD_TOOL_GROUP_PARAMETERS: Dict[str, Any] = {
     "required": ["group"],
 }
 
-UNLOAD_TOOL_GROUP_PARAMETERS: Dict[str, Any] = {
+UNLOAD_TOOL_GROUP_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "group": {
@@ -547,7 +547,7 @@ UNLOAD_TOOL_GROUP_PARAMETERS: Dict[str, Any] = {
     "required": ["group"],
 }
 
-UNLOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
+UNLOAD_TOOLS_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "tool_names": {
@@ -559,7 +559,7 @@ UNLOAD_TOOLS_PARAMETERS: Dict[str, Any] = {
     "required": ["tool_names"],
 }
 
-FIND_TOOLS_PARAMETERS: Dict[str, Any] = {
+FIND_TOOLS_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "intent": {
@@ -592,11 +592,11 @@ _FIND_TOOLS_SYSTEM = (
 
 
 def _format_catalog_for_prompt(
-    entries: List[Any],
+    entries: list[Any],
     active: set[str],
 ) -> str:
     """Format catalog entries into a compact prompt string."""
-    lines: List[str] = []
+    lines: list[str] = []
     for entry in entries:
         if entry.name in active:
             continue  # skip already-loaded tools
@@ -612,9 +612,9 @@ def _format_catalog_for_prompt(
 async def find_tools(
     intent: str,
     *,
-    tool_catalog: Optional[ToolCatalog] = None,
-    tool_session: Optional[ToolSession] = None,
-    _search_agent: Optional[Any] = None,
+    tool_catalog: ToolCatalog | None = None,
+    tool_session: ToolSession | None = None,
+    _search_agent: Any | None = None,
 ) -> ToolExecutionResult:
     """Find tools using semantic search via a sub-agent LLM.
 
@@ -696,7 +696,7 @@ async def find_tools(
         )
 
     # Parse the sub-agent response.
-    tool_names: List[str] = []
+    tool_names: list[str] = []
     reasoning = ""
     try:
         parsed = json.loads(result.content)
@@ -722,7 +722,7 @@ async def find_tools(
         )
 
     # Build browse_toolkit-compatible response.
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for name in tool_names:
         entry = tool_catalog.get_entry(name)
         if entry is None:
@@ -742,7 +742,7 @@ async def find_tools(
             }
         )
 
-    body: Dict[str, Any] = {
+    body: dict[str, Any] = {
         "results": results,
         "total_found": len(results),
         "intent": intent,

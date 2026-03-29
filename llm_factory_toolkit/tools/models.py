@@ -1,11 +1,11 @@
 # llm_factory_toolkit/llm_factory_toolkit/tools/models.py
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Generation result (moved from providers/base.py)
@@ -42,12 +42,12 @@ class GenerationResult:
         content, payloads = await client.generate(input=messages)
     """
 
-    content: Optional[BaseModel | str]
-    payloads: List[Any] = field(default_factory=list)
-    tool_messages: List[Dict[str, Any]] = field(default_factory=list)
-    messages: Optional[List[Dict[str, Any]]] = None
-    usage: Optional[Dict[str, int]] = None
-    cost_usd: Optional[float] = None
+    content: BaseModel | str | None
+    payloads: list[Any] = field(default_factory=list)
+    tool_messages: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, Any]] | None = None
+    usage: dict[str, int] | None = None
+    cost_usd: float | None = None
 
     def __iter__(self) -> Iterator[Any]:
         """Yield items so callers can unpack the result like a tuple."""
@@ -76,7 +76,7 @@ class StreamChunk:
 
     content: str = ""
     done: bool = False
-    usage: Optional[Dict[str, int]] = None
+    usage: dict[str, int] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +104,9 @@ class UsageEvent:
     iteration: int
     input_tokens: int
     output_tokens: int
-    cost_usd: Optional[float]
-    tool_calls: List[str]
-    metadata: Dict[str, Any]
+    cost_usd: float | None
+    tool_calls: list[str]
+    metadata: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +119,10 @@ class ParsedToolCall(BaseModel):
 
     id: str = Field(description="Tool call ID from the provider.")
     name: str = Field(description="Name of the function to be called.")
-    arguments: Union[Dict[str, Any], str] = Field(
+    arguments: dict[str, Any] | str = Field(
         description="Parsed arguments as a dict, or raw string if parsing failed."
     )
-    arguments_parsing_error: Optional[str] = Field(
+    arguments_parsing_error: str | None = Field(
         default=None,
         description="Error message if argument parsing failed.",
     )
@@ -132,15 +132,15 @@ class ToolIntentOutput(BaseModel):
     """Result of :meth:`LLMClient.generate_tool_intent` — planned tool calls
     that have not yet been executed."""
 
-    content: Optional[str] = Field(
+    content: str | None = Field(
         default=None,
         description="Text content if the LLM replied directly without a tool call.",
     )
-    tool_calls: Optional[List[ParsedToolCall]] = Field(
+    tool_calls: list[ParsedToolCall] | None = Field(
         default=None,
         description="List of parsed tool calls planned by the model.",
     )
-    raw_assistant_message: List[Dict[str, Any]] = Field(
+    raw_assistant_message: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Raw output items from the assistant (e.g., function_call items).",
     )
@@ -173,5 +173,5 @@ class ToolExecutionResult(BaseModel):
 
     content: str
     payload: Any = None
-    metadata: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    metadata: dict[str, Any] | None = None
+    error: str | None = None

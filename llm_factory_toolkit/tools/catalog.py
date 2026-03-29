@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .tool_factory import ToolFactory
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 _CHARS_PER_TOKEN: float = 4.0
 
 
-def estimate_token_count(definition: Dict[str, Any]) -> int:
+def estimate_token_count(definition: dict[str, Any]) -> int:
     """Estimate how many LLM context tokens a tool definition will consume.
 
     The formula serialises the definition to compact JSON and divides by a
@@ -50,10 +51,10 @@ class ToolCatalogEntry:
 
     name: str
     description: str
-    parameters: Optional[Dict[str, Any]] = None
-    tags: List[str] = field(default_factory=list)
-    category: Optional[str] = None
-    group: Optional[str] = None
+    parameters: dict[str, Any] | None = None
+    tags: list[str] = field(default_factory=list)
+    category: str | None = None
+    group: str | None = None
     token_count: int = 0
 
     def matches_query(self, query: str) -> bool:
@@ -177,11 +178,11 @@ class LazyCatalogEntry(ToolCatalogEntry):
         *,
         name: str,
         description: str,
-        tags: Optional[List[str]] = None,
-        category: Optional[str] = None,
-        group: Optional[str] = None,
+        tags: list[str] | None = None,
+        category: str | None = None,
+        group: str | None = None,
         token_count: int = 0,
-        resolver: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+        resolver: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -231,15 +232,15 @@ class ToolCatalog(ABC):
     @abstractmethod
     def search(
         self,
-        query: Optional[str] = None,
-        category: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        group: Optional[str] = None,
+        query: str | None = None,
+        category: str | None = None,
+        tags: list[str] | None = None,
+        group: str | None = None,
         limit: int = 10,
         offset: int = 0,
         min_score: float = 0.0,
         include_params: bool = False,
-    ) -> List[ToolCatalogEntry]:
+    ) -> list[ToolCatalogEntry]:
         """Search the catalog and return matching entries.
 
         When *query* is given, results are sorted by descending relevance
@@ -266,7 +267,7 @@ class ToolCatalog(ABC):
         """
 
     @abstractmethod
-    def get_entry(self, tool_name: str) -> Optional[ToolCatalogEntry]:
+    def get_entry(self, tool_name: str) -> ToolCatalogEntry | None:
         """Return the catalog entry for *tool_name*, or ``None``.
 
         For :class:`InMemoryToolCatalog` this lazily resolves the
@@ -283,15 +284,15 @@ class ToolCatalog(ABC):
         """
 
     @abstractmethod
-    def list_categories(self) -> List[str]:
+    def list_categories(self) -> list[str]:
         """Return all available categories."""
 
     @abstractmethod
-    def list_groups(self) -> List[str]:
+    def list_groups(self) -> list[str]:
         """Return all available groups, sorted."""
 
     @abstractmethod
-    def get_tools_in_group(self, group: str) -> List[str]:
+    def get_tools_in_group(self, group: str) -> list[str]:
         """Return tool names whose group matches *group* exactly or by prefix.
 
         For example, ``get_tools_in_group("crm")`` returns tools in both
@@ -306,7 +307,7 @@ class ToolCatalog(ABC):
         """
 
     @abstractmethod
-    def list_all(self) -> List[ToolCatalogEntry]:
+    def list_all(self) -> list[ToolCatalogEntry]:
         """Return every entry in the catalog."""
 
     def get_token_count(self, tool_name: str) -> int:
@@ -314,7 +315,7 @@ class ToolCatalog(ABC):
         entry = self.get_entry(tool_name)
         return entry.token_count if entry else 0
 
-    def estimate_token_savings(self) -> Dict[str, Dict[str, int]]:
+    def estimate_token_savings(self) -> dict[str, dict[str, int]]:
         """Estimate per-tool and total token savings from compact mode.
 
         Returns a dict keyed by tool name, each containing:
@@ -351,7 +352,7 @@ class InMemoryToolCatalog(ToolCatalog):
 
     def __init__(self, tool_factory: ToolFactory) -> None:
         self._factory = tool_factory
-        self._entries: Dict[str, ToolCatalogEntry] = {}
+        self._entries: dict[str, ToolCatalogEntry] = {}
         self._last_search_total: int = 0
         self._build_from_factory()
 
@@ -381,14 +382,14 @@ class InMemoryToolCatalog(ToolCatalog):
             "InMemoryToolCatalog built with %d lazy entries.", len(self._entries)
         )
 
-    def _make_resolver(self, tool_name: str) -> Callable[[], Optional[Dict[str, Any]]]:
+    def _make_resolver(self, tool_name: str) -> Callable[[], dict[str, Any] | None]:
         """Return a closure that fetches parameters from the factory."""
 
-        def _resolve() -> Optional[Dict[str, Any]]:
+        def _resolve() -> dict[str, Any] | None:
             reg = self._factory.registrations.get(tool_name)
             if reg is None:
                 return None
-            params: Optional[Dict[str, Any]] = reg.definition.get("function", {}).get(
+            params: dict[str, Any] | None = reg.definition.get("function", {}).get(
                 "parameters"
             )
             return params
@@ -399,9 +400,9 @@ class InMemoryToolCatalog(ToolCatalog):
         self,
         name: str,
         *,
-        category: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        group: Optional[str] = None,
+        category: str | None = None,
+        tags: list[str] | None = None,
+        group: str | None = None,
     ) -> None:
         """Enrich an existing entry with a category, tags, and/or group.
 
@@ -428,17 +429,17 @@ class InMemoryToolCatalog(ToolCatalog):
 
     def search(
         self,
-        query: Optional[str] = None,
-        category: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        group: Optional[str] = None,
+        query: str | None = None,
+        category: str | None = None,
+        tags: list[str] | None = None,
+        group: str | None = None,
         limit: int = 10,
         offset: int = 0,
         min_score: float = 0.0,
         include_params: bool = False,
-    ) -> List[ToolCatalogEntry]:
-        results: List[ToolCatalogEntry] = []
-        tag_set = set(t.lower() for t in tags) if tags else None
+    ) -> list[ToolCatalogEntry]:
+        results: list[ToolCatalogEntry] = []
+        tag_set = {t.lower() for t in tags} if tags else None
         # Normalise group prefix for "startswith" matching.
         group_prefix = (group + ".") if group else None
 
@@ -485,7 +486,7 @@ class InMemoryToolCatalog(ToolCatalog):
 
         return results
 
-    def get_entry(self, tool_name: str) -> Optional[ToolCatalogEntry]:
+    def get_entry(self, tool_name: str) -> ToolCatalogEntry | None:
         entry = self._entries.get(tool_name)
         if entry is not None:
             # Force lazy resolution so callers always see parameters.
@@ -500,17 +501,17 @@ class InMemoryToolCatalog(ToolCatalog):
         entry = self._entries.get(tool_name)
         return entry.token_count if entry else 0
 
-    def list_categories(self) -> List[str]:
+    def list_categories(self) -> list[str]:
         cats = {e.category for e in self._entries.values() if e.category}
         return sorted(cats)
 
-    def list_groups(self) -> List[str]:
+    def list_groups(self) -> list[str]:
         groups = {e.group for e in self._entries.values() if e.group}
         return sorted(groups)
 
-    def get_tools_in_group(self, group: str) -> List[str]:
+    def get_tools_in_group(self, group: str) -> list[str]:
         group_prefix = group + "."
-        names: List[str] = []
+        names: list[str] = []
         for entry in self._entries.values():
             if entry.group is not None and (
                 entry.group == group or entry.group.startswith(group_prefix)
@@ -518,16 +519,16 @@ class InMemoryToolCatalog(ToolCatalog):
                 names.append(entry.name)
         return sorted(names)
 
-    def list_all(self) -> List[ToolCatalogEntry]:
+    def list_all(self) -> list[ToolCatalogEntry]:
         return list(self._entries.values())
 
-    def estimate_token_savings(self) -> Dict[str, Dict[str, int]]:
+    def estimate_token_savings(self) -> dict[str, dict[str, int]]:
         """Estimate per-tool and total savings from compact mode."""
         from .tool_factory import ToolFactory
 
         total_full = 0
         total_compact = 0
-        result: Dict[str, Dict[str, int]] = {}
+        result: dict[str, dict[str, int]] = {}
 
         for name, reg in self._factory.registrations.items():
             full_def = reg.definition
