@@ -8,7 +8,6 @@ import os
 from collections.abc import AsyncGenerator
 from typing import (
     Any,
-    cast,
 )
 
 from pydantic import BaseModel
@@ -130,17 +129,10 @@ class AnthropicAdapter(BaseProvider):
 
     @staticmethod
     def _is_quota_error(error: Exception) -> bool:
-        """Detect permanent quota exhaustion vs transient rate limit.
-
-        Anthropic raises ``PermissionDeniedError`` (403) or ``RateLimitError``
-        (429) for quota issues.  We check the error type name to avoid
-        importing the SDK at module level.
-        """
+        """Detect permanent quota exhaustion vs transient rate limit."""
         error_type = type(error).__name__
-        # PermissionDeniedError (403) typically means billing/quota issues
         if error_type == "PermissionDeniedError":
             return True
-        # RateLimitError (429) with "quota" or "exceeded" in message
         if error_type == "RateLimitError":
             msg = str(error).lower()
             if "quota" in msg or "exceeded" in msg or "billing" in msg:
@@ -396,6 +388,41 @@ class AnthropicAdapter(BaseProvider):
         return None
 
     # ------------------------------------------------------------------
+    # Structured output helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_output_config(
+        pydantic_model: type[BaseModel],
+    ) -> dict[str, Any]:
+        """Build an ``output_config`` dict for native structured output.
+
+        Uses the ``json_schema`` format type introduced in the Anthropic
+        SDK ``>=0.80``.
+        """
+        return {
+            "format": {
+                "type": "json_schema",
+                "schema": pydantic_model.model_json_schema(),
+            }
+        }
+
+    @staticmethod
+    def _parse_structured_text(
+        text: str,
+        pydantic_cls: type[BaseModel],
+    ) -> BaseModel | None:
+        """Try to parse *text* as JSON and validate against *pydantic_cls*.
+
+        Returns ``None`` if parsing or validation fails.
+        """
+        try:
+            data = json.loads(text)
+            return pydantic_cls.model_validate(data)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return None
+
+    # ------------------------------------------------------------------
     # _call_api — non-streaming
     # ------------------------------------------------------------------
 
@@ -442,29 +469,96 @@ class AnthropicAdapter(BaseProvider):
         if effective_tools:
             request["tools"] = effective_tools
 
-        # Structured output: force a tool call to a "json_output" tool
-        structured_tool_name: str | None = None
+        # Structured output: prefer native output_config, fall back to tool trick.
+        use_native_structured: bool = False
+        pydantic_cls: type[BaseModel] | None = None
+
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-            schema = response_format.model_json_schema()
-            structured_tool_name = "__json_output__"
-            output_tool = {
-                "name": structured_tool_name,
-                "description": (
-                    "Return the response in the specified JSON schema. "
-                    "Always use this tool to format your response."
-                ),
-                "input_schema": schema,
-            }
-            existing = request.get("tools", [])
-            if existing:
-                request["tools"] = list(existing) + [output_tool]
-            else:
-                request["tools"] = [output_tool]
-                request["tool_choice"] = {"type": "tool", "name": structured_tool_name}
+            pydantic_cls = response_format
+            request["output_config"] = self._build_output_config(pydantic_cls)
+            use_native_structured = True
 
         # Forward any remaining kwargs to the API request
         if kwargs:
             request.update(kwargs)
+
+        try:
+            response = await client.messages.create(**request)
+        except Exception as e:
+            if self._is_quota_error(e):
+                raise QuotaExhaustedError(
+                    "Anthropic quota exhausted — check billing at "
+                    "https://console.anthropic.com/settings/billing"
+                ) from e
+            # If native structured output is not supported by the model/API,
+            # fall back to the __json_output__ tool trick.
+            if use_native_structured and pydantic_cls is not None:
+                logger.debug(
+                    "Native structured output failed, falling back to "
+                    "__json_output__ tool trick: %s",
+                    e,
+                )
+                return await self._call_api_tool_trick_fallback(
+                    client,
+                    request,
+                    pydantic_cls,
+                )
+            raise ProviderError(f"Anthropic API error: {e}") from e
+
+        content_text, tool_calls = self._parse_response(response)
+        usage = self._extract_usage(response)
+
+        # Parse native structured output from text content.
+        parsed_content: BaseModel | None = None
+        if use_native_structured and pydantic_cls is not None:
+            parsed_content = self._parse_structured_text(content_text, pydantic_cls)
+            if parsed_content is None:
+                logger.warning(
+                    "Failed to parse native structured output from Anthropic "
+                    "response text, content was: %.200s",
+                    content_text,
+                )
+
+        raw_messages = self._build_raw_messages(content_text, tool_calls)
+
+        return ProviderResponse(
+            content=content_text,
+            tool_calls=tool_calls,
+            raw_messages=raw_messages,
+            usage=usage,
+            parsed_content=parsed_content,
+        )
+
+    async def _call_api_tool_trick_fallback(
+        self,
+        client: Any,
+        request: dict[str, Any],
+        pydantic_cls: type[BaseModel],
+    ) -> ProviderResponse:
+        """Fall back to the ``__json_output__`` tool trick for structured output.
+
+        Called when native ``output_config`` is rejected by the API (e.g.
+        older models that predate native structured outputs).
+        """
+        # Remove the native output_config from the request.
+        request.pop("output_config", None)
+
+        structured_tool_name = "__json_output__"
+        schema = pydantic_cls.model_json_schema()
+        output_tool = {
+            "name": structured_tool_name,
+            "description": (
+                "Return the response in the specified JSON schema. "
+                "Always use this tool to format your response."
+            ),
+            "input_schema": schema,
+        }
+        existing = request.get("tools", [])
+        if existing:
+            request["tools"] = list(existing) + [output_tool]
+        else:
+            request["tools"] = [output_tool]
+            request["tool_choice"] = {"type": "tool", "name": structured_tool_name}
 
         try:
             response = await client.messages.create(**request)
@@ -481,12 +575,11 @@ class AnthropicAdapter(BaseProvider):
 
         # Handle structured output tool response
         parsed_content: BaseModel | None = None
-        if structured_tool_name and tool_calls:
+        if tool_calls:
             for tc in tool_calls:
                 if tc.name == structured_tool_name:
                     try:
                         args = json.loads(tc.arguments)
-                        pydantic_cls = cast(type[BaseModel], response_format)
                         parsed_content = pydantic_cls.model_validate(args)
                         # Remove the synthetic tool call and return as content
                         tool_calls = [
@@ -552,6 +645,12 @@ class AnthropicAdapter(BaseProvider):
             effective_tools.append(ws_tool)
         if effective_tools:
             request["tools"] = effective_tools
+
+        # Native structured output for streaming.
+        pydantic_cls: type[BaseModel] | None = None
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            pydantic_cls = response_format
+            request["output_config"] = self._build_output_config(pydantic_cls)
 
         # Forward any remaining kwargs to the API request
         if kwargs:

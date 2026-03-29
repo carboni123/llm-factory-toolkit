@@ -404,10 +404,8 @@ class TestCallApi:
         fake_response = SimpleNamespace(
             content=[
                 SimpleNamespace(
-                    type="tool_use",
-                    id="tc1",
-                    name="__json_output__",
-                    input={"name": "test", "value": 42},
+                    type="text",
+                    text='{"name": "test", "value": 42}',
                 )
             ],
             usage=SimpleNamespace(input_tokens=5, output_tokens=3),
@@ -427,7 +425,10 @@ class TestCallApi:
         assert result.parsed_content.name == "test"
         assert len(result.tool_calls) == 0
         call_kwargs = create_mock.call_args.kwargs
-        assert call_kwargs["tool_choice"]["name"] == "__json_output__"
+        # Native structured output uses output_config, not tool_choice
+        assert "output_config" in call_kwargs
+        assert call_kwargs["output_config"]["format"]["type"] == "json_schema"
+        assert "tool_choice" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_structured_output_with_existing_tools(
@@ -435,7 +436,7 @@ class TestCallApi:
     ) -> None:
         adapter = AnthropicAdapter(api_key="k")
         fake_response = SimpleNamespace(
-            content=[SimpleNamespace(type="text", text="no match")],
+            content=[SimpleNamespace(type="text", text='{"name": "x", "value": 1}')],
             usage=None,
         )
         create_mock = AsyncMock(return_value=fake_response)
@@ -453,7 +454,9 @@ class TestCallApi:
         call_kwargs = create_mock.call_args.kwargs
         tool_names = [t["name"] for t in call_kwargs["tools"]]
         assert "fn" in tool_names
-        assert "__json_output__" in tool_names
+        # Native structured output uses output_config, not __json_output__ tool
+        assert "__json_output__" not in tool_names
+        assert "output_config" in call_kwargs
         assert "tool_choice" not in call_kwargs
 
     @pytest.mark.asyncio
@@ -707,14 +710,13 @@ class TestCallApiWebSearch:
         assert tools[1]["type"] == "web_search_20250305"
 
     @pytest.mark.asyncio
-    async def test_web_search_not_lost_with_structured_output(self) -> None:
-        """web_search tool must coexist with the __json_output__ structured output tool."""
+    async def test_web_search_coexists_with_structured_output(self) -> None:
+        """web_search tool must coexist with native output_config structured output."""
         adapter = AnthropicAdapter(api_key="k")
 
         mock_response = SimpleNamespace(
             content=[SimpleNamespace(
-                type="tool_use", id="tc1", name="__json_output__",
-                input={"name": "test", "value": 1},
+                type="text", text='{"name": "test", "value": 1}',
             )],
             usage=SimpleNamespace(input_tokens=10, output_tokens=5),
         )
@@ -732,8 +734,11 @@ class TestCallApiWebSearch:
         call_kwargs = mock_client.messages.create.call_args[1]
         tools = call_kwargs["tools"]
         tool_types_or_names = [(t.get("type"), t.get("name")) for t in tools]
+        # Web search tool should still be present
         assert ("web_search_20250305", "web_search") in tool_types_or_names
-        assert any(name == "__json_output__" for _, name in tool_types_or_names)
+        # Native structured output uses output_config, not __json_output__ tool
+        assert not any(name == "__json_output__" for _, name in tool_types_or_names)
+        assert "output_config" in call_kwargs
 
 
 class TestServerToolUseHandling:
