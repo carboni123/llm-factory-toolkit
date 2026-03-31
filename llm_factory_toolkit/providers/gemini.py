@@ -249,6 +249,60 @@ class GeminiAdapter(BaseProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _inline_defs(schema: dict[str, Any]) -> dict[str, Any]:
+        """Resolve all ``$ref`` pointers by inlining ``$defs`` definitions.
+
+        The google-genai SDK does not support JSON Schema ``$ref``/``$defs``.
+        Pydantic v2's ``model_json_schema()`` emits these for nested models.
+        This method recursively replaces ``$ref`` with the referenced definition
+        and removes ``$defs`` from the top-level schema.
+        """
+        defs = schema.get("$defs", {})
+        if not defs:
+            return schema
+
+        def _resolve(node: dict[str, Any]) -> dict[str, Any]:
+            if "$ref" in node:
+                ref_path = node["$ref"]  # e.g. "#/$defs/Address"
+                ref_name = ref_path.rsplit("/", 1)[-1]
+                resolved = dict(defs.get(ref_name, {}))
+                resolved.pop("title", None)
+                # Merge any sibling keys (e.g. description alongside $ref)
+                for k, v in node.items():
+                    if k != "$ref":
+                        resolved.setdefault(k, v)
+                return _resolve(resolved)  # recurse in case of chained refs
+
+            result = {**node}
+
+            if "properties" in result:
+                result["properties"] = {
+                    k: _resolve(v) for k, v in result["properties"].items()
+                }
+
+            if "items" in result and isinstance(result["items"], dict):
+                result["items"] = _resolve(result["items"])
+
+            for keyword in ("anyOf", "allOf", "oneOf"):
+                if keyword in result and isinstance(result[keyword], list):
+                    result[keyword] = [
+                        _resolve(branch) if isinstance(branch, dict) else branch
+                        for branch in result[keyword]
+                    ]
+
+            if "prefixItems" in result and isinstance(result["prefixItems"], list):
+                result["prefixItems"] = [
+                    _resolve(item) if isinstance(item, dict) else item
+                    for item in result["prefixItems"]
+                ]
+
+            return result
+
+        resolved = _resolve(schema)
+        resolved.pop("$defs", None)
+        return resolved
+
+    @staticmethod
     def _normalize_schema_for_gemini(schema: dict[str, Any]) -> dict[str, Any]:
         """Convert JSON Schema nullable types to Gemini-compatible format.
 
@@ -295,6 +349,7 @@ class GeminiAdapter(BaseProvider):
                 func_def = tool_def.get("function", {})
                 parameters = func_def.get("parameters")
                 if parameters:
+                    parameters = self._inline_defs(parameters)
                     parameters = self._normalize_schema_for_gemini(parameters)
                 tools.append(
                     {

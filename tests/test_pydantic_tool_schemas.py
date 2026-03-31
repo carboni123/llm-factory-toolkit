@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from llm_factory_toolkit.providers.gemini import GeminiAdapter
 from llm_factory_toolkit.providers.openai import OpenAIAdapter
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
@@ -338,3 +339,180 @@ class TestOpenAIStrictModeRecursive:
                 if def_schema.get("type") == "object":
                     assert def_schema["additionalProperties"] is False
                     assert set(def_schema["required"]) == {"street", "city"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: Gemini $defs/$ref inlining
+# ---------------------------------------------------------------------------
+
+
+class TestGeminiDefsInlining:
+    """Gemini _build_tool_definitions inlines $defs/$ref since the SDK
+    doesn't support JSON Schema references."""
+
+    def _build_and_extract(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        """Helper: wrap params in a tool definition, run through Gemini builder."""
+        definitions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "test_tool",
+                    "description": "A test tool.",
+                    "parameters": parameters,
+                },
+            }
+        ]
+        adapter = GeminiAdapter.__new__(GeminiAdapter)
+        result = adapter._build_tool_definitions(definitions)
+        return result[0]["parameters"]
+
+    def test_flat_schema_passes_through(self) -> None:
+        params = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+            "required": ["name"],
+        }
+        result = self._build_and_extract(params)
+        assert result["properties"]["name"]["type"] == "string"
+        assert "$defs" not in result
+
+    def test_ref_is_inlined(self) -> None:
+        params = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "address": {"$ref": "#/$defs/Address"},
+            },
+            "required": ["name", "address"],
+            "$defs": {
+                "Address": {
+                    "type": "object",
+                    "properties": {
+                        "street": {"type": "string"},
+                        "city": {"type": "string"},
+                    },
+                    "required": ["street", "city"],
+                    "title": "Address",
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        # $defs must be removed
+        assert "$defs" not in result
+        # $ref must be replaced with the inlined definition
+        addr = result["properties"]["address"]
+        assert addr["type"] == "object"
+        assert "street" in addr["properties"]
+        assert "city" in addr["properties"]
+        assert "$ref" not in addr
+
+    def test_nested_ref_in_array_items(self) -> None:
+        params = {
+            "type": "object",
+            "properties": {
+                "contacts": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/Contact"},
+                }
+            },
+            "$defs": {
+                "Contact": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "phone": {"type": "string"},
+                    },
+                    "required": ["name"],
+                    "title": "Contact",
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        assert "$defs" not in result
+        item = result["properties"]["contacts"]["items"]
+        assert item["type"] == "object"
+        assert "name" in item["properties"]
+        assert "$ref" not in item
+
+    def test_ref_in_anyof(self) -> None:
+        params = {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "anyOf": [
+                        {"$ref": "#/$defs/Address"},
+                        {"type": "null"},
+                    ]
+                }
+            },
+            "$defs": {
+                "Address": {
+                    "type": "object",
+                    "properties": {
+                        "street": {"type": "string"},
+                    },
+                    "required": ["street"],
+                    "title": "Address",
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        assert "$defs" not in result
+        branch = result["properties"]["address"]["anyOf"][0]
+        assert branch["type"] == "object"
+        assert "$ref" not in branch
+
+    def test_title_stripped_from_inlined_defs(self) -> None:
+        params = {
+            "type": "object",
+            "properties": {
+                "address": {"$ref": "#/$defs/Address"},
+            },
+            "$defs": {
+                "Address": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "title": "Address",
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        addr = result["properties"]["address"]
+        assert "title" not in addr
+
+    def test_real_pydantic_nested_model(self) -> None:
+        """End-to-end: Pydantic nested model -> Gemini schema normalization."""
+
+        class PhoneNumber(BaseModel):
+            country_code: str
+            number: str
+
+        class Person(BaseModel):
+            name: str
+            phone: PhoneNumber
+
+        schema = Person.model_json_schema()
+        schema.pop("title", None)
+        result = self._build_and_extract(schema)
+
+        # No $defs or $ref remain
+        assert "$defs" not in result
+        phone = result["properties"]["phone"]
+        assert "$ref" not in phone
+        assert phone["type"] == "object"
+        assert "country_code" in phone["properties"]
+        assert "number" in phone["properties"]
+
+    def test_nullable_normalization_still_works(self) -> None:
+        """Existing nullable type array conversion still works after inlining."""
+        params = {
+            "type": "object",
+            "properties": {
+                "name": {"type": ["string", "null"]},
+            },
+        }
+        result = self._build_and_extract(params)
+        assert result["properties"]["name"]["type"] == "string"
+        assert result["properties"]["name"]["nullable"] is True
