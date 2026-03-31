@@ -5,12 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
 from pydantic import BaseModel
 
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: Pydantic models
@@ -40,7 +38,11 @@ class NestedInput(BaseModel):
 
 async def dummy_tool(**kwargs: Any) -> ToolExecutionResult:
     # Filter out non-serializable context-injected values
-    serializable = {k: v for k, v in kwargs.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+    serializable = {
+        k: v
+        for k, v in kwargs.items()
+        if isinstance(v, (str, int, float, bool, list, dict, type(None)))
+    }
     return ToolExecutionResult(content=json.dumps(serializable))
 
 
@@ -124,7 +126,6 @@ class TestRegisterToolWithPydanticModel:
         assert "name" in params["properties"]
         assert "age" in params["properties"]
 
-    @pytest.mark.asyncio
     async def test_dispatch_with_pydantic_registered_tool(self) -> None:
         factory = ToolFactory()
         factory.register_tool(
@@ -150,7 +151,9 @@ class TestRegisterToolClassWithPydanticModel:
             PARAMETERS = SimpleInput
 
             @classmethod
-            def execute(cls, name: str, email: str | None = None) -> ToolExecutionResult:
+            def execute(
+                cls, name: str, email: str | None = None
+            ) -> ToolExecutionResult:
                 return ToolExecutionResult(content=f"Hello {name}")
 
         factory = ToolFactory()
@@ -167,7 +170,7 @@ class TestRegisterToolClassWithPydanticModel:
         class OldTool(BaseTool):
             NAME = "old_tool"
             DESCRIPTION = "Legacy dict params."
-            PARAMETERS = {
+            PARAMETERS = {  # noqa: RUF012
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
                 "required": ["x"],
