@@ -242,6 +242,7 @@ async def test_openai_generate_stream_returns_usage_metadata(
         "prompt_tokens": 3,
         "completion_tokens": 2,
         "total_tokens": 5,
+        "cached_tokens": 0,
     }
 
 

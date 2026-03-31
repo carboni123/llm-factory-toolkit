@@ -296,6 +296,8 @@ class TestExtractUsage:
             "prompt_tokens": 10,
             "completion_tokens": 5,
             "total_tokens": 15,
+            "cached_tokens": 0,
+            "cache_creation_tokens": 0,
         }
 
     def test_without_usage(self) -> None:
@@ -311,6 +313,8 @@ class TestExtractUsage:
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_tokens": 0,
         }
 
 

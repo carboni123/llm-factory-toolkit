@@ -1096,6 +1096,7 @@ class BaseProvider(abc.ABC):
             "completion_tokens": 0,
             "total_tokens": 0,
             "cached_tokens": 0,
+            "cache_creation_tokens": 0,
         }
         accumulated_cost: float | None = 0.0
 
@@ -1160,6 +1161,9 @@ class BaseProvider(abc.ABC):
             iteration_cached = (
                 response.usage.get("cached_tokens", 0) if response.usage else 0
             )
+            iteration_cache_creation = (
+                response.usage.get("cache_creation_tokens", 0) if response.usage else 0
+            )
 
             if on_usage is not None:
                 event = UsageEvent(
@@ -1168,6 +1172,7 @@ class BaseProvider(abc.ABC):
                     input_tokens=iteration_input,
                     output_tokens=iteration_output,
                     cached_tokens=iteration_cached,
+                    cache_creation_tokens=iteration_cache_creation,
                     cost_usd=iteration_cost,
                     tool_calls=tool_names,
                     metadata=usage_metadata or {},

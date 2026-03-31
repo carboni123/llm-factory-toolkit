@@ -96,6 +96,10 @@ class UsageEvent:
         cached_tokens: Number of input tokens served from the provider's
             prompt cache this iteration.  ``0`` when the provider does not
             report cache hits.
+        cache_creation_tokens: Number of input tokens written into the
+            provider's prompt cache this iteration.  ``0`` when the
+            provider does not report cache writes.  Anthropic bills cache
+            creation at 1.25x the base input rate.
         cost_usd: Estimated cost in USD for this iteration, or ``None``
             if pricing is unknown for the model.
         tool_calls: Names of tools called after this LLM response.
@@ -108,6 +112,7 @@ class UsageEvent:
     input_tokens: int
     output_tokens: int
     cached_tokens: int = 0
+    cache_creation_tokens: int = 0
     cost_usd: float | None = None
     tool_calls: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

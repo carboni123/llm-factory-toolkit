@@ -75,6 +75,54 @@ class TestAnthropicCacheControl:
         assert system == "plain prompt"
         assert len(remaining) == 1
 
+    def test_all_cacheable_sections(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": "ignored",
+                "_cache_sections": [
+                    {"content": "part 1", "cacheable": True},
+                    {"content": "part 2", "cacheable": True},
+                ],
+            },
+            {"role": "user", "content": "hello"},
+        ]
+        system, _ = AnthropicAdapter._extract_system_with_cache(messages)
+        assert isinstance(system, list)
+        assert len(system) == 1
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_all_dynamic_sections(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": "ignored",
+                "_cache_sections": [
+                    {"content": "dynamic 1", "cacheable": False},
+                    {"content": "dynamic 2", "cacheable": False},
+                ],
+            },
+            {"role": "user", "content": "hello"},
+        ]
+        system, _ = AnthropicAdapter._extract_system_with_cache(messages)
+        assert isinstance(system, list)
+        assert len(system) == 1
+        assert "cache_control" not in system[0]
+
+    def test_empty_cache_sections_falls_back_to_string(self) -> None:
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": "plain", "_cache_sections": []},
+            {"role": "user", "content": "hello"},
+        ]
+        system, _ = AnthropicAdapter._extract_system_with_cache(messages)
+        assert system == "plain"
+
+    def test_no_system_message(self) -> None:
+        messages: list[dict[str, Any]] = [{"role": "user", "content": "hello"}]
+        system, remaining = AnthropicAdapter._extract_system_with_cache(messages)
+        assert system is None
+        assert len(remaining) == 1
+
 
 class TestAnthropicCachedTokens:
     def test_extracts_cache_read_tokens(self) -> None:
@@ -89,6 +137,21 @@ class TestAnthropicCachedTokens:
         usage = AnthropicAdapter._extract_usage(response)
         assert usage is not None
         assert usage["cached_tokens"] == 800
+        assert usage["cache_creation_tokens"] == 0
+
+    def test_extracts_cache_creation_tokens(self) -> None:
+        response = SimpleNamespace(
+            usage=SimpleNamespace(
+                input_tokens=1000,
+                output_tokens=200,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=500,
+            )
+        )
+        usage = AnthropicAdapter._extract_usage(response)
+        assert usage is not None
+        assert usage["cached_tokens"] == 0
+        assert usage["cache_creation_tokens"] == 500
 
     def test_cache_tokens_default_to_zero(self) -> None:
         response = SimpleNamespace(
@@ -97,3 +160,4 @@ class TestAnthropicCachedTokens:
         usage = AnthropicAdapter._extract_usage(response)
         assert usage is not None
         assert usage["cached_tokens"] == 0
+        assert usage["cache_creation_tokens"] == 0

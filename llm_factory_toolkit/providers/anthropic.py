@@ -381,11 +381,13 @@ class AnthropicAdapter(BaseProvider):
             input_tokens = getattr(usage, "input_tokens", 0) or 0
             output_tokens = getattr(usage, "output_tokens", 0) or 0
             cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+            cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
             return {
                 "prompt_tokens": input_tokens,
                 "completion_tokens": output_tokens,
                 "total_tokens": input_tokens + output_tokens,
                 "cached_tokens": cache_read,
+                "cache_creation_tokens": cache_creation,
             }
         return None
 
