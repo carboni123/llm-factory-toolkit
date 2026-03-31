@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from llm_factory_toolkit.providers.openai import OpenAIAdapter
 from llm_factory_toolkit.tools.models import ToolExecutionResult
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
@@ -185,3 +186,155 @@ class TestRegisterToolClassWithPydanticModel:
 
         params = factory.get_tool_definitions()[0]["function"]["parameters"]
         assert params["properties"]["x"] == {"type": "string"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: OpenAI strict mode recursive schema patching
+# ---------------------------------------------------------------------------
+
+
+class TestOpenAIStrictModeRecursive:
+    """OpenAI _build_tool_definitions patches nested schemas for strict mode."""
+
+    def _build_and_extract(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        """Helper: wrap params in a tool definition, run through OpenAI builder."""
+        definitions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "test_tool",
+                    "description": "A test tool.",
+                    "parameters": parameters,
+                },
+            }
+        ]
+        adapter = OpenAIAdapter.__new__(OpenAIAdapter)
+        result = adapter._build_tool_definitions(definitions)
+        return result[0]["parameters"]
+
+    def test_flat_schema_unchanged_behavior(self) -> None:
+        params = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"},
+            },
+        }
+        result = self._build_and_extract(params)
+        assert result["additionalProperties"] is False
+        assert set(result["required"]) == {"name", "age"}
+
+    def test_nested_object_gets_strict_patches(self) -> None:
+        params = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "address": {
+                    "type": "object",
+                    "properties": {
+                        "street": {"type": "string"},
+                        "city": {"type": "string"},
+                    },
+                },
+            },
+        }
+        result = self._build_and_extract(params)
+        # Top level
+        assert result["additionalProperties"] is False
+        # Nested object
+        addr = result["properties"]["address"]
+        assert addr["additionalProperties"] is False
+        assert set(addr["required"]) == {"street", "city"}
+
+    def test_defs_get_strict_patches(self) -> None:
+        """$defs from Pydantic nested models must also get patched."""
+        params = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "address": {"$ref": "#/$defs/Address"},
+            },
+            "$defs": {
+                "Address": {
+                    "type": "object",
+                    "properties": {
+                        "street": {"type": "string"},
+                        "city": {"type": "string"},
+                    },
+                    "title": "Address",
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        assert result["additionalProperties"] is False
+        addr_def = result["$defs"]["Address"]
+        assert addr_def["additionalProperties"] is False
+        assert set(addr_def["required"]) == {"street", "city"}
+
+    def test_anyof_branches_get_strict_patches(self) -> None:
+        """anyOf branches containing objects must be patched."""
+        params = {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {"x": {"type": "integer"}},
+                        },
+                        {"type": "null"},
+                    ]
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        obj_branch = result["properties"]["value"]["anyOf"][0]
+        assert obj_branch["additionalProperties"] is False
+        assert obj_branch["required"] == ["x"]
+
+    def test_array_items_get_strict_patches(self) -> None:
+        """Array items that are objects must be patched."""
+        params = {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}},
+                    },
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        item_schema = result["properties"]["items"]["items"]
+        assert item_schema["additionalProperties"] is False
+        assert item_schema["required"] == ["id"]
+
+    def test_real_pydantic_nested_model(self) -> None:
+        """End-to-end: Pydantic nested model -> register -> OpenAI strict."""
+
+        class InnerModel(BaseModel):
+            street: str
+            city: str
+
+        class OuterModel(BaseModel):
+            name: str
+            address: InnerModel
+
+        schema = OuterModel.model_json_schema()
+        schema.pop("title", None)
+        result = self._build_and_extract(schema)
+
+        # Top level
+        assert result["additionalProperties"] is False
+        assert "name" in result["required"]
+        assert "address" in result["required"]
+
+        # $defs/InnerModel should be patched
+        defs = result.get("$defs", {})
+        if defs:
+            for def_schema in defs.values():
+                if def_schema.get("type") == "object":
+                    assert def_schema["additionalProperties"] is False
+                    assert set(def_schema["required"]) == {"street", "city"}
