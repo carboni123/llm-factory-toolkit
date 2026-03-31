@@ -419,10 +419,16 @@ class OpenAIAdapter(BaseProvider):
             return None
         input_tokens = getattr(comp_usage, "input_tokens", 0) or 0
         output_tokens = getattr(comp_usage, "output_tokens", 0) or 0
+
+        # Extract cached tokens from input_tokens_details (OpenAI automatic prompt caching)
+        details = getattr(comp_usage, "input_tokens_details", None)
+        cached_tokens = getattr(details, "cached_tokens", 0) or 0 if details else 0
+
         return {
             "prompt_tokens": input_tokens,
             "completion_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
+            "cached_tokens": cached_tokens,
         }
 
     # ------------------------------------------------------------------

@@ -380,12 +380,51 @@ class AnthropicAdapter(BaseProvider):
         if usage:
             input_tokens = getattr(usage, "input_tokens", 0) or 0
             output_tokens = getattr(usage, "output_tokens", 0) or 0
+            cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
             return {
                 "prompt_tokens": input_tokens,
                 "completion_tokens": output_tokens,
                 "total_tokens": input_tokens + output_tokens,
+                "cached_tokens": cache_read,
             }
         return None
+
+    @staticmethod
+    def _extract_system_with_cache(
+        messages: list[dict[str, Any]],
+    ) -> tuple[str | list[dict[str, Any]] | None, list[dict[str, Any]]]:
+        """Extract system message, applying cache_control if sections are present."""
+        if not messages or messages[0].get("role") != "system":
+            return None, messages
+
+        system_msg = messages[0]
+        remaining = messages[1:]
+        sections = system_msg.get("_cache_sections")
+
+        if not sections:
+            return system_msg.get("content", ""), remaining
+
+        cacheable_parts = [s["content"] for s in sections if s.get("cacheable")]
+        dynamic_parts = [s["content"] for s in sections if not s.get("cacheable")]
+
+        blocks: list[dict[str, Any]] = []
+        if cacheable_parts:
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": "\n\n".join(cacheable_parts),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
+        if dynamic_parts:
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": "\n\n".join(dynamic_parts),
+                }
+            )
+
+        return blocks, remaining
 
     # ------------------------------------------------------------------
     # Structured output helpers
@@ -443,7 +482,7 @@ class AnthropicAdapter(BaseProvider):
         kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
-        system, remaining = self._extract_system(messages)
+        system, remaining = self._extract_system_with_cache(messages)
         anthropic_messages = self._convert_messages(remaining)
 
         request: dict[str, Any] = {
@@ -624,7 +663,7 @@ class AnthropicAdapter(BaseProvider):
         kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
-        system, remaining = self._extract_system(messages)
+        system, remaining = self._extract_system_with_cache(messages)
         anthropic_messages = self._convert_messages(remaining)
 
         request: dict[str, Any] = {
