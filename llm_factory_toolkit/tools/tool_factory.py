@@ -17,6 +17,8 @@ from typing import (
     cast,
 )
 
+from pydantic import BaseModel
+
 from ..exceptions import ToolError
 from .models import ToolExecutionResult
 from .runtime import ToolRuntime
@@ -153,7 +155,7 @@ class ToolFactory:
         function: ToolHandler,
         name: str,
         description: str,
-        parameters: dict[str, Any] | None = None,
+        parameters: dict[str, Any] | type[BaseModel] | None = None,
         mock_function: ToolHandler | None = None,
         category: str | None = None,
         tags: list[str] | None = None,
@@ -173,6 +175,10 @@ class ToolFactory:
         from the function's type hints.  Use ``exclude_params`` to omit
         context-injected parameters from the generated schema.
 
+        A Pydantic ``BaseModel`` subclass may be passed instead of a raw
+        dict; it is converted to JSON Schema via ``.model_json_schema()``
+        at registration time.
+
         Args:
             function: The callable to execute.  May be sync or async.
                 Must return a :class:`ToolExecutionResult` (or a plain dict/
@@ -180,8 +186,10 @@ class ToolFactory:
             name: Unique tool name the model uses to invoke it.
             description: Human-readable description shown to the model.
             parameters: JSON Schema for the arguments the **model** provides.
-                Context-injected params must NOT appear here.  When ``None``,
-                the schema is auto-generated from type hints.
+                May be a dict (raw JSON Schema), a Pydantic ``BaseModel``
+                subclass (converted automatically), or ``None`` (auto-
+                generated from type hints).  Context-injected params must
+                NOT appear here.
             mock_function: Optional alternative callable used when
                 ``mock_tools=True``.
             category: Optional category string (e.g. ``"communication"``,
@@ -220,6 +228,12 @@ class ToolFactory:
         if name in self._registry:
             logger.warning("Tool '%s' is already registered. Overwriting.", name)
 
+        # Convert Pydantic model to JSON Schema dict
+        if isinstance(parameters, type) and issubclass(parameters, BaseModel):
+            schema = parameters.model_json_schema()
+            schema.pop("title", None)
+            parameters = schema
+
         # Auto-generate schema when parameters is not provided
         effective_parameters = parameters
         if effective_parameters is None:
@@ -249,7 +263,7 @@ class ToolFactory:
         config: dict[str, Any] | None = None,
         name_override: str | None = None,
         description_override: str | None = None,
-        parameters_override: dict[str, Any] | None = None,
+        parameters_override: dict[str, Any] | type[BaseModel] | None = None,
         category_override: str | None = None,
         tags_override: list[str] | None = None,
         group_override: str | None = None,

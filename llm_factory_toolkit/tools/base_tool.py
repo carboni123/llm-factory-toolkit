@@ -4,6 +4,8 @@ import inspect
 from abc import ABC, abstractmethod
 from typing import Any
 
+from pydantic import BaseModel
+
 from .models import ToolExecutionResult
 
 
@@ -12,7 +14,9 @@ class BaseTool(ABC):
 
     NAME: str  # Unique name for the tool
     DESCRIPTION: str  # Description shown to the LLM
-    PARAMETERS: dict[str, Any] | None = None  # JSON schema for arguments
+    PARAMETERS: dict[str, Any] | type[BaseModel] | None = (
+        None  # JSON schema or Pydantic model
+    )
     CATEGORY: str | None = None  # Category for catalog discovery
     TAGS: list[str] | None = None  # Tags for catalog search
     GROUP: str | None = None  # Dotted namespace for group filtering
