@@ -258,41 +258,55 @@ class GeminiAdapter(BaseProvider):
         and removes ``$defs`` from the top-level schema.
         """
         defs = schema.get("$defs", {})
-        if not defs:
-            return schema
 
-        def _resolve(node: dict[str, Any]) -> dict[str, Any]:
+        def _resolve(
+            node: dict[str, Any], _seen: frozenset[str] = frozenset()
+        ) -> dict[str, Any]:
             if "$ref" in node:
                 ref_path = node["$ref"]  # e.g. "#/$defs/Address"
                 ref_name = ref_path.rsplit("/", 1)[-1]
-                resolved = dict(defs.get(ref_name, {}))
+                if ref_name in _seen:
+                    logger.warning(
+                        "Circular $ref detected for '%s'; "
+                        "replacing with empty object schema.",
+                        ref_name,
+                    )
+                    return {"type": "object"}
+                if ref_name not in defs:
+                    logger.warning(
+                        "$ref target '%s' not found in $defs; "
+                        "replacing with empty object schema.",
+                        ref_name,
+                    )
+                    return {"type": "object"}
+                resolved = dict(defs[ref_name])
                 resolved.pop("title", None)
                 # Merge any sibling keys (e.g. description alongside $ref)
                 for k, v in node.items():
                     if k != "$ref":
                         resolved.setdefault(k, v)
-                return _resolve(resolved)  # recurse in case of chained refs
+                return _resolve(resolved, _seen | {ref_name})
 
             result = {**node}
 
             if "properties" in result:
                 result["properties"] = {
-                    k: _resolve(v) for k, v in result["properties"].items()
+                    k: _resolve(v, _seen) for k, v in result["properties"].items()
                 }
 
             if "items" in result and isinstance(result["items"], dict):
-                result["items"] = _resolve(result["items"])
+                result["items"] = _resolve(result["items"], _seen)
 
             for keyword in ("anyOf", "allOf", "oneOf"):
                 if keyword in result and isinstance(result[keyword], list):
                     result[keyword] = [
-                        _resolve(branch) if isinstance(branch, dict) else branch
+                        _resolve(branch, _seen) if isinstance(branch, dict) else branch
                         for branch in result[keyword]
                     ]
 
             if "prefixItems" in result and isinstance(result["prefixItems"], list):
                 result["prefixItems"] = [
-                    _resolve(item) if isinstance(item, dict) else item
+                    _resolve(item, _seen) if isinstance(item, dict) else item
                     for item in result["prefixItems"]
                 ]
 

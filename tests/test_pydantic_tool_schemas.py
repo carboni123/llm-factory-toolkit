@@ -516,3 +516,49 @@ class TestGeminiDefsInlining:
         result = self._build_and_extract(params)
         assert result["properties"]["name"]["type"] == "string"
         assert result["properties"]["name"]["nullable"] is True
+
+    def test_circular_ref_does_not_recurse_infinitely(self) -> None:
+        """Self-referencing models produce empty object instead of RecursionError."""
+        params = {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/TreeNode"},
+                },
+            },
+            "$defs": {
+                "TreeNode": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "string"},
+                        "children": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/TreeNode"},
+                        },
+                    },
+                    "title": "TreeNode",
+                }
+            },
+        }
+        result = self._build_and_extract(params)
+        assert "$defs" not in result
+        # First level should be inlined
+        node = result["properties"]["children"]["items"]
+        assert node["type"] == "object"
+        assert "value" in node["properties"]
+        # Second level (self-ref) should be replaced with empty object
+        inner = node["properties"]["children"]["items"]
+        assert inner == {"type": "object"}
+
+    def test_missing_ref_target_produces_empty_object(self) -> None:
+        """A $ref pointing to a nonexistent $def produces empty object."""
+        params = {
+            "type": "object",
+            "properties": {
+                "thing": {"$ref": "#/$defs/DoesNotExist"},
+            },
+            "$defs": {},
+        }
+        result = self._build_and_extract(params)
+        assert result["properties"]["thing"] == {"type": "object"}
