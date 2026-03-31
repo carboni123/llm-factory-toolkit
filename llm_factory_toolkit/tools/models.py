@@ -93,6 +93,9 @@ class UsageEvent:
         iteration: 1-indexed loop iteration number.
         input_tokens: Prompt/input tokens consumed this iteration.
         output_tokens: Completion/output tokens generated this iteration.
+        cached_tokens: Number of input tokens served from the provider's
+            prompt cache this iteration.  ``0`` when the provider does not
+            report cache hits.
         cost_usd: Estimated cost in USD for this iteration, or ``None``
             if pricing is unknown for the model.
         tool_calls: Names of tools called after this LLM response.
@@ -104,9 +107,10 @@ class UsageEvent:
     iteration: int
     input_tokens: int
     output_tokens: int
-    cost_usd: float | None
-    tool_calls: list[str]
-    metadata: dict[str, Any]
+    cached_tokens: int = 0
+    cost_usd: float | None = None
+    tool_calls: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
