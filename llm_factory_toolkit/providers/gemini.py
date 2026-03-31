@@ -480,6 +480,7 @@ class GeminiAdapter(BaseProvider):
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via Google Gemini API."""
+        messages = self._strip_cache_metadata(messages)
         kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 
@@ -561,6 +562,7 @@ class GeminiAdapter(BaseProvider):
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream via Google Gemini API."""
+        messages = self._strip_cache_metadata(messages)
         kwargs = self._filter_kwargs(kwargs)
         client = self._get_client()
 

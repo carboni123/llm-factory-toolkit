@@ -588,6 +588,7 @@ class OpenAIAdapter(BaseProvider):
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via OpenAI Responses API."""
+        messages = self._strip_cache_metadata(messages)
         client = self._get_client()
 
         # Convert Chat Completions → Responses API format
@@ -661,6 +662,7 @@ class OpenAIAdapter(BaseProvider):
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream via OpenAI Responses API."""
+        messages = self._strip_cache_metadata(messages)
         client = self._get_client()
 
         api_input = self._convert_to_responses_api(messages)

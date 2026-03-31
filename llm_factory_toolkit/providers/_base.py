@@ -207,6 +207,22 @@ class BaseProvider(abc.ABC):
             return messages[0].get("content", ""), messages[1:]
         return None, messages
 
+    @staticmethod
+    def _strip_cache_metadata(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Remove internal ``_cache_sections`` from messages before sending to API.
+
+        The executor may attach ``_cache_sections`` to the system message as
+        internal metadata for cache-aware adapters (e.g. Anthropic).  Other
+        providers would reject the unknown field, so it must be stripped.
+        """
+        cleaned = []
+        for msg in messages:
+            if "_cache_sections" in msg:
+                cleaned.append({k: v for k, v in msg.items() if k != "_cache_sections"})
+            else:
+                cleaned.append(msg)
+        return cleaned
+
     def _supports_reasoning_effort(self, model: str) -> bool:
         """Return ``True`` if *model* accepts ``reasoning_effort``."""
         return False
