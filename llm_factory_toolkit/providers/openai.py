@@ -352,18 +352,15 @@ class OpenAIAdapter(BaseProvider):
                     k: OpenAIAdapter._ensure_strict_schema(v) for k, v in props.items()
                 }
 
-        # Recurse into $defs
         if "$defs" in schema:
             schema["$defs"] = {
                 k: OpenAIAdapter._ensure_strict_schema(v)
                 for k, v in schema["$defs"].items()
             }
 
-        # Recurse into array items
         if "items" in schema and isinstance(schema["items"], dict):
             schema["items"] = OpenAIAdapter._ensure_strict_schema(schema["items"])
 
-        # Recurse into anyOf / allOf / oneOf
         for keyword in ("anyOf", "allOf", "oneOf"):
             if keyword in schema and isinstance(schema[keyword], list):
                 schema[keyword] = [
@@ -373,7 +370,6 @@ class OpenAIAdapter(BaseProvider):
                     for branch in schema[keyword]
                 ]
 
-        # Recurse into prefixItems (tuple validation)
         if "prefixItems" in schema and isinstance(schema["prefixItems"], list):
             schema["prefixItems"] = [
                 OpenAIAdapter._ensure_strict_schema(item)

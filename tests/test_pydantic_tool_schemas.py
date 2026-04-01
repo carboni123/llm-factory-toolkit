@@ -195,23 +195,12 @@ class TestRegisterToolClassWithPydanticModel:
 
 
 class TestOpenAIStrictModeRecursive:
-    """OpenAI _build_tool_definitions patches nested schemas for strict mode."""
+    """OpenAI _ensure_strict_schema patches nested schemas for strict mode."""
 
-    def _build_and_extract(self, parameters: dict[str, Any]) -> dict[str, Any]:
-        """Helper: wrap params in a tool definition, run through OpenAI builder."""
-        definitions = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "test_tool",
-                    "description": "A test tool.",
-                    "parameters": parameters,
-                },
-            }
-        ]
-        adapter = OpenAIAdapter.__new__(OpenAIAdapter)
-        result = adapter._build_tool_definitions(definitions)
-        return result[0]["parameters"]
+    @staticmethod
+    def _build_and_extract(parameters: dict[str, Any]) -> dict[str, Any]:
+        """Run parameters through OpenAI's strict schema walker."""
+        return OpenAIAdapter._ensure_strict_schema(parameters)
 
     def test_flat_schema_unchanged_behavior(self) -> None:
         params = {
@@ -332,13 +321,12 @@ class TestOpenAIStrictModeRecursive:
         assert "name" in result["required"]
         assert "address" in result["required"]
 
-        # $defs/InnerModel should be patched
-        defs = result.get("$defs", {})
-        if defs:
-            for def_schema in defs.values():
-                if def_schema.get("type") == "object":
-                    assert def_schema["additionalProperties"] is False
-                    assert set(def_schema["required"]) == {"street", "city"}
+        # $defs/InnerModel must be patched
+        assert "$defs" in result, "Pydantic nested model should produce $defs"
+        for def_schema in result["$defs"].values():
+            if def_schema.get("type") == "object":
+                assert def_schema["additionalProperties"] is False
+                assert set(def_schema["required"]) == {"street", "city"}
 
 
 # ---------------------------------------------------------------------------
@@ -350,21 +338,11 @@ class TestGeminiDefsInlining:
     """Gemini _build_tool_definitions inlines $defs/$ref since the SDK
     doesn't support JSON Schema references."""
 
-    def _build_and_extract(self, parameters: dict[str, Any]) -> dict[str, Any]:
-        """Helper: wrap params in a tool definition, run through Gemini builder."""
-        definitions = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "test_tool",
-                    "description": "A test tool.",
-                    "parameters": parameters,
-                },
-            }
-        ]
-        adapter = GeminiAdapter.__new__(GeminiAdapter)
-        result = adapter._build_tool_definitions(definitions)
-        return result[0]["parameters"]
+    @staticmethod
+    def _build_and_extract(parameters: dict[str, Any]) -> dict[str, Any]:
+        """Run parameters through Gemini's inline + normalize pipeline."""
+        inlined = GeminiAdapter._inline_defs(parameters)
+        return GeminiAdapter._normalize_schema_for_gemini(inlined)
 
     def test_flat_schema_passes_through(self) -> None:
         params = {

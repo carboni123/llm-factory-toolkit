@@ -346,6 +346,16 @@ class GeminiAdapter(BaseProvider):
                 schema["items"]
             )
 
+        # Recurse into anyOf / allOf / oneOf
+        for keyword in ("anyOf", "allOf", "oneOf"):
+            if keyword in schema and isinstance(schema[keyword], list):
+                schema[keyword] = [
+                    GeminiAdapter._normalize_schema_for_gemini(branch)
+                    if isinstance(branch, dict)
+                    else branch
+                    for branch in schema[keyword]
+                ]
+
         return schema
 
     def _build_tool_definitions(
