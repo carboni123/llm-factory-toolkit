@@ -150,6 +150,8 @@ Servers can be added and removed at runtime via `await client.add_mcp_server(MCP
 
 **Approval hook (HITL):** `MCPClientManager(approval_hook=..., auto_approve={...})` gates every dispatch before a session opens. Hook signature is `async (MCPToolCall) -> bool | ApprovalDecision`; denied calls return a `ToolExecutionResult(error=reason, metadata["status"]="denied")` without touching the server. Hook exceptions are trapped and surfaced as error results. `LLMClient(mcp_approval_hook=..., mcp_auto_approve=...)` are convenience kwargs that flow to the auto-built manager.
 
+**Observability:** `MCPClientManager(on_mcp_call=callback)` emits a single `MCPCallEvent` per dispatch (server, public/raw tool names, arguments, duration_ms, success, error, content_bytes, payload_bytes, approval_status) across every outcome. Sync or async callbacks; exceptions are trapped at WARNING. `LLMClient(mcp_on_call=...)` is the convenience kwarg.
+
 Key files: `mcp.py`, `client.py::_prepare_mcp_tools_for_call` / `add_mcp_server` / `remove_mcp_server`, `providers/_base.py::_dispatch_tool_calls`, `providers/claude_code.py::_bridge_tools_to_mcp`. See `docs/MCP.md` for user-facing docs and `docs/MCP_ROADMAP.md` for tracked improvements.
 
 ### Dynamic Tool Loading

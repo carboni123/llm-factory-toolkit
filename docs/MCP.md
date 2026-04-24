@@ -123,6 +123,52 @@ Concurrency and safety:
 
 For custom lifecycles, build your own manager and pass it via `mcp_client=`. Both the stateless and persistent managers implement the same minimal surface (`list_tools`, `get_tool_definitions`, `dispatch_tool`, `close`).
 
+## Observability
+
+Every dispatch emits a single `MCPCallEvent` telemetry record when an `on_mcp_call` callback is configured — covering successes, tool-not-found, approval denials, approval hook errors, and session exceptions.
+
+```python
+from llm_factory_toolkit import LLMClient, MCPCallEvent, MCPServerStdio
+
+async def on_call(event: MCPCallEvent) -> None:
+    print(
+        f"[mcp] {event.public_name}  "
+        f"{event.duration_ms:.1f}ms  "
+        f"ok={event.success}  "
+        f"bytes={event.content_bytes}+{event.payload_bytes}"
+    )
+    # Or: ship to statsd / OpenTelemetry / your app's usage log.
+
+client = LLMClient(
+    model="openai/gpt-4o-mini",
+    mcp_servers=[MCPServerStdio(name="fs", command="npx", args=[...])],
+    mcp_on_call=on_call,
+)
+```
+
+`MCPCallEvent` fields:
+
+| Field | Meaning |
+|---|---|
+| `server` | Server name that owned the tool (empty string for tool-not-found) |
+| `tool_name` | Raw MCP name (empty string for tool-not-found) |
+| `public_name` | Namespaced name the LLM used |
+| `arguments` | Parsed JSON the LLM produced — may contain sensitive data, redact in your callback if needed |
+| `duration_ms` | Wall-clock time from `dispatch_tool` entry to return |
+| `success` | `True` iff the result has no `error` |
+| `error` | Human-readable error message or `None` |
+| `content_bytes` | UTF-8 length of the string fed back to the LLM |
+| `payload_bytes` | JSON-serialised size of the deferred payload, or `None` if unserialisable |
+| `approval_status` | `"denied"` / `"hook_error"` / `None` — lets you split policy-rejection metrics from transport errors |
+
+Resilience:
+
+- Both **sync** and **async** callbacks are supported (matching the `on_usage` pattern).
+- Callback **exceptions are trapped and logged at WARNING**. Telemetry failures never break the agentic loop.
+- Swap or disable the callback at runtime: `manager.on_mcp_call = new_callback` (or `None` to disable).
+
+When `mcp_client=` is passed explicitly, `mcp_on_call` is **ignored** with a warning — configure `on_mcp_call=` on your manager instance directly.
+
 ## Approval hook (human-in-the-loop)
 
 MCP tools can touch filesystems, external APIs, and user data. Production deployments usually need "ask before execute" for destructive calls. An **approval hook** is an async callable invoked *before* a session is opened — denied calls never touch the remote server.

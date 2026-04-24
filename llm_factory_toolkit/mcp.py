@@ -8,9 +8,11 @@ when a configured MCP server is queried or called.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
+import time
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -192,6 +194,53 @@ class ApprovalDecision:
 
 
 ApprovalHook = Callable[[MCPToolCall], Awaitable[bool | ApprovalDecision]]
+
+
+# ---------------------------------------------------------------------------
+# Observability events
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MCPCallEvent:
+    """Telemetry record emitted for every :meth:`MCPClientManager.dispatch_tool` call.
+
+    Fired exactly once per dispatch, covering every outcome:
+
+    * Successful tool call (``success=True``).
+    * Tool not found (``success=False``, ``error`` describes why, ``server``
+      may be empty if the missing name could not be resolved).
+    * Approval hook denied (``success=False``, ``approval_status="denied"``).
+    * Approval hook raised (``success=False``, ``approval_status="hook_error"``).
+    * Session exception (``success=False``, ``approval_status=None``).
+
+    ``content_bytes`` is the UTF-8 length of the content sent back to the
+    LLM; ``payload_bytes`` is the JSON-serialised length of the deferred
+    payload, or ``None`` if the payload is not JSON-serialisable.
+    ``arguments`` is the parsed JSON object the LLM produced — may contain
+    sensitive data; redact in the callback if telemetry has different
+    trust boundaries than the dispatcher.
+    """
+
+    server: str
+    tool_name: str
+    public_name: str
+    arguments: dict[str, Any]
+    duration_ms: float
+    success: bool
+    error: str | None = None
+    content_bytes: int = 0
+    payload_bytes: int | None = 0
+    approval_status: str | None = None
+
+
+MCPCallCallback = Callable[[MCPCallEvent], Awaitable[None] | None]
+"""Callback signature for :class:`MCPCallEvent`.
+
+Accepts both sync and async callables.  Raised exceptions are caught,
+logged at ``WARNING`` level, and discarded — telemetry can never break
+the agentic loop.
+"""
 """Type of an approval hook: ``async (MCPToolCall) -> bool | ApprovalDecision``.
 
 Returning ``True`` / ``False`` is accepted for ergonomic one-liners;
@@ -230,6 +279,7 @@ class MCPClientManager:
         *,
         approval_hook: ApprovalHook | None = None,
         auto_approve: Iterable[str] | None = None,
+        on_mcp_call: MCPCallCallback | None = None,
     ) -> None:
         self._servers: dict[str, MCPServer] = {}
         for server in servers:
@@ -240,6 +290,7 @@ class MCPClientManager:
         self._mutation_lock: asyncio.Lock | None = None
         self._approval_hook: ApprovalHook | None = approval_hook
         self._auto_approve: set[str] = set(auto_approve or ())
+        self._on_mcp_call: MCPCallCallback | None = on_mcp_call
 
     @property
     def approval_hook(self) -> ApprovalHook | None:
@@ -272,6 +323,18 @@ class MCPClientManager:
         """Replace the auto-approve allowlist (empty by default)."""
 
         self._auto_approve = set(names or ())
+
+    @property
+    def on_mcp_call(self) -> MCPCallCallback | None:
+        """The configured telemetry callback, or ``None`` when disabled."""
+
+        return self._on_mcp_call
+
+    @on_mcp_call.setter
+    def on_mcp_call(self, callback: MCPCallCallback | None) -> None:
+        """Replace the telemetry callback at runtime.  ``None`` disables events."""
+
+        self._on_mcp_call = callback
 
     @property
     def servers(self) -> dict[str, MCPServer]:
@@ -398,46 +461,79 @@ class MCPClientManager:
         public_name: str,
         arguments_json: str | None = None,
     ) -> ToolExecutionResult:
-        """Call an MCP tool by its public LLM-facing name."""
+        """Call an MCP tool by its public LLM-facing name.
 
-        if public_name not in self._tools_by_public_name:
-            await self.list_tools(refresh=False)
+        Emits exactly one :class:`MCPCallEvent` per call when an
+        ``on_mcp_call`` callback is configured, covering every outcome
+        (success, tool-not-found, approval-denied, hook-error,
+        session-exception).
+        """
 
-        tool = self._tools_by_public_name.get(public_name)
-        if tool is None:
-            return ToolExecutionResult(
-                content=json.dumps({"error": f"MCP tool '{public_name}' not found."}),
-                metadata={"mcp": True, "tool_name": public_name},
-                error=f"MCP tool '{public_name}' not found.",
-            )
-
-        arguments = self._parse_arguments(public_name, arguments_json or "{}")
-
-        # Approval gate: run *before* opening a session so denied calls
-        # never touch the remote server.
-        if self._approval_hook is not None and public_name not in self._auto_approve:
-            denial = await self._run_approval(tool, public_name, arguments)
-            if denial is not None:
-                return denial
-
-        server = self._servers[tool.server_name]
+        started = time.perf_counter()
+        tool: MCPTool | None = None
+        arguments: dict[str, Any] = {}
+        result: ToolExecutionResult | None = None
         try:
-            async with self._session_for_server(server) as session:
-                raw_result = await session.call_tool(tool.name, arguments=arguments)
-        except Exception as exc:
-            logger.exception("MCP tool call failed: %s.%s", server.name, tool.name)
-            return ToolExecutionResult(
-                content=json.dumps({"error": str(exc)}),
-                metadata={
-                    "mcp": True,
-                    "server": server.name,
-                    "tool_name": public_name,
-                    "mcp_tool_name": tool.name,
-                },
-                error=str(exc),
-            )
+            if public_name not in self._tools_by_public_name:
+                await self.list_tools(refresh=False)
 
-        return self._normalise_call_result(tool, raw_result)
+            tool = self._tools_by_public_name.get(public_name)
+            if tool is None:
+                result = ToolExecutionResult(
+                    content=json.dumps(
+                        {"error": f"MCP tool '{public_name}' not found."}
+                    ),
+                    metadata={"mcp": True, "tool_name": public_name},
+                    error=f"MCP tool '{public_name}' not found.",
+                )
+                return result
+
+            arguments = self._parse_arguments(public_name, arguments_json or "{}")
+
+            # Approval gate: run *before* opening a session so denied calls
+            # never touch the remote server.
+            if (
+                self._approval_hook is not None
+                and public_name not in self._auto_approve
+            ):
+                denial = await self._run_approval(tool, public_name, arguments)
+                if denial is not None:
+                    result = denial
+                    return result
+
+            server = self._servers[tool.server_name]
+            try:
+                async with self._session_for_server(server) as session:
+                    raw_result = await session.call_tool(tool.name, arguments=arguments)
+            except Exception as exc:
+                logger.exception("MCP tool call failed: %s.%s", server.name, tool.name)
+                result = ToolExecutionResult(
+                    content=json.dumps({"error": str(exc)}),
+                    metadata={
+                        "mcp": True,
+                        "server": server.name,
+                        "tool_name": public_name,
+                        "mcp_tool_name": tool.name,
+                    },
+                    error=str(exc),
+                )
+                return result
+
+            result = self._normalise_call_result(tool, raw_result)
+            return result
+        finally:
+            # Only emit when the call produced a result.  Unexpected
+            # escaping exceptions (e.g. ToolError from argument parsing)
+            # bubble up with no telemetry — the caller sees the raise.
+            if self._on_mcp_call is not None and result is not None:
+                duration_ms = (time.perf_counter() - started) * 1000.0
+                await self._emit_mcp_call_event(
+                    result=result,
+                    tool=tool,
+                    public_name=public_name,
+                    arguments=arguments,
+                    duration_ms=duration_ms,
+                )
 
     async def _run_approval(
         self,
@@ -500,6 +596,69 @@ class MCPClientManager:
             },
             error=reason,
         )
+
+    async def _emit_mcp_call_event(
+        self,
+        *,
+        result: ToolExecutionResult,
+        tool: MCPTool | None,
+        public_name: str,
+        arguments: dict[str, Any],
+        duration_ms: float,
+    ) -> None:
+        """Build an :class:`MCPCallEvent` and deliver it to the configured callback.
+
+        Swallows callback exceptions — telemetry failures must never
+        affect the agentic loop.  Supports both sync and async callbacks,
+        matching the existing ``on_usage`` pattern used elsewhere in
+        the library.
+        """
+
+        callback = self._on_mcp_call
+        if callback is None:
+            return
+
+        metadata = result.metadata or {}
+        content = result.content or ""
+        try:
+            content_bytes = len(content.encode("utf-8"))
+        except Exception:
+            content_bytes = 0
+
+        payload_bytes: int | None
+        if result.payload is None:
+            payload_bytes = 0
+        else:
+            try:
+                payload_bytes = len(
+                    json.dumps(result.payload, default=str).encode("utf-8")
+                )
+            except (TypeError, ValueError):
+                payload_bytes = None
+
+        event = MCPCallEvent(
+            server=tool.server_name if tool is not None else "",
+            tool_name=tool.name if tool is not None else "",
+            public_name=public_name,
+            arguments=dict(arguments),
+            duration_ms=duration_ms,
+            success=result.error is None,
+            error=result.error,
+            content_bytes=content_bytes,
+            payload_bytes=payload_bytes,
+            approval_status=metadata.get("approval"),
+        )
+
+        try:
+            outcome = callback(event)
+            if inspect.isawaitable(outcome):
+                await outcome
+        except Exception:
+            logger.warning(
+                "on_mcp_call callback raised for %s; telemetry event dropped.",
+                public_name,
+                exc_info=True,
+            )
 
     async def _list_tools_for_server(self, server: MCPServer) -> list[MCPTool]:
         async with self._session_for_server(server) as session:
@@ -703,9 +862,13 @@ class PersistentMCPClientManager(MCPClientManager):
         *,
         approval_hook: ApprovalHook | None = None,
         auto_approve: Iterable[str] | None = None,
+        on_mcp_call: MCPCallCallback | None = None,
     ) -> None:
         super().__init__(
-            servers, approval_hook=approval_hook, auto_approve=auto_approve
+            servers,
+            approval_hook=approval_hook,
+            auto_approve=auto_approve,
+            on_mcp_call=on_mcp_call,
         )
         self._sessions: dict[str, Any] = {}
         self._exit_stacks: dict[str, AsyncExitStack] = {}

@@ -52,7 +52,7 @@ Status legend: `[ ]` planned · `[~]` in progress · `[x]` done
 ## v0.3 — completeness
 
 - [ ] **#7 MCP resources & prompts** — `client.list_mcp_resources()`, `read_mcp_resource()`, prompt injection.
-- [ ] **#8 MCP observability** — `MCPCallEvent(server, tool, duration_ms, success, bytes_in/out)` via `on_mcp_call` callback.
+- [x] **#8 MCP observability** — `MCPCallEvent` frozen dataclass (server, raw + public tool names, parsed arguments, duration_ms, success, error, content_bytes, payload_bytes, approval_status) emitted exactly once per `dispatch_tool` call across every outcome (success / tool-not-found / approval-denied / approval-hook-error / session-exception). Wired via `MCPClientManager(on_mcp_call=...)` with a runtime setter for mid-session swap/disable; convenience `mcp_on_call=` kwarg on `LLMClient` (warns when combined with an explicit `mcp_client`). Callback accepts sync or async callables (matching the existing `on_usage` pattern). Callback exceptions are trapped at WARNING and discarded so telemetry failures never break the agentic loop. Dispatcher refactored to a single-return / `finally`-emit structure to keep the emission site honest. 13 unit tests covering every emission path, byte-count semantics, sync/async support, resilience, setter, and LLMClient flow.
 - [ ] **#9 HTTP auth lifecycle** — `BearerTokenProvider(refresh=...)`, single-retry-on-401.
 
 ## v1.0 — parity with OpenAI Agents SDK MCP

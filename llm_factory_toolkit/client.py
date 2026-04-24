@@ -26,6 +26,7 @@ from .exceptions import (
 )
 from .mcp import (
     ApprovalHook,
+    MCPCallCallback,
     MCPClientManager,
     MCPServer,
     PersistentMCPClientManager,
@@ -156,6 +157,7 @@ class LLMClient:
         persistent_mcp: bool = False,
         mcp_approval_hook: ApprovalHook | None = None,
         mcp_auto_approve: Sequence[str] | None = None,
+        mcp_on_call: MCPCallCallback | None = None,
         timeout: float = 180.0,
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
@@ -180,12 +182,17 @@ class LLMClient:
         self._persistent_mcp = persistent_mcp
         self._mcp_approval_hook = mcp_approval_hook
         self._mcp_auto_approve: tuple[str, ...] = tuple(mcp_auto_approve or ())
+        self._mcp_on_call = mcp_on_call
         if mcp_client is not None:
-            if mcp_approval_hook is not None or mcp_auto_approve:
+            if (
+                mcp_approval_hook is not None
+                or mcp_auto_approve
+                or mcp_on_call is not None
+            ):
                 logger.warning(
-                    "mcp_approval_hook / mcp_auto_approve are ignored when an "
-                    "explicit mcp_client is provided — configure them on the "
-                    "manager instance directly."
+                    "mcp_approval_hook / mcp_auto_approve / mcp_on_call are "
+                    "ignored when an explicit mcp_client is provided — "
+                    "configure them on the manager instance directly."
                 )
             self.mcp_client: MCPClientManager | None = mcp_client
         elif mcp_servers:
@@ -196,6 +203,7 @@ class LLMClient:
                 mcp_servers,
                 approval_hook=mcp_approval_hook,
                 auto_approve=self._mcp_auto_approve or None,
+                on_mcp_call=mcp_on_call,
             )
         else:
             self.mcp_client = None
@@ -437,6 +445,7 @@ class LLMClient:
                 [server],
                 approval_hook=self._mcp_approval_hook,
                 auto_approve=self._mcp_auto_approve or None,
+                on_mcp_call=self._mcp_on_call,
             )
             return
         await self.mcp_client.add_server(server)

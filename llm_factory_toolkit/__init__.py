@@ -123,6 +123,8 @@ from .exceptions import (
 from .mcp import (
     ApprovalDecision,
     ApprovalHook,
+    MCPCallCallback,
+    MCPCallEvent,
     MCPClientManager,
     MCPServer,
     MCPServerStdio,
@@ -185,6 +187,8 @@ __all__ = [
     "InMemoryToolCatalog",
     "LLMClient",
     "LLMToolkitError",
+    "MCPCallCallback",
+    "MCPCallEvent",
     "MCPClientManager",
     "MCPServer",
     "MCPServerStdio",
