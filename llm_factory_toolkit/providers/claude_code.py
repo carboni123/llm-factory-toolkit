@@ -33,7 +33,12 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from ..exceptions import ConfigurationError, ProviderError
-from ..tools.models import GenerationResult, StreamChunk, UsageEvent
+from ..tools.models import (
+    GenerationResult,
+    StreamChunk,
+    ToolExecutionResult,
+    UsageEvent,
+)
 from ..tools.tool_factory import ToolFactory
 from ._base import DEFAULT_MAX_TOOL_ITERATIONS, BaseProvider, ProviderResponse
 
@@ -516,19 +521,29 @@ class ClaudeCodeAdapter(BaseProvider):
             async def _handler(
                 args: dict[str, Any], _name: str = name
             ) -> dict[str, Any]:
-                if self.tool_factory is None:
-                    raise ConfigurationError(
-                        "ToolFactory is required for MCP bridge tools"
-                    )
                 ctx = _call_ctx_var.get()
                 call_id = f"cc_{_name}_{len(ctx.tool_call_records)}"
-                result = await self.tool_factory.dispatch_tool(
-                    _name,
-                    json.dumps(args),
-                    tool_execution_context=ctx.tool_context,
-                    use_mock=ctx.mock_mode,
-                    tool_timeout=ctx.tool_timeout,
-                )
+                tool_context = ctx.tool_context or {}
+                mcp_dispatch = tool_context.get("_mcp_dispatch")
+                mcp_tool_names = set(tool_context.get("_mcp_tool_names", set()))
+                if mcp_dispatch and _name in mcp_tool_names:
+                    raw_result = await mcp_dispatch(_name, json.dumps(args))
+                    if isinstance(raw_result, ToolExecutionResult):
+                        result = raw_result
+                    else:
+                        result = ToolExecutionResult(content=str(raw_result))
+                else:
+                    if self.tool_factory is None:
+                        raise ConfigurationError(
+                            "ToolFactory is required for non-MCP bridge tools"
+                        )
+                    result = await self.tool_factory.dispatch_tool(
+                        _name,
+                        json.dumps(args),
+                        tool_execution_context=ctx.tool_context,
+                        use_mock=ctx.mock_mode,
+                        tool_timeout=ctx.tool_timeout,
+                    )
                 if result.payload:
                     ctx.payloads.append(result.payload)
                 ctx.tool_call_records.append(

@@ -120,6 +120,13 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
+from .mcp import (
+    MCPClientManager,
+    MCPServer,
+    MCPServerStdio,
+    MCPServerStreamableHTTP,
+    MCPTool,
+)
 from .models import ModelInfo, compute_cost, get_model_info, list_models
 from .tools import builtins
 from .tools.base_tool import BaseTool
@@ -165,6 +172,11 @@ __all__ = [
     "InMemoryToolCatalog",
     "LLMClient",
     "LLMToolkitError",
+    "MCPClientManager",
+    "MCPServer",
+    "MCPServerStdio",
+    "MCPServerStreamableHTTP",
+    "MCPTool",
     "ModelInfo",
     "ProviderError",
     "QuotaExhaustedError",

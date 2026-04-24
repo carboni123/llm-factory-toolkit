@@ -24,6 +24,7 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
+from .mcp import MCPClientManager, MCPServer
 from .providers import ProviderRouter
 from .providers._base import DEFAULT_MAX_TOOL_ITERATIONS
 from .tools.catalog import InMemoryToolCatalog
@@ -145,6 +146,8 @@ class LLMClient:
         model: str = "openai/gpt-4o-mini",
         api_key: str | None = None,
         tool_factory: ToolFactory | None = None,
+        mcp_servers: Sequence[MCPServer] | None = None,
+        mcp_client: MCPClientManager | None = None,
         timeout: float = 180.0,
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
@@ -166,6 +169,9 @@ class LLMClient:
         self.usage_metadata = usage_metadata or {}
         self.pricing = pricing
         self.tool_factory = tool_factory or ToolFactory()
+        self.mcp_client = mcp_client or (
+            MCPClientManager(mcp_servers) if mcp_servers else None
+        )
 
         self.provider = ProviderRouter(
             model=model,
@@ -368,12 +374,53 @@ class LLMClient:
         """
         if hasattr(self.provider, "close") and callable(self.provider.close):
             await self.provider.close()
+        if self.mcp_client is not None:
+            await self.mcp_client.close()
 
     async def __aenter__(self) -> LLMClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
         await self.close()
+
+    # ------------------------------------------------------------------
+    # MCP integration
+    # ------------------------------------------------------------------
+
+    async def _prepare_mcp_tools_for_call(
+        self,
+        *,
+        use_tools: Sequence[str] | None,
+        tool_execution_context: dict[str, Any] | None,
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
+        """Resolve MCP tools and inject MCP dispatch into tool context."""
+        if self.mcp_client is None or use_tools is None:
+            return None, tool_execution_context
+
+        definitions = await self.mcp_client.get_tool_definitions(use_tools=use_tools)
+        if not definitions:
+            return None, tool_execution_context
+
+        mcp_tool_names = {
+            str(definition.get("function", {}).get("name"))
+            for definition in definitions
+            if definition.get("function", {}).get("name")
+        }
+        collisions = set(self.tool_factory.available_tool_names).intersection(
+            mcp_tool_names
+        )
+        if collisions:
+            raise ConfigurationError(
+                "MCP tool names collide with registered local tools: "
+                f"{sorted(collisions)}. Rename the MCP server, enable MCP "
+                "namespacing, or rename the local tool."
+            )
+
+        ctx = dict(tool_execution_context or {})
+        existing_mcp_names = set(ctx.get("_mcp_tool_names", set()))
+        ctx["_mcp_tool_names"] = existing_mcp_names.union(mcp_tool_names)
+        ctx["_mcp_dispatch"] = self.mcp_client.dispatch_tool
+        return definitions, ctx
 
     # ------------------------------------------------------------------
     # Generation
@@ -647,6 +694,17 @@ class LLMClient:
             tool_execution_context = dict(tool_execution_context or {})
             tool_execution_context["_search_agent"] = self._search_agent
 
+        # Resolve MCP tools before provider dispatch. MCP tools are disabled
+        # when use_tools=None, follow the same filter semantics as local tools,
+        # and dispatch through the shared BaseProvider loop.
+        (
+            extra_tool_definitions,
+            tool_execution_context,
+        ) = await self._prepare_mcp_tools_for_call(
+            use_tools=use_tools,
+            tool_execution_context=tool_execution_context,
+        )
+
         # Resolve compact_tools: per-call override > constructor default
         effective_compact = (
             compact_tools if compact_tools is not None else self.compact_tools
@@ -672,6 +730,7 @@ class LLMClient:
             "parallel_tools": parallel_tools,
             "web_search": web_search,
             "tool_session": tool_session,
+            "extra_tool_definitions": extra_tool_definitions,
             "compact_tools": effective_compact,
             "repetition_threshold": repetition_threshold,
             "max_tool_output_chars": max_tool_output_chars,
@@ -843,6 +902,12 @@ class LLMClient:
         Returns a :class:`ToolIntentOutput` whose ``tool_calls`` can be
         inspected and later executed via :meth:`execute_tool_intents`.
         """
+        extra_tool_definitions = None
+        if self.mcp_client is not None and use_tools is not None:
+            extra_tool_definitions = await self.mcp_client.get_tool_definitions(
+                use_tools=use_tools
+            )
+
         provider_args: dict[str, Any] = {
             "input": input,
             "model": model,
@@ -851,6 +916,7 @@ class LLMClient:
             "response_format": response_format,
             "use_tools": use_tools,
             "web_search": web_search,
+            "extra_tool_definitions": extra_tool_definitions,
             **kwargs,
         }
         provider_args = {
@@ -903,9 +969,11 @@ class LLMClient:
         appended to the conversation history for a follow-up LLM call.
         """
         tool_result_messages: list[dict[str, Any]] = []
-        if not self.tool_factory:
+        if self.mcp_client is not None:
+            await self.mcp_client.list_tools(refresh=False)
+        if not self.tool_factory and self.mcp_client is None:
             raise ConfigurationError(
-                "LLMClient has no ToolFactory configured, cannot execute tool intents."
+                "LLMClient has no ToolFactory or MCP client configured, cannot execute tool intents."
             )
         if not intent_output.tool_calls:
             logger.info("No tool calls to execute.")
@@ -958,12 +1026,20 @@ class LLMClient:
                 continue
 
             try:
-                result: ToolExecutionResult = await self.tool_factory.dispatch_tool(
-                    tool_name,
-                    tool_args_str,
-                    tool_execution_context=tool_execution_context,
-                    use_mock=mock_tools,
-                )
+                if (
+                    self.mcp_client is not None
+                    and tool_name in self.mcp_client.tool_names
+                ):
+                    result: ToolExecutionResult = await self.mcp_client.dispatch_tool(
+                        tool_name, tool_args_str
+                    )
+                else:
+                    result = await self.tool_factory.dispatch_tool(
+                        tool_name,
+                        tool_args_str,
+                        tool_execution_context=tool_execution_context,
+                        use_mock=mock_tools,
+                    )
                 tool_result_messages.append(
                     {
                         "role": "tool",

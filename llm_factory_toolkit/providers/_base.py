@@ -643,9 +643,13 @@ class BaseProvider(abc.ABC):
         format into its native message format, plus per-call error tracking
         info as ``(tool_name, arguments_json, is_error)`` tuples.
         """
-        if self.tool_factory is None:
+        context = tool_execution_context or {}
+        _mcp_dispatch = context.get("_mcp_dispatch")
+        _mcp_tool_names = set(context.get("_mcp_tool_names", set()))
+
+        if self.tool_factory is None and not (_mcp_dispatch and _mcp_tool_names):
             raise UnsupportedFeatureError(
-                "Received tool calls but no ToolFactory is configured."
+                "Received tool calls but no ToolFactory or MCP dispatcher is configured."
             )
         factory = self.tool_factory
         results_list: list[ToolResultMessage] = []
@@ -654,7 +658,8 @@ class BaseProvider(abc.ABC):
         async def _handle_one(
             tc: ProviderToolCall,
         ) -> tuple[ToolResultMessage, dict[str, Any] | None, bool]:
-            if tc.name:
+            is_mcp_tool = bool(_mcp_dispatch and tc.name in _mcp_tool_names)
+            if tc.name and factory is not None and not is_mcp_tool:
                 factory.increment_tool_usage(tc.name)
 
             if not tc.name or not tc.call_id:
@@ -675,17 +680,20 @@ class BaseProvider(abc.ABC):
                 )
 
             try:
-                # Check for MCP dispatch before ToolFactory
-                _mcp_dispatch = (tool_execution_context or {}).get("_mcp_dispatch")
-                _mcp_tool_names = (tool_execution_context or {}).get(
-                    "_mcp_tool_names", set()
-                )
-
-                if _mcp_dispatch and tc.name in _mcp_tool_names:
-                    # Route to MCP server
-                    content = await _mcp_dispatch(tc.name, tc.arguments or "{}")
-                    result = ToolExecutionResult(content=content)
+                if is_mcp_tool and _mcp_dispatch is not None:
+                    # Route to a first-class MCP server.  The dispatcher may
+                    # return a full ToolExecutionResult so structured MCP output
+                    # can flow into GenerationResult.payloads.
+                    mcp_result = await _mcp_dispatch(tc.name, tc.arguments or "{}")
+                    if isinstance(mcp_result, ToolExecutionResult):
+                        result = mcp_result
+                    else:
+                        result = ToolExecutionResult(content=str(mcp_result))
                 else:
+                    if factory is None:
+                        raise ToolError(
+                            "Received a non-MCP tool call but no ToolFactory is configured."
+                        )
                     result = await factory.dispatch_tool(
                         tc.name,
                         tc.arguments or "{}",
