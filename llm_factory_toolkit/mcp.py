@@ -8,6 +8,7 @@ when a configured MCP server is queried or called.
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
 import logging
@@ -206,6 +207,118 @@ class MCPTool:
 
 
 # ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MCPResource:
+    """An MCP resource exposed by a server.
+
+    Resources are addressable, read-only data surfaces (e.g. ``file://``,
+    ``screen://``, ``rpc://``).  Unlike tools they don't have parameters —
+    a read is parameter-free against the URI.  Multiple servers may expose
+    overlapping URI schemes, so operations are scoped by server name.
+    """
+
+    server_name: str
+    uri: str
+    name: str
+    description: str | None = None
+    mime_type: str | None = None
+    size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MCPResourceContent:
+    """The result of :meth:`MCPClientManager.read_resource`.
+
+    Exactly one of ``text`` or ``blob`` is populated, matching the MCP
+    protocol's ``TextResourceContents`` / ``BlobResourceContents``
+    distinction.  Callers who want uniform treatment can use
+    :attr:`as_bytes` which encodes text as UTF-8.
+    """
+
+    server_name: str
+    uri: str
+    mime_type: str | None
+    text: str | None
+    blob: bytes | None
+
+    @property
+    def as_bytes(self) -> bytes:
+        """Return the resource payload as raw bytes.
+
+        Blob content is returned verbatim; text content is encoded as
+        UTF-8.  Raises :class:`ValueError` if neither is set (which
+        should not happen for a well-formed MCP server response).
+        """
+
+        if self.blob is not None:
+            return self.blob
+        if self.text is not None:
+            return self.text.encode("utf-8")
+        raise ValueError(
+            f"MCPResourceContent for {self.uri!r} has neither text nor blob."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MCPPromptArgument:
+    """One parameter declared by an MCP prompt template."""
+
+    name: str
+    description: str | None = None
+    required: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class MCPPrompt:
+    """An MCP prompt template exposed by a server.
+
+    Prompts are named, argument-parameterised message sequences.  Call
+    :meth:`MCPClientManager.get_prompt` with the server name, prompt
+    name, and argument dict to receive the rendered
+    :class:`MCPPromptResult` suitable for feeding to an LLM.
+    """
+
+    server_name: str
+    name: str
+    description: str | None = None
+    arguments: tuple[MCPPromptArgument, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MCPPromptMessage:
+    """One message in a rendered prompt result.
+
+    ``content`` is the text of the message.  For non-text content
+    (images, resource links) the content is a JSON-dumped description
+    so the message sequence remains a flat list of ``(role, text)``
+    pairs — use the raw MCP SDK directly if you need structured
+    multimodal content.
+    """
+
+    role: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class MCPPromptResult:
+    """Return value of :meth:`MCPClientManager.get_prompt`."""
+
+    server_name: str
+    name: str
+    description: str | None
+    messages: tuple[MCPPromptMessage, ...]
+
+
+# ---------------------------------------------------------------------------
 # Approval (human-in-the-loop) hooks
 # ---------------------------------------------------------------------------
 
@@ -339,6 +452,8 @@ class MCPClientManager:
                 raise ConfigurationError(f"Duplicate MCP server name: {server.name}")
             self._servers[server.name] = server
         self._tools_by_public_name: dict[str, MCPTool] = {}
+        self._resources_cache: list[MCPResource] | None = None
+        self._prompts_cache: list[MCPPrompt] | None = None
         self._mutation_lock: asyncio.Lock | None = None
         self._approval_hook: ApprovalHook | None = approval_hook
         self._auto_approve: set[str] = set(auto_approve or ())
@@ -419,7 +534,7 @@ class MCPClientManager:
                     f"MCP server {server.name!r} is already registered."
                 )
             self._servers[server.name] = server
-            self._tools_by_public_name = {}
+            self._invalidate_caches()
 
     async def remove_server(self, name: str) -> None:
         """Unregister a named MCP server.
@@ -439,7 +554,18 @@ class MCPClientManager:
         if name not in self._servers:
             raise KeyError(f"No MCP server registered with name {name!r}")
         del self._servers[name]
+        self._invalidate_caches()
+
+    def _invalidate_caches(self) -> None:
+        """Clear tool / resource / prompt discovery caches.
+
+        Called after any structural change (add, remove) so the next
+        discovery pass re-lists across the new server set.
+        """
+
         self._tools_by_public_name = {}
+        self._resources_cache = None
+        self._prompts_cache = None
 
     def _get_mutation_lock(self) -> asyncio.Lock:
         """Lazy-init the mutation lock at first use (event-loop binding)."""
@@ -507,6 +633,228 @@ class MCPClientManager:
             tools = [tool for tool in tools if tool.public_name in allowed]
 
         return [tool.to_tool_definition() for tool in tools]
+
+    # ------------------------------------------------------------------
+    # Resources
+    # ------------------------------------------------------------------
+
+    async def list_resources(self, *, refresh: bool = False) -> list[MCPResource]:
+        """List resources exposed across every configured MCP server.
+
+        Each :class:`MCPResource` is tagged with its ``server_name``;
+        callers that want resources from a single server can filter on
+        that field.  Unlike tools, resource URIs are NOT namespaced —
+        servers routinely share schemes (``file://``, ``rpc://``), so
+        reads are scoped by ``server`` instead of by a public name.
+        """
+
+        if self._resources_cache is not None and not refresh:
+            return list(self._resources_cache)
+
+        collected: list[MCPResource] = []
+        for server in self._servers.values():
+            collected.extend(await self._list_resources_for_server(server))
+        self._resources_cache = collected
+        return list(collected)
+
+    async def read_resource(self, server: str, uri: str) -> MCPResourceContent:
+        """Read a resource by ``(server, uri)``.
+
+        Raises :class:`KeyError` if ``server`` isn't registered.
+        Underlying MCP SDK exceptions (e.g. not-found, permission
+        denied) propagate to the caller — the manager does not wrap
+        them.
+        """
+
+        server_obj = self._servers.get(server)
+        if server_obj is None:
+            raise KeyError(f"No MCP server registered with name {server!r}")
+
+        async with self._session_for_server(server_obj) as session:
+            raw_result = await session.read_resource(uri)
+
+        return self._normalise_resource_result(server, uri, raw_result)
+
+    async def _list_resources_for_server(self, server: MCPServer) -> list[MCPResource]:
+        async with self._session_for_server(server) as session:
+            result = await session.list_resources()
+
+        raw_resources = getattr(result, "resources", []) or []
+        out: list[MCPResource] = []
+        for raw in raw_resources:
+            uri = str(getattr(raw, "uri", "") or "")
+            if not uri:
+                continue
+            name = str(getattr(raw, "name", None) or uri)
+            size = getattr(raw, "size", None)
+            out.append(
+                MCPResource(
+                    server_name=server.name,
+                    uri=uri,
+                    name=name,
+                    description=getattr(raw, "description", None),
+                    mime_type=getattr(raw, "mimeType", None)
+                    or getattr(raw, "mime_type", None),
+                    size=int(size) if isinstance(size, int) else None,
+                )
+            )
+        return out
+
+    @staticmethod
+    def _normalise_resource_result(
+        server: str, uri: str, raw_result: Any
+    ) -> MCPResourceContent:
+        """Convert the MCP SDK ``ReadResourceResult`` into our dataclass.
+
+        The SDK returns ``contents`` — a list with one or more
+        ``TextResourceContents`` / ``BlobResourceContents`` entries.
+        We collapse to the first entry (the common case); callers who
+        need the full list can drop down to the SDK directly.
+        """
+
+        contents = getattr(raw_result, "contents", None) or []
+        if not contents:
+            return MCPResourceContent(
+                server_name=server,
+                uri=uri,
+                mime_type=None,
+                text=None,
+                blob=None,
+            )
+        first = contents[0]
+        text = getattr(first, "text", None)
+        raw_blob = getattr(first, "blob", None)
+        blob: bytes | None
+        if raw_blob is None:
+            blob = None
+        elif isinstance(raw_blob, (bytes, bytearray)):
+            blob = bytes(raw_blob)
+        else:
+            # MCP protocol encodes BlobResourceContents as base64 strings.
+            try:
+                blob = base64.b64decode(str(raw_blob), validate=False)
+            except Exception:
+                blob = None
+        return MCPResourceContent(
+            server_name=server,
+            uri=str(getattr(first, "uri", uri) or uri),
+            mime_type=getattr(first, "mimeType", None)
+            or getattr(first, "mime_type", None),
+            text=str(text) if text is not None else None,
+            blob=blob,
+        )
+
+    # ------------------------------------------------------------------
+    # Prompts
+    # ------------------------------------------------------------------
+
+    async def list_prompts(self, *, refresh: bool = False) -> list[MCPPrompt]:
+        """List prompt templates exposed across every configured MCP server.
+
+        Each :class:`MCPPrompt` is tagged with its ``server_name``.
+        As with resources, prompts are scoped by server at invocation
+        time — the same prompt ``name`` can exist on multiple servers
+        without collision.
+        """
+
+        if self._prompts_cache is not None and not refresh:
+            return list(self._prompts_cache)
+
+        collected: list[MCPPrompt] = []
+        for server in self._servers.values():
+            collected.extend(await self._list_prompts_for_server(server))
+        self._prompts_cache = collected
+        return list(collected)
+
+    async def get_prompt(
+        self,
+        server: str,
+        name: str,
+        arguments: Mapping[str, str] | None = None,
+    ) -> MCPPromptResult:
+        """Render a prompt template against ``arguments`` and return messages.
+
+        Raises :class:`KeyError` if ``server`` isn't registered.
+        Argument validation (required parameters, types) is the MCP
+        server's job — failures propagate as ``ToolError`` or the
+        underlying SDK exception.
+        """
+
+        server_obj = self._servers.get(server)
+        if server_obj is None:
+            raise KeyError(f"No MCP server registered with name {server!r}")
+
+        args: dict[str, str] = dict(arguments or {})
+        async with self._session_for_server(server_obj) as session:
+            raw_result = await session.get_prompt(name, arguments=args)
+
+        return self._normalise_prompt_result(server, name, raw_result)
+
+    async def _list_prompts_for_server(self, server: MCPServer) -> list[MCPPrompt]:
+        async with self._session_for_server(server) as session:
+            result = await session.list_prompts()
+
+        raw_prompts = getattr(result, "prompts", []) or []
+        out: list[MCPPrompt] = []
+        for raw in raw_prompts:
+            name = str(getattr(raw, "name", "") or "")
+            if not name:
+                continue
+            args_raw = getattr(raw, "arguments", None) or []
+            args_out = tuple(
+                MCPPromptArgument(
+                    name=str(getattr(a, "name", "") or ""),
+                    description=getattr(a, "description", None),
+                    required=bool(getattr(a, "required", False)),
+                )
+                for a in args_raw
+                if getattr(a, "name", None)
+            )
+            out.append(
+                MCPPrompt(
+                    server_name=server.name,
+                    name=name,
+                    description=getattr(raw, "description", None),
+                    arguments=args_out,
+                )
+            )
+        return out
+
+    @staticmethod
+    def _normalise_prompt_result(
+        server: str, name: str, raw_result: Any
+    ) -> MCPPromptResult:
+        """Convert the MCP SDK ``GetPromptResult`` into our dataclass.
+
+        Non-text message content (images, resource refs) is collapsed
+        to a JSON dump so the message list stays a flat ``(role, str)``
+        sequence.  Callers needing native multimodal content should
+        use the SDK directly.
+        """
+
+        raw_messages = getattr(raw_result, "messages", []) or []
+        normalised: list[MCPPromptMessage] = []
+        for raw in raw_messages:
+            role = str(getattr(raw, "role", "user") or "user")
+            content_obj = getattr(raw, "content", None)
+            text = getattr(content_obj, "text", None)
+            if text is not None:
+                message_text = str(text)
+            else:
+                dump_fn = getattr(content_obj, "model_dump", None)
+                try:
+                    dump = dump_fn() if callable(dump_fn) else repr(content_obj)
+                    message_text = json.dumps(dump, default=str)
+                except Exception:
+                    message_text = repr(content_obj)
+            normalised.append(MCPPromptMessage(role=role, content=message_text))
+
+        return MCPPromptResult(
+            server_name=server,
+            name=name,
+            description=getattr(raw_result, "description", None),
+            messages=tuple(normalised),
+        )
 
     async def dispatch_tool(
         self,

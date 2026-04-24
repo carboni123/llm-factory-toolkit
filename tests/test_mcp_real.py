@@ -194,3 +194,83 @@ async def test_persistent_concurrent_calls_share_one_subprocess(
         f"concurrent calls against persistent manager must share the same "
         f"subprocess; got {results}"
     )
+
+
+# ===========================================================================
+# Resources (v0.3 #7)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_list_resources(stateless_manager: MCPClientManager) -> None:
+    async with asyncio.timeout(_TEST_TIMEOUT):
+        resources = await stateless_manager.list_resources(refresh=True)
+
+    names = {r.name for r in resources}
+    assert {"greeting", "icon"}.issubset(names)
+    greeting = next(r for r in resources if r.name == "greeting")
+    assert greeting.server_name == "echo"
+    assert greeting.mime_type == "text/plain"
+    icon = next(r for r in resources if r.name == "icon")
+    assert icon.mime_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_real_read_text_resource(
+    stateless_manager: MCPClientManager,
+) -> None:
+    async with asyncio.timeout(_TEST_TIMEOUT):
+        content = await stateless_manager.read_resource("echo", "echo://greeting")
+
+    assert content.server_name == "echo"
+    assert content.text == "hello from the echo server"
+    assert content.blob is None
+
+
+@pytest.mark.asyncio
+async def test_real_read_blob_resource(
+    stateless_manager: MCPClientManager,
+) -> None:
+    async with asyncio.timeout(_TEST_TIMEOUT):
+        content = await stateless_manager.read_resource("echo", "echo://icon")
+
+    assert content.server_name == "echo"
+    # The echo server returns PNG magic bytes.
+    assert content.blob is not None
+    assert content.blob.startswith(b"\x89PNG")
+
+
+# ===========================================================================
+# Prompts (v0.3 #7)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_real_list_prompts(stateless_manager: MCPClientManager) -> None:
+    async with asyncio.timeout(_TEST_TIMEOUT):
+        prompts = await stateless_manager.list_prompts(refresh=True)
+
+    assert [p.name for p in prompts] == ["greet"]
+    greet = prompts[0]
+    assert greet.server_name == "echo"
+    assert len(greet.arguments) == 1
+    arg = greet.arguments[0]
+    assert arg.name == "name"
+    assert arg.required is True
+
+
+@pytest.mark.asyncio
+async def test_real_get_prompt_renders_messages(
+    stateless_manager: MCPClientManager,
+) -> None:
+    async with asyncio.timeout(_TEST_TIMEOUT):
+        result = await stateless_manager.get_prompt(
+            "echo", "greet", arguments={"name": "Ada"}
+        )
+
+    assert result.server_name == "echo"
+    assert result.name == "greet"
+    assert [(m.role, m.content) for m in result.messages] == [
+        ("user", "Please greet Ada."),
+        ("assistant", "Hello, Ada!"),
+    ]

@@ -152,6 +152,10 @@ Servers can be added and removed at runtime via `await client.add_mcp_server(MCP
 
 **Observability:** `MCPClientManager(on_mcp_call=callback)` emits a single `MCPCallEvent` per dispatch (server, public/raw tool names, arguments, duration_ms, success, error, content_bytes, payload_bytes, approval_status) across every outcome. Sync or async callbacks; exceptions are trapped at WARNING. `LLMClient(mcp_on_call=...)` is the convenience kwarg.
 
+**HTTP auth (OAuth2):** `MCPServerStreamableHTTP(bearer_token_provider=...)` where the provider implements the `BearerTokenProvider` protocol (`async get_token()` + `async refresh()`). Token is injected at session-open; on a 401 the manager calls `refresh()` once and retries. Approval + telemetry stay outside the retry loop — one prompt, one event, per logical call.
+
+**Resources & prompts:** `MCPClientManager` exposes `list_resources()`, `read_resource(server, uri)`, `list_prompts()`, `get_prompt(server, name, arguments)`. Discovery results are cached per-manager and invalidated by `add_server` / `remove_server`. `MCPResourceContent.as_bytes` gives uniform access; non-text prompt content is JSON-dumped to keep `result.messages` flat. Approval hook and `MCPCallEvent` are tool-specific — resources/prompts pass through unwrapped (documented limitation, extendable later).
+
 Key files: `mcp.py`, `client.py::_prepare_mcp_tools_for_call` / `add_mcp_server` / `remove_mcp_server`, `providers/_base.py::_dispatch_tool_calls`, `providers/claude_code.py::_bridge_tools_to_mcp`. See `docs/MCP.md` for user-facing docs and `docs/MCP_ROADMAP.md` for tracked improvements.
 
 ### Dynamic Tool Loading

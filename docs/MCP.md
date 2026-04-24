@@ -171,6 +171,61 @@ Concurrency and safety:
 
 For custom lifecycles, build your own manager and pass it via `mcp_client=`. Both the stateless and persistent managers implement the same minimal surface (`list_tools`, `get_tool_definitions`, `dispatch_tool`, `close`).
 
+## Resources
+
+MCP resources are addressable, read-only data surfaces (`file://`, `screen://`, `rpc://`, whatever scheme the server exposes). Unlike tools they don't take parameters — you just read them by URI.
+
+```python
+from llm_factory_toolkit import LLMClient, MCPServerStdio
+
+client = LLMClient(
+    model="openai/gpt-4o-mini",
+    mcp_servers=[MCPServerStdio(name="fs", command="npx", args=[...])],
+)
+
+# Discovery — every MCPResource is tagged with its originating server.
+resources = await client.mcp_client.list_resources()
+for r in resources:
+    print(f"{r.server_name}: {r.uri} ({r.mime_type})")
+
+# Read one — scope by (server, uri) because URI schemes can overlap
+# across servers.  Use `.text`, `.blob`, or `.as_bytes` depending on
+# content type.
+content = await client.mcp_client.read_resource("fs", "file:///etc/hosts")
+if content.text is not None:
+    print(content.text)
+else:
+    # Blob content is base64-decoded from the MCP wire format.
+    save_to_disk(content.blob)
+```
+
+## Prompts
+
+Prompts are named, argument-parameterised message sequences — useful for server-side prompt templates that expose a stable interface to clients.
+
+```python
+prompts = await client.mcp_client.list_prompts()
+for p in prompts:
+    required = [a.name for a in p.arguments if a.required]
+    print(f"{p.server_name}:{p.name}  required={required}")
+
+result = await client.mcp_client.get_prompt(
+    "fs",
+    "summarise",
+    arguments={"doc": "long text...", "style": "terse"},
+)
+for msg in result.messages:
+    print(f"[{msg.role}] {msg.content}")
+```
+
+Non-text content in a prompt message (images, resource references) is collapsed to a JSON dump of the underlying content object so `result.messages` stays a flat `(role, text)` sequence. Callers who need structured multimodal content should drop down to the `mcp` SDK directly.
+
+### Scope notes for resources & prompts
+
+- The **approval hook** and `MCPCallEvent` **telemetry** currently gate / observe tool calls only. Resource reads and prompt renders go straight through. For the v0 safety story this matches the original problem framing (tool calls are the destructive surface); a future release may extend both hooks to resources/prompts.
+- The HTTP 401 **auto-retry** wraps tool calls, not resource/prompt calls. On a persistent manager the next call opens a fresh session (via the invalidate-on-error path) and re-reads the token via `get_token`, so self-healing still works for 401s, just not inside a single call. If you need tight retry semantics for resources, wrap your call in your own one-shot retry.
+- Discovery results are **cached** like tools — pass `refresh=True` to re-discover, or let any `add_mcp_server` / `remove_mcp_server` invalidate the cache automatically.
+
 ## Observability
 
 Every dispatch emits a single `MCPCallEvent` telemetry record when an `on_mcp_call` callback is configured — covering successes, tool-not-found, approval denials, approval hook errors, and session exceptions.
