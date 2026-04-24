@@ -308,6 +308,14 @@ class LLMClient:
         group: str | None = None,
         exclude_params: list[str] | None = None,
         blocking: bool = False,
+        aliases: list[str] | None = None,
+        requires: list[str] | None = None,
+        suggested_with: list[str] | None = None,
+        risk_level: str = "low",
+        read_only: bool = False,
+        auth_scopes: list[str] | None = None,
+        selection_examples: list[str] | None = None,
+        negative_examples: list[str] | None = None,
     ) -> None:
         """Register a Python function as a tool for the LLM.
 
@@ -327,6 +335,20 @@ class LLMClient:
             blocking: When ``True`` and the handler is synchronous,
                 dispatch runs it via ``asyncio.to_thread()`` to avoid
                 blocking the event loop.
+            aliases: Optional alternative names selectors may match against.
+            requires: Optional list of tool names that must be loaded
+                alongside this tool for it to function correctly.
+            suggested_with: Optional list of tool names commonly used
+                together with this tool.
+            risk_level: Risk classification for selectors and HITL gates
+                (``"low"``, ``"medium"``, ``"high"``).  Defaults to ``"low"``.
+            read_only: ``True`` if the tool performs no mutating side effects.
+            auth_scopes: Optional list of auth scope strings required to
+                invoke the tool.
+            selection_examples: Optional natural-language utterances that
+                should trigger selection of this tool.
+            negative_examples: Optional natural-language utterances that
+                should NOT trigger selection of this tool.
         """
         if name is None:
             name = function.__name__
@@ -349,6 +371,14 @@ class LLMClient:
             group=group,
             exclude_params=exclude_params,
             blocking=blocking,
+            aliases=aliases,
+            requires=requires,
+            suggested_with=suggested_with,
+            risk_level=risk_level,
+            read_only=read_only,
+            auth_scopes=auth_scopes,
+            selection_examples=selection_examples,
+            negative_examples=negative_examples,
         )
         logger.info("Tool '%s' registered.", name)
 

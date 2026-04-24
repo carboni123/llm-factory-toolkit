@@ -44,6 +44,14 @@ class ToolRegistration:
     tags: list[str] = field(default_factory=list)
     group: str | None = None
     blocking: bool = False
+    aliases: list[str] = field(default_factory=list)
+    requires: list[str] = field(default_factory=list)
+    suggested_with: list[str] = field(default_factory=list)
+    risk_level: str = "low"
+    read_only: bool = False
+    auth_scopes: list[str] = field(default_factory=list)
+    selection_examples: list[str] = field(default_factory=list)
+    negative_examples: list[str] = field(default_factory=list)
     _compact_cache: dict[str, Any] | None = field(
         default=None, repr=False, compare=False
     )
@@ -162,6 +170,14 @@ class ToolFactory:
         group: str | None = None,
         exclude_params: list[str] | None = None,
         blocking: bool = False,
+        aliases: list[str] | None = None,
+        requires: list[str] | None = None,
+        suggested_with: list[str] | None = None,
+        risk_level: str = "low",
+        read_only: bool = False,
+        auth_scopes: list[str] | None = None,
+        selection_examples: list[str] | None = None,
+        negative_examples: list[str] | None = None,
     ) -> None:
         """Register a callable tool the LLM can invoke during generation.
 
@@ -205,6 +221,23 @@ class ToolFactory:
             blocking: When ``True`` and the handler is synchronous,
                 dispatch runs it via ``asyncio.to_thread()`` to avoid
                 blocking the event loop.  Async handlers ignore this flag.
+            aliases: Optional alternative names selectors may match against
+                (e.g. ``["new_event", "schedule"]``).
+            requires: Optional list of tool names that must be loaded
+                alongside this tool for it to function correctly.
+            suggested_with: Optional list of tool names commonly used
+                together with this tool; selectors may surface these as hints.
+            risk_level: Risk classification for selectors and HITL gates.
+                Typical values: ``"low"``, ``"medium"``, ``"high"``.
+                Defaults to ``"low"``.
+            read_only: ``True`` if the tool performs no mutating side
+                effects; selectors may treat read-only tools as always-safe.
+            auth_scopes: Optional list of auth scope strings required to
+                invoke the tool (e.g. ``["calendar.write"]``).
+            selection_examples: Optional natural-language utterances that
+                should trigger selection of this tool.
+            negative_examples: Optional natural-language utterances that
+                should NOT trigger selection of this tool.
 
         Example::
 
@@ -250,9 +283,17 @@ class ToolFactory:
             mock_executor=mock_executor,
             definition=definition,
             category=category,
-            tags=tags if tags is not None else [],
+            tags=list(tags) if tags else [],
             group=group,
             blocking=blocking,
+            aliases=list(aliases) if aliases else [],
+            requires=list(requires) if requires else [],
+            suggested_with=list(suggested_with) if suggested_with else [],
+            risk_level=risk_level,
+            read_only=read_only,
+            auth_scopes=list(auth_scopes) if auth_scopes else [],
+            selection_examples=list(selection_examples) if selection_examples else [],
+            negative_examples=list(negative_examples) if negative_examples else [],
         )
         self.tool_usage_counts[name] = 0
         logger.info("Registered tool: %s", name)
@@ -283,6 +324,14 @@ class ToolFactory:
         tags = tags_override or getattr(tool_class, "TAGS", None)
         group = group_override or getattr(tool_class, "GROUP", None)
         blocking = getattr(tool_class, "BLOCKING", False)
+        aliases = getattr(tool_class, "ALIASES", None)
+        requires = getattr(tool_class, "REQUIRES", None)
+        suggested_with = getattr(tool_class, "SUGGESTED_WITH", None)
+        risk_level = getattr(tool_class, "RISK_LEVEL", "low")
+        read_only = getattr(tool_class, "READ_ONLY", False)
+        auth_scopes = getattr(tool_class, "AUTH_SCOPES", None)
+        selection_examples = getattr(tool_class, "SELECTION_EXAMPLES", None)
+        negative_examples = getattr(tool_class, "NEGATIVE_EXAMPLES", None)
 
         if not name or not description:
             raise ToolError(
@@ -313,6 +362,14 @@ class ToolFactory:
             group=group,
             exclude_params=exclude_params,
             blocking=blocking,
+            aliases=aliases,
+            requires=requires,
+            suggested_with=suggested_with,
+            risk_level=risk_level,
+            read_only=read_only,
+            auth_scopes=auth_scopes,
+            selection_examples=selection_examples,
+            negative_examples=negative_examples,
         )
         logger.info("Registered tool class: %s as '%s'", tool_class.__name__, name)
 
