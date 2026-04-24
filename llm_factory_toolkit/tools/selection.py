@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from .catalog import ToolCatalog
@@ -72,6 +72,10 @@ class ToolSelector(Protocol):
 
 class CatalogToolSelector:
     """Default selector — scores entries via catalog relevance + aliases."""
+
+    # Score decrement applied to dependencies relative to their parent. Keeps
+    # parent ranked above its dependency when both are dumped sorted by score.
+    _DEPENDENCY_SCORE_DECREMENT: ClassVar[float] = 0.05
 
     def __init__(self, *, weight_alias: float = 0.95) -> None:
         self._weight_alias = weight_alias
@@ -172,6 +176,16 @@ class CatalogToolSelector:
         primary = candidates[: config.max_selected_tools]
         seen_names = {c.name for c in primary}
         extras: list[ToolCandidate] = []
+        # Hoist use_tools allowlist outside the loop so it's built once.
+        allowed_for_expansion = (
+            set(input.use_tools) if input.use_tools is not None else None
+        )
+        # Track post-filter token total so we can surface budget overshoot via
+        # diagnostics. Expansion is allowed to exceed selection_budget_tokens
+        # (deps are necessary), but callers can detect when this happens.
+        expansion_token_overshoot = 0
+        budget = config.selection_budget_tokens
+        running_total = sum((c.estimated_tokens or 0) for c in primary) if budget else 0
         for parent in primary:
             deps_with_kind = [
                 (dep, "dependency of " + parent.name) for dep in parent.requires
@@ -185,13 +199,25 @@ class CatalogToolSelector:
                 if dep_entry is None:
                     continue
                 # Re-apply use_tools filter: don't expand into a disallowed tool.
-                if input.use_tools is not None and dep_name not in set(input.use_tools):
+                if (
+                    allowed_for_expansion is not None
+                    and dep_name not in allowed_for_expansion
+                ):
                     rejected.setdefault(dep_name, "not in use_tools")
                     continue
+                dep_cost = dep_entry.token_count or 0
+                if budget is not None and running_total + dep_cost > budget:
+                    expansion_token_overshoot += dep_cost
+                running_total += (
+                    dep_cost  # always advance so we know total expansion size
+                )
                 extras.append(
                     ToolCandidate(
                         name=dep_entry.name,
-                        score=max(config.min_selection_score, parent.score - 0.05),
+                        score=max(
+                            config.min_selection_score,
+                            parent.score - self._DEPENDENCY_SCORE_DECREMENT,
+                        ),
                         reasons=[reason],
                         category=dep_entry.category,
                         group=dep_entry.group,
@@ -203,6 +229,11 @@ class CatalogToolSelector:
                     )
                 )
                 seen_names.add(dep_name)
+
+        if expansion_token_overshoot > 0:
+            diagnostics["budget_exceeded_by_expansion_tokens"] = (
+                expansion_token_overshoot
+            )
 
         # Combine primary + expansion. Note: expansion is allowed to push the
         # total beyond max_selected_tools — the runtime semantics treat

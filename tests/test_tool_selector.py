@@ -259,3 +259,167 @@ async def test_suggested_with_expands_companions() -> None:
     assert "query_calendar" in plan.selected_tools
     qc = next(c for c in plan.candidates if c.name == "query_calendar")
     assert any("suggested" in r for r in qc.reasons)
+
+
+@pytest.mark.asyncio
+async def test_expansion_is_one_hop_only() -> None:
+    """A→B→C: only A and B selected, C is NOT pulled in transitively."""
+    factory = ToolFactory()
+    factory.register_tool(
+        function=lambda: {},
+        name="a_tool",
+        description="A tool",
+        parameters={"type": "object", "properties": {}},
+        requires=["b_tool"],
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="b_tool",
+        description="B tool",
+        parameters={"type": "object", "properties": {}},
+        requires=["c_tool"],
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="c_tool",
+        description="C tool",
+        parameters={"type": "object", "properties": {}},
+    )
+    catalog = InMemoryToolCatalog(factory)
+    sel = CatalogToolSelector()
+    plan = await sel.select_tools(
+        _make_input("a_tool please", catalog),
+        ToolLoadingConfig(mode="preselect", max_selected_tools=4),
+    )
+    assert "a_tool" in plan.selected_tools
+    assert "b_tool" in plan.selected_tools
+    assert "c_tool" not in plan.selected_tools
+
+
+@pytest.mark.asyncio
+async def test_expansion_dedupes_across_parents() -> None:
+    """Two primaries pointing at the same dep yield exactly one extra."""
+    factory = ToolFactory()
+    factory.register_tool(
+        function=lambda: {},
+        name="parent_one",
+        description="parent one",
+        parameters={"type": "object", "properties": {}},
+        requires=["shared_dep"],
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="parent_two",
+        description="parent two",
+        parameters={"type": "object", "properties": {}},
+        suggested_with=["shared_dep"],
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="shared_dep",
+        description="shared dependency",
+        parameters={"type": "object", "properties": {}},
+    )
+    catalog = InMemoryToolCatalog(factory)
+    sel = CatalogToolSelector()
+    plan = await sel.select_tools(
+        _make_input("parent_one parent_two", catalog),
+        ToolLoadingConfig(mode="preselect", max_selected_tools=4),
+    )
+    # shared_dep selected exactly once
+    assert plan.selected_tools.count("shared_dep") == 1
+
+
+@pytest.mark.asyncio
+async def test_expansion_respects_use_tools_filter() -> None:
+    """A dependency excluded by use_tools is rejected, not expanded."""
+    factory = ToolFactory()
+    factory.register_tool(
+        function=lambda: {},
+        name="primary_tool",
+        description="primary",
+        parameters={"type": "object", "properties": {}},
+        requires=["forbidden_dep"],
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="forbidden_dep",
+        description="forbidden",
+        parameters={"type": "object", "properties": {}},
+    )
+    catalog = InMemoryToolCatalog(factory)
+    sel = CatalogToolSelector()
+    inp = _make_input("primary_tool", catalog)
+    inp.use_tools = ["primary_tool"]  # forbidden_dep NOT allowed
+    plan = await sel.select_tools(
+        inp, ToolLoadingConfig(mode="preselect", min_selection_score=0.0)
+    )
+    assert "primary_tool" in plan.selected_tools
+    assert "forbidden_dep" not in plan.selected_tools
+    assert plan.rejected_tools.get("forbidden_dep") == "not in use_tools"
+
+
+@pytest.mark.asyncio
+async def test_expansion_records_budget_overshoot_diagnostic() -> None:
+    """When deps push past selection_budget_tokens, diagnostic flags it."""
+    factory = ToolFactory()
+    factory.register_tool(
+        function=lambda: {},
+        name="primary",
+        description="primary",
+        parameters={"type": "object", "properties": {}},
+        requires=["dep_a", "dep_b"],
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="dep_a",
+        description="dep a",
+        parameters={"type": "object", "properties": {}},
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="dep_b",
+        description="dep b",
+        parameters={"type": "object", "properties": {}},
+    )
+    catalog = InMemoryToolCatalog(factory)
+    # Size the budget so primary fits but deps push it over.
+    primary_tokens = catalog.get_entry("primary").token_count or 0
+    budget = primary_tokens  # exactly enough for primary; deps will overshoot
+    sel = CatalogToolSelector()
+    plan = await sel.select_tools(
+        _make_input("primary please", catalog),
+        ToolLoadingConfig(
+            mode="preselect",
+            max_selected_tools=4,
+            selection_budget_tokens=budget,
+        ),
+    )
+    # Both deps still selected (expansion bypasses budget),
+    # but overshoot is recorded.
+    assert "primary" in plan.selected_tools
+    assert "dep_a" in plan.selected_tools
+    assert "dep_b" in plan.selected_tools
+    assert plan.diagnostics.get("budget_exceeded_by_expansion_tokens", 0) > 0
+
+
+@pytest.mark.asyncio
+async def test_expansion_skips_unknown_dependency() -> None:
+    """A dependency name not in the catalog is silently skipped."""
+    factory = ToolFactory()
+    factory.register_tool(
+        function=lambda: {},
+        name="lonely",
+        description="lonely",
+        parameters={"type": "object", "properties": {}},
+        requires=["nonexistent_dep"],
+    )
+    catalog = InMemoryToolCatalog(factory)
+    sel = CatalogToolSelector()
+    plan = await sel.select_tools(
+        _make_input("lonely", catalog),
+        ToolLoadingConfig(mode="preselect"),
+    )
+    assert "lonely" in plan.selected_tools
+    assert "nonexistent_dep" not in plan.selected_tools
+    assert "nonexistent_dep" not in plan.rejected_tools
