@@ -53,7 +53,28 @@ client = LLMClient(
 
 ## Filtering tools
 
-`use_tools` filters local and MCP tools together:
+Two filters compose, each operating at a different layer:
+
+| Filter | Applies to | Name matched against |
+|---|---|---|
+| `MCPServer(allowed_tools=..., denied_tools=...)` | Discovery — per server | **Raw** MCP tool name (as the server advertises it) |
+| `LLMClient.generate(use_tools=[...])` | Per-call — LLM visibility | **Public** (namespaced) tool name |
+
+Per-server filter — restrict what a server exposes before any namespacing:
+
+```python
+MCPServerStdio(
+    name="fs",
+    command="npx",
+    args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    allowed_tools=("read_file", "list_dir"),   # whitelist — everything else is hidden
+    denied_tools=("delete_file",),             # blacklist — takes precedence inside the whitelist
+)
+```
+
+When both are set the effective exposed set is `allowed_tools − denied_tools`. Membership is checked on the raw MCP name (`"read_file"`), not the namespaced public name (`"fs__read_file"`).
+
+Per-call filter — `use_tools` picks a subset of everything that made it through discovery:
 
 ```python
 await client.generate(
@@ -62,7 +83,7 @@ await client.generate(
 )
 ```
 
-`use_tools=None` disables both local and MCP tools.
+`use_tools=None` disables both local and MCP tools; `use_tools=()` (empty) enables everything the server-level filter allowed.
 
 ## Intent planning
 

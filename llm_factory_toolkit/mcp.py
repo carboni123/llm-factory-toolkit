@@ -72,10 +72,29 @@ class MCPServer:
     name: str
     namespace_tools: bool = True
     tool_name_separator: str = "__"
+    allowed_tools: Sequence[str] | None = None
+    denied_tools: Sequence[str] | None = None
 
     @property
     def safe_name(self) -> str:
         return _safe_tool_name(self.name, fallback="server")
+
+    def _is_tool_allowed(self, raw_name: str) -> bool:
+        """Apply the server-level allow/deny filter.
+
+        Matches against the *raw* MCP tool name (what the server
+        advertises), not the namespaced public name.  Callers that need
+        public-name filtering should use ``LLMClient.generate(use_tools=[...])``.
+
+        When both lists are set, ``allowed_tools`` is applied first, then
+        ``denied_tools`` — the effective allowed set is ``allowed - denied``.
+        """
+
+        if self.allowed_tools is not None and raw_name not in self.allowed_tools:
+            return False
+        if self.denied_tools is not None and raw_name in self.denied_tools:
+            return False
+        return True
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -491,6 +510,8 @@ class MCPClientManager:
         for raw_tool in raw_tools:
             name = str(getattr(raw_tool, "name", "") or "")
             if not name:
+                continue
+            if not server._is_tool_allowed(name):
                 continue
             description = getattr(raw_tool, "description", None)
             input_schema = getattr(raw_tool, "inputSchema", None)
