@@ -106,3 +106,20 @@ For custom lifecycles, build your own manager and pass it via `mcp_client=`. Bot
 
 - MCP is optional and imported lazily. Importing `llm_factory_toolkit` does not require the `mcp` package.
 - Tool definitions are cached after the first list operation. Pass `refresh=True` to `list_tools()` to re-discover.
+
+## Integration tests
+
+Real-subprocess tests live in `tests/test_mcp_real.py` and drive the
+bundled `tests/mcp_echo_server.py` through stdio. They validate the real
+MCP SDK code path (handshake, `ClientSession.list_tools`,
+`ClientSession.call_tool`, error results, structured content) as well
+as the persistent-manager subprocess-reuse contract.
+
+```bash
+pip install -e ".[mcp,dev]"
+pytest tests/test_mcp_real.py --run-integration -v
+```
+
+The tests are marked `integration` and skip by default; they also
+`importorskip("mcp")` so environments without the optional SDK pass
+silently.

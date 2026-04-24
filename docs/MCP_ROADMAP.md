@@ -38,7 +38,7 @@ Status legend: `[ ]` planned · `[~]` in progress · `[x]` done
 **Exit criteria:** one session per server per client lifetime; real-MCP CI gate; no magic context keys.
 
 - [x] **#1 Persistent MCP sessions** — `PersistentMCPClientManager` keeps one `ClientSession` per server alive for the manager's lifetime, guarded by a per-server `asyncio.Lock`, with invalidate-on-error reconnect. Opt-in via `LLMClient(..., persistent_mcp=True)` or by passing an explicit `mcp_client=PersistentMCPClientManager(...)`. Public facade identical to the stateless manager. (7 unit tests covering open-once, close lifecycle, reopen-after-close, invalidate-on-error, concurrent-first-call race, per-server isolation, per-server lock serialisation.)
-- [ ] **#2 Real-MCP integration tests** — `tests/integration/test_mcp_real.py` driven by `@modelcontextprotocol/server-everything`. Gated on `RUN_MCP_INTEGRATION=1` and `mcp` + `node` available.
+- [x] **#2 Real-MCP integration tests** — `tests/test_mcp_real.py` drives the bundled `tests/mcp_echo_server.py` (a minimal Python stdio MCP server — no Node dependency) through real subprocess handshake. Gated by `pytest.mark.integration` + `pytest.importorskip("mcp")` so they opt in via `pytest --run-integration` and skip cleanly without the optional SDK. 8 tests covering discovery, text/structured/error dispatch, stateless per-call spawn, persistent single-subprocess reuse, close-then-reopen, and concurrent-call session sharing.
 - [ ] **#3 Typed dispatcher protocol** — `ExternalToolDispatcher` Protocol in `tools/models.py`; thread as first-class kwarg on `BaseProvider.generate()` / `_dispatch_tool_calls()`. Legacy context-key path kept one release with `DeprecationWarning`.
 
 ## v0.2 — safety & parity
