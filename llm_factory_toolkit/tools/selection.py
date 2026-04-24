@@ -164,9 +164,57 @@ class CatalogToolSelector:
                 kept3.append(c)
             candidates = kept3
 
-        selected = [c.name for c in candidates[: config.max_selected_tools]]
         for c in candidates[config.max_selected_tools :]:
             rejected.setdefault(c.name, "exceeds max_selected_tools")
+
+        # Take top-N as primary candidates BEFORE expansion, so the budget cap
+        # remains meaningful and expansion doesn't blow past max_selected_tools.
+        primary = candidates[: config.max_selected_tools]
+        seen_names = {c.name for c in primary}
+        extras: list[ToolCandidate] = []
+        for parent in primary:
+            deps_with_kind = [
+                (dep, "dependency of " + parent.name) for dep in parent.requires
+            ] + [
+                (dep, "suggested with " + parent.name) for dep in parent.suggested_with
+            ]
+            for dep_name, reason in deps_with_kind:
+                if dep_name in seen_names or dep_name == parent.name:
+                    continue
+                dep_entry = catalog.get_entry(dep_name)
+                if dep_entry is None:
+                    continue
+                # Re-apply use_tools filter: don't expand into a disallowed tool.
+                if input.use_tools is not None and dep_name not in set(input.use_tools):
+                    rejected.setdefault(dep_name, "not in use_tools")
+                    continue
+                extras.append(
+                    ToolCandidate(
+                        name=dep_entry.name,
+                        score=max(config.min_selection_score, parent.score - 0.05),
+                        reasons=[reason],
+                        category=dep_entry.category,
+                        group=dep_entry.group,
+                        tags=list(dep_entry.tags),
+                        estimated_tokens=dep_entry.token_count or None,
+                        requires=list(dep_entry.requires),
+                        suggested_with=list(dep_entry.suggested_with),
+                        risk_level=dep_entry.risk_level,
+                    )
+                )
+                seen_names.add(dep_name)
+
+        # Combine primary + expansion. Note: expansion is allowed to push the
+        # total beyond max_selected_tools — the runtime semantics treat
+        # requires/suggested_with as *necessary* to make the primary tool usable,
+        # so dropping them would defeat the purpose. Document this in the reason.
+        candidates_full = primary + extras
+        selected = [c.name for c in candidates_full]
+
+        # Expanded candidates are already past `max_selected_tools` — this is
+        # intentional. Update the visible candidates list so the diagnostics
+        # expose them.
+        candidates = candidates_full
 
         confidence = candidates[0].score if candidates else 0.0
         reason = (

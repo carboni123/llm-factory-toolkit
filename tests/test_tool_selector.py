@@ -194,3 +194,68 @@ class TestCatalogToolSelector:
         # create_task is excluded by use_tools; it must NOT be tagged with the
         # min_selection_score reason.
         assert plan.rejected_tools.get("create_task") == "not in use_tools"
+
+
+@pytest.mark.asyncio
+async def test_requires_expansion_pulls_in_dependency() -> None:
+    factory = ToolFactory()
+    factory.register_tool(
+        function=lambda: {},
+        name="delete_customer",
+        description="Delete a customer permanently.",
+        parameters={"type": "object", "properties": {}},
+        category="customer",
+        tags=["customer", "delete"],
+        group="crm.customers",
+        requires=["query_customers"],
+        risk_level="high",
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="query_customers",
+        description="Look up customers.",
+        parameters={"type": "object", "properties": {}},
+        category="customer",
+        tags=["customer", "lookup"],
+        group="crm.customers",
+    )
+    catalog = InMemoryToolCatalog(factory)
+    sel = CatalogToolSelector()
+    plan = await sel.select_tools(
+        _make_input("delete_customer for João", catalog),
+        ToolLoadingConfig(mode="preselect", max_selected_tools=4),
+    )
+    assert "delete_customer" in plan.selected_tools
+    assert "query_customers" in plan.selected_tools
+    qc = next(c for c in plan.candidates if c.name == "query_customers")
+    assert any("dependency" in r for r in qc.reasons)
+
+
+@pytest.mark.asyncio
+async def test_suggested_with_expands_companions() -> None:
+    factory = ToolFactory()
+    factory.register_tool(
+        function=lambda: {},
+        name="create_calendar_event",
+        description="Create a calendar event.",
+        parameters={"type": "object", "properties": {}},
+        suggested_with=["query_calendar"],
+        tags=["calendar", "create"],
+    )
+    factory.register_tool(
+        function=lambda: {},
+        name="query_calendar",
+        description="Query calendar events.",
+        parameters={"type": "object", "properties": {}},
+        tags=["calendar", "query"],
+    )
+    catalog = InMemoryToolCatalog(factory)
+    sel = CatalogToolSelector()
+    plan = await sel.select_tools(
+        _make_input("create_calendar_event tomorrow at 3pm", catalog),
+        ToolLoadingConfig(mode="preselect", max_selected_tools=4),
+    )
+    assert "create_calendar_event" in plan.selected_tools
+    assert "query_calendar" in plan.selected_tools
+    qc = next(c for c in plan.candidates if c.name == "query_calendar")
+    assert any("suggested" in r for r in qc.reasons)
