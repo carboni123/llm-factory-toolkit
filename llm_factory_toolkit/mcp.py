@@ -11,7 +11,14 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -125,6 +132,69 @@ class MCPTool:
         }
 
 
+# ---------------------------------------------------------------------------
+# Approval (human-in-the-loop) hooks
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MCPToolCall:
+    """Context passed to an :data:`ApprovalHook` before a tool call runs.
+
+    Gives the hook enough to make a decision without exposing the manager
+    itself.  ``arguments`` is the parsed JSON object the LLM produced.
+    """
+
+    server_name: str
+    tool_name: str
+    public_name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalDecision:
+    """Result of an :data:`ApprovalHook` invocation.
+
+    Prefer the :meth:`approve` / :meth:`deny` helpers; both produce a
+    decision with a consistent, frozen shape that ``dispatch_tool`` can
+    translate to a :class:`ToolExecutionResult`.
+    """
+
+    approved: bool
+    reason: str | None = None
+
+    @classmethod
+    def approve(cls) -> ApprovalDecision:
+        return cls(approved=True)
+
+    @classmethod
+    def deny(cls, reason: str = "denied by policy") -> ApprovalDecision:
+        return cls(approved=False, reason=reason)
+
+
+ApprovalHook = Callable[[MCPToolCall], Awaitable[bool | ApprovalDecision]]
+"""Type of an approval hook: ``async (MCPToolCall) -> bool | ApprovalDecision``.
+
+Returning ``True`` / ``False`` is accepted for ergonomic one-liners;
+internally both are normalised to :class:`ApprovalDecision`.  The hook
+is called *before* any MCP session is opened so denied calls never
+touch the remote server.
+"""
+
+
+def _normalise_approval(raw: Any) -> ApprovalDecision:
+    """Coerce the return value of an :data:`ApprovalHook` call."""
+
+    if isinstance(raw, ApprovalDecision):
+        return raw
+    if isinstance(raw, bool):
+        return ApprovalDecision(approved=raw)
+    raise TypeError(
+        "MCP approval_hook must return bool or ApprovalDecision, "
+        f"got {type(raw).__name__!r}."
+    )
+
+
 class MCPClientManager:
     """Small stateless MCP client facade used by :class:`LLMClient`.
 
@@ -135,7 +205,13 @@ class MCPClientManager:
     the first discovery unless ``refresh=True`` is passed.
     """
 
-    def __init__(self, servers: Sequence[MCPServer]) -> None:
+    def __init__(
+        self,
+        servers: Sequence[MCPServer],
+        *,
+        approval_hook: ApprovalHook | None = None,
+        auto_approve: Iterable[str] | None = None,
+    ) -> None:
         self._servers: dict[str, MCPServer] = {}
         for server in servers:
             if server.name in self._servers:
@@ -143,6 +219,40 @@ class MCPClientManager:
             self._servers[server.name] = server
         self._tools_by_public_name: dict[str, MCPTool] = {}
         self._mutation_lock: asyncio.Lock | None = None
+        self._approval_hook: ApprovalHook | None = approval_hook
+        self._auto_approve: set[str] = set(auto_approve or ())
+
+    @property
+    def approval_hook(self) -> ApprovalHook | None:
+        """The configured approval hook, or ``None`` if every call is auto-approved."""
+
+        return self._approval_hook
+
+    @approval_hook.setter
+    def approval_hook(self, hook: ApprovalHook | None) -> None:
+        """Replace the approval hook at runtime.  ``None`` disables gating."""
+
+        self._approval_hook = hook
+
+    @property
+    def auto_approve(self) -> set[str]:
+        """Public tool names that bypass the approval hook.
+
+        Returns a *copy* — mutate the manager via :meth:`extend_auto_approve`
+        / :meth:`reset_auto_approve` for clarity.
+        """
+
+        return set(self._auto_approve)
+
+    def extend_auto_approve(self, names: Iterable[str]) -> None:
+        """Add tool names to the auto-approve allowlist."""
+
+        self._auto_approve.update(names)
+
+    def reset_auto_approve(self, names: Iterable[str] | None = None) -> None:
+        """Replace the auto-approve allowlist (empty by default)."""
+
+        self._auto_approve = set(names or ())
 
     @property
     def servers(self) -> dict[str, MCPServer]:
@@ -283,6 +393,14 @@ class MCPClientManager:
             )
 
         arguments = self._parse_arguments(public_name, arguments_json or "{}")
+
+        # Approval gate: run *before* opening a session so denied calls
+        # never touch the remote server.
+        if self._approval_hook is not None and public_name not in self._auto_approve:
+            denial = await self._run_approval(tool, public_name, arguments)
+            if denial is not None:
+                return denial
+
         server = self._servers[tool.server_name]
         try:
             async with self._session_for_server(server) as session:
@@ -301,6 +419,68 @@ class MCPClientManager:
             )
 
         return self._normalise_call_result(tool, raw_result)
+
+    async def _run_approval(
+        self,
+        tool: MCPTool,
+        public_name: str,
+        arguments: dict[str, Any],
+    ) -> ToolExecutionResult | None:
+        """Consult the configured approval hook.
+
+        Returns ``None`` when the call is approved (dispatch continues)
+        or a pre-built denial :class:`ToolExecutionResult` when the hook
+        denies, so the caller can return it immediately without opening
+        a session.  If the hook itself raises, the exception is caught
+        and surfaced as an error result with ``status=error`` metadata
+        so a misbehaving hook can never stall the agentic loop.
+        """
+
+        hook = self._approval_hook
+        if hook is None:  # defensive — callers narrow, but keep mypy happy
+            return None
+        call_ctx = MCPToolCall(
+            server_name=tool.server_name,
+            tool_name=tool.name,
+            public_name=public_name,
+            arguments=arguments,
+        )
+        try:
+            raw = await hook(call_ctx)
+            decision = _normalise_approval(raw)
+        except Exception as exc:
+            logger.exception(
+                "MCP approval hook raised for %s.%s", tool.server_name, tool.name
+            )
+            return ToolExecutionResult(
+                content=json.dumps({"error": f"approval hook error: {exc}"}),
+                metadata={
+                    "mcp": True,
+                    "server": tool.server_name,
+                    "tool_name": public_name,
+                    "mcp_tool_name": tool.name,
+                    "status": "error",
+                    "approval": "hook_error",
+                },
+                error=str(exc),
+            )
+
+        if decision.approved:
+            return None
+
+        reason = decision.reason or "denied by policy"
+        return ToolExecutionResult(
+            content=json.dumps({"error": reason, "status": "denied"}),
+            metadata={
+                "mcp": True,
+                "server": tool.server_name,
+                "tool_name": public_name,
+                "mcp_tool_name": tool.name,
+                "status": "denied",
+                "approval": "denied",
+            },
+            error=reason,
+        )
 
     async def _list_tools_for_server(self, server: MCPServer) -> list[MCPTool]:
         async with self._session_for_server(server) as session:
@@ -496,8 +676,16 @@ class PersistentMCPClientManager(MCPClientManager):
     re-open sessions lazily.
     """
 
-    def __init__(self, servers: Sequence[MCPServer]) -> None:
-        super().__init__(servers)
+    def __init__(
+        self,
+        servers: Sequence[MCPServer],
+        *,
+        approval_hook: ApprovalHook | None = None,
+        auto_approve: Iterable[str] | None = None,
+    ) -> None:
+        super().__init__(
+            servers, approval_hook=approval_hook, auto_approve=auto_approve
+        )
         self._sessions: dict[str, Any] = {}
         self._exit_stacks: dict[str, AsyncExitStack] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}

@@ -148,6 +148,8 @@ MCP tool definitions flow through the shared `BaseProvider` loop via the `extra_
 
 Servers can be added and removed at runtime via `await client.add_mcp_server(MCPServer...)` / `await client.remove_mcp_server(name)` — the first `add_mcp_server` lazily creates the manager (honouring `persistent_mcp`). Mutations run under a per-manager `asyncio.Lock` and invalidate the tool-definition cache; `PersistentMCPClientManager.remove_server` also tears down the per-server session.
 
+**Approval hook (HITL):** `MCPClientManager(approval_hook=..., auto_approve={...})` gates every dispatch before a session opens. Hook signature is `async (MCPToolCall) -> bool | ApprovalDecision`; denied calls return a `ToolExecutionResult(error=reason, metadata["status"]="denied")` without touching the server. Hook exceptions are trapped and surfaced as error results. `LLMClient(mcp_approval_hook=..., mcp_auto_approve=...)` are convenience kwargs that flow to the auto-built manager.
+
 Key files: `mcp.py`, `client.py::_prepare_mcp_tools_for_call` / `add_mcp_server` / `remove_mcp_server`, `providers/_base.py::_dispatch_tool_calls`, `providers/claude_code.py::_bridge_tools_to_mcp`. See `docs/MCP.md` for user-facing docs and `docs/MCP_ROADMAP.md` for tracked improvements.
 
 ### Dynamic Tool Loading

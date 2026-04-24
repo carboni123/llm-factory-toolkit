@@ -121,11 +121,14 @@ from .exceptions import (
     UnsupportedFeatureError,
 )
 from .mcp import (
+    ApprovalDecision,
+    ApprovalHook,
     MCPClientManager,
     MCPServer,
     MCPServerStdio,
     MCPServerStreamableHTTP,
     MCPTool,
+    MCPToolCall,
     PersistentMCPClientManager,
 )
 from .models import ModelInfo, compute_cost, get_model_info, list_models
@@ -171,6 +174,8 @@ def extract_json_from_markdown(markdown_text: str) -> str | None:
 
 
 __all__ = [
+    "ApprovalDecision",
+    "ApprovalHook",
     "BaseCache",
     "BaseTool",
     "ConfigurationError",
@@ -185,6 +190,7 @@ __all__ = [
     "MCPServerStdio",
     "MCPServerStreamableHTTP",
     "MCPTool",
+    "MCPToolCall",
     "ModelInfo",
     "PersistentMCPClientManager",
     "ProviderError",

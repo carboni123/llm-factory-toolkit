@@ -102,6 +102,56 @@ Concurrency and safety:
 
 For custom lifecycles, build your own manager and pass it via `mcp_client=`. Both the stateless and persistent managers implement the same minimal surface (`list_tools`, `get_tool_definitions`, `dispatch_tool`, `close`).
 
+## Approval hook (human-in-the-loop)
+
+MCP tools can touch filesystems, external APIs, and user data. Production deployments usually need "ask before execute" for destructive calls. An **approval hook** is an async callable invoked *before* a session is opened — denied calls never touch the remote server.
+
+```python
+from llm_factory_toolkit import (
+    ApprovalDecision,
+    LLMClient,
+    MCPServerStdio,
+    MCPToolCall,
+)
+
+async def gate(call: MCPToolCall) -> ApprovalDecision:
+    # Read-only tools run unattended; anything else needs my consent.
+    if call.tool_name in {"read_file", "list_dir"}:
+        return ApprovalDecision.approve()
+    answer = await prompt_user(
+        f"{call.public_name}({call.arguments}) — allow? [y/N] "
+    )
+    if answer.lower().startswith("y"):
+        return ApprovalDecision.approve()
+    return ApprovalDecision.deny("rejected by operator")
+
+client = LLMClient(
+    model="openai/gpt-4o-mini",
+    mcp_servers=[MCPServerStdio(name="fs", command="npx", args=[...])],
+    mcp_approval_hook=gate,
+    mcp_auto_approve={"fs__read_file"},  # skip the hook for known-safe tools
+)
+```
+
+Hook semantics:
+
+- **Signature:** `async (MCPToolCall) -> bool | ApprovalDecision`. Bool returns are accepted for one-liner hooks and normalised to `ApprovalDecision`.
+- **Context:** `MCPToolCall` gives `server_name`, `tool_name` (as the MCP server exposes it), `public_name` (the LLM-facing namespaced name), and parsed `arguments`.
+- **Denials** return a `ToolExecutionResult(error=reason)` with `metadata["status"] = "denied"`; the LLM sees the error in its next turn and can self-correct or give up.
+- **Auto-approve** (`auto_approve=` on the manager, `mcp_auto_approve=` on `LLMClient`) is a set of public tool names that bypass the hook — useful for explicitly safe read-only tools.
+- **Hook errors are trapped**: if the hook itself raises, the exception is logged and surfaced as an error result with `metadata["approval"] = "hook_error"`. A buggy hook can never stall the agentic loop.
+- **No session is opened** when the hook denies — verified by the test suite. Safe to use with expensive stdio subprocesses.
+
+Configure dynamically on the manager:
+
+```python
+client.mcp_client.approval_hook = another_hook
+client.mcp_client.extend_auto_approve({"fs__list_dir"})
+client.mcp_client.reset_auto_approve()     # empty the allowlist
+```
+
+When `mcp_client=` is passed explicitly, `mcp_approval_hook` / `mcp_auto_approve` on the client are **ignored** (logs a warning) — configure them on your manager instance directly.
+
 ## Adding and removing servers at runtime
 
 Servers can be registered or unregistered after the client is constructed — useful for per-user MCP configs, on-demand connector loading, or test harnesses that need to swap transports.

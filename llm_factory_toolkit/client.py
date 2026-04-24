@@ -24,7 +24,12 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
-from .mcp import MCPClientManager, MCPServer, PersistentMCPClientManager
+from .mcp import (
+    ApprovalHook,
+    MCPClientManager,
+    MCPServer,
+    PersistentMCPClientManager,
+)
 from .providers import ProviderRouter
 from .providers._base import DEFAULT_MAX_TOOL_ITERATIONS
 from .tools.catalog import InMemoryToolCatalog
@@ -149,6 +154,8 @@ class LLMClient:
         mcp_servers: Sequence[MCPServer] | None = None,
         mcp_client: MCPClientManager | None = None,
         persistent_mcp: bool = False,
+        mcp_approval_hook: ApprovalHook | None = None,
+        mcp_auto_approve: Sequence[str] | None = None,
         timeout: float = 180.0,
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
@@ -171,13 +178,25 @@ class LLMClient:
         self.pricing = pricing
         self.tool_factory = tool_factory or ToolFactory()
         self._persistent_mcp = persistent_mcp
+        self._mcp_approval_hook = mcp_approval_hook
+        self._mcp_auto_approve: tuple[str, ...] = tuple(mcp_auto_approve or ())
         if mcp_client is not None:
+            if mcp_approval_hook is not None or mcp_auto_approve:
+                logger.warning(
+                    "mcp_approval_hook / mcp_auto_approve are ignored when an "
+                    "explicit mcp_client is provided — configure them on the "
+                    "manager instance directly."
+                )
             self.mcp_client: MCPClientManager | None = mcp_client
         elif mcp_servers:
             manager_cls: type[MCPClientManager] = (
                 PersistentMCPClientManager if persistent_mcp else MCPClientManager
             )
-            self.mcp_client = manager_cls(mcp_servers)
+            self.mcp_client = manager_cls(
+                mcp_servers,
+                approval_hook=mcp_approval_hook,
+                auto_approve=self._mcp_auto_approve or None,
+            )
         else:
             self.mcp_client = None
 
@@ -414,7 +433,11 @@ class LLMClient:
             manager_cls: type[MCPClientManager] = (
                 PersistentMCPClientManager if self._persistent_mcp else MCPClientManager
             )
-            self.mcp_client = manager_cls([server])
+            self.mcp_client = manager_cls(
+                [server],
+                approval_hook=self._mcp_approval_hook,
+                auto_approve=self._mcp_auto_approve or None,
+            )
             return
         await self.mcp_client.add_server(server)
 
