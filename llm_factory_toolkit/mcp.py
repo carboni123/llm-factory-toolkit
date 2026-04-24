@@ -142,6 +142,7 @@ class MCPClientManager:
                 raise ConfigurationError(f"Duplicate MCP server name: {server.name}")
             self._servers[server.name] = server
         self._tools_by_public_name: dict[str, MCPTool] = {}
+        self._mutation_lock: asyncio.Lock | None = None
 
     @property
     def servers(self) -> dict[str, MCPServer]:
@@ -154,6 +155,54 @@ class MCPClientManager:
         """Return public MCP tool names from the last discovery pass."""
 
         return set(self._tools_by_public_name)
+
+    async def add_server(self, server: MCPServer) -> None:
+        """Register a new MCP server at runtime.
+
+        Invalidates the tool-definition cache so the next
+        :meth:`list_tools` / :meth:`get_tool_definitions` call re-discovers
+        across the new server set.  Raises :class:`ConfigurationError` if
+        ``server.name`` is already registered.
+
+        Tool-name collisions with existing servers or local ToolFactory
+        tools are detected lazily at the next discovery pass (matching
+        the constructor's contract), not at add time.
+        """
+
+        async with self._get_mutation_lock():
+            if server.name in self._servers:
+                raise ConfigurationError(
+                    f"MCP server {server.name!r} is already registered."
+                )
+            self._servers[server.name] = server
+            self._tools_by_public_name = {}
+
+    async def remove_server(self, name: str) -> None:
+        """Unregister a named MCP server.
+
+        Invalidates the tool-definition cache.  Raises
+        :class:`KeyError` if *name* is not registered — callers that
+        want idempotent removal should guard with ``name in
+        manager.servers`` first.
+        """
+
+        async with self._get_mutation_lock():
+            await self._do_remove_server(name)
+
+    async def _do_remove_server(self, name: str) -> None:
+        """Unlocked removal hook — subclasses extend to free per-server state."""
+
+        if name not in self._servers:
+            raise KeyError(f"No MCP server registered with name {name!r}")
+        del self._servers[name]
+        self._tools_by_public_name = {}
+
+    def _get_mutation_lock(self) -> asyncio.Lock:
+        """Lazy-init the mutation lock at first use (event-loop binding)."""
+
+        if self._mutation_lock is None:
+            self._mutation_lock = asyncio.Lock()
+        return self._mutation_lock
 
     async def close(self) -> None:
         """Release held resources.
@@ -467,6 +516,14 @@ class PersistentMCPClientManager(MCPClientManager):
                 logger.exception("Error closing persistent MCP session: %s", name)
         self._sessions.clear()
         self._session_locks.clear()
+
+    async def _do_remove_server(self, name: str) -> None:
+        """Also tear down the persistent session for the removed server."""
+
+        await super()._do_remove_server(name)
+        # ``_invalidate_session`` handles a missing name gracefully, so it's
+        # safe to call even if no session was ever opened for this server.
+        await self._invalidate_session(name)
 
     @asynccontextmanager
     async def _session_for_server(self, server: MCPServer) -> AsyncIterator[Any]:

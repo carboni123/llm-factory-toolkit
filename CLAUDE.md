@@ -144,7 +144,11 @@ MCP servers are a core abstraction alongside `ToolFactory`, not a Claude Code ad
 
 MCP tool definitions flow through the shared `BaseProvider` loop via the `extra_tool_definitions` kwarg; dispatch is wired through the `tool_execution_context` keys `_mcp_dispatch` (async callable) and `_mcp_tool_names` (set of public names). Public tool names are namespaced as `<server>__<tool>` so different servers can't collide; overlap with a local `ToolFactory` tool raises `ConfigurationError` at call time. `use_tools=None` disables both local and MCP tools; `use_tools=[...]` filters both by public name.
 
-`generate_tool_intent()` and `execute_tool_intents()` both understand MCP tools. The Claude Code bridge forwards external MCP tool calls through the same `_mcp_dispatch` path it uses for local tools. Key files: `mcp.py`, `client.py::_prepare_mcp_tools_for_call`, `providers/_base.py::_dispatch_tool_calls`, `providers/claude_code.py::_bridge_tools_to_mcp`. See `docs/MCP.md` for user-facing docs and `docs/MCP_ROADMAP.md` for tracked improvements.
+`generate_tool_intent()` and `execute_tool_intents()` both understand MCP tools. The Claude Code bridge forwards external MCP tool calls through the same `_mcp_dispatch` path it uses for local tools.
+
+Servers can be added and removed at runtime via `await client.add_mcp_server(MCPServer...)` / `await client.remove_mcp_server(name)` — the first `add_mcp_server` lazily creates the manager (honouring `persistent_mcp`). Mutations run under a per-manager `asyncio.Lock` and invalidate the tool-definition cache; `PersistentMCPClientManager.remove_server` also tears down the per-server session.
+
+Key files: `mcp.py`, `client.py::_prepare_mcp_tools_for_call` / `add_mcp_server` / `remove_mcp_server`, `providers/_base.py::_dispatch_tool_calls`, `providers/claude_code.py::_bridge_tools_to_mcp`. See `docs/MCP.md` for user-facing docs and `docs/MCP_ROADMAP.md` for tracked improvements.
 
 ### Dynamic Tool Loading
 Two modes of operation:

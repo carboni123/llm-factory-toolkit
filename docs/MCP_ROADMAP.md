@@ -46,7 +46,7 @@ Status legend: `[ ]` planned · `[~]` in progress · `[x]` done
 **Exit criteria:** HITL story, matches the `add_mcp_server` API shape from the problem statement.
 
 - [ ] **#4 Approval hook** — `MCPClientManager(approval=..., auto_approve={...})`; per-server override; denied calls return `ToolExecutionResult(error="denied by policy")` without touching the server.
-- [ ] **#5 Runtime `add_mcp_server` / `remove_mcp_server`** on `LLMClient` + `MCPClientManager`; invalidates cache.
+- [x] **#5 Runtime `add_mcp_server` / `remove_mcp_server`** — async methods on `MCPClientManager` (core) and `LLMClient` (convenience, auto-creates the manager on first add and respects `persistent_mcp`). Mutations run under a lazy per-manager `asyncio.Lock` and invalidate the tool-definition cache so the next discovery picks up the change. `PersistentMCPClientManager.remove_server` additionally tears down the per-server session via `_invalidate_session`. Duplicate-name adds raise `ConfigurationError`; missing-name removals raise `KeyError`. 12 unit tests covering the add/remove/duplicate/missing/persistent-teardown/auto-create/honour-flag/delegate matrix.
 - [ ] **#6 Per-server allow/deny lists** — `MCPServerStdio(..., allowed_tools={...}, denied_tools={...})` applied during discovery.
 
 ## v0.3 — completeness

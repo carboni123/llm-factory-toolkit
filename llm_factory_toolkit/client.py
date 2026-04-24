@@ -170,6 +170,7 @@ class LLMClient:
         self.usage_metadata = usage_metadata or {}
         self.pricing = pricing
         self.tool_factory = tool_factory or ToolFactory()
+        self._persistent_mcp = persistent_mcp
         if mcp_client is not None:
             self.mcp_client: MCPClientManager | None = mcp_client
         elif mcp_servers:
@@ -393,6 +394,44 @@ class LLMClient:
     # ------------------------------------------------------------------
     # MCP integration
     # ------------------------------------------------------------------
+
+    async def add_mcp_server(self, server: MCPServer) -> None:
+        """Register an MCP server at runtime.
+
+        If the client was constructed without any MCP configuration,
+        this call lazily creates the underlying :class:`MCPClientManager`
+        (or :class:`PersistentMCPClientManager` when the constructor's
+        ``persistent_mcp=True`` flag was set).  Subsequent calls
+        delegate to the existing manager.
+
+        The tool-definition cache is invalidated so the next
+        :meth:`generate` call re-discovers tools across the new server
+        set.  Raises :class:`ConfigurationError` if a server with the
+        same ``name`` is already registered.
+        """
+
+        if self.mcp_client is None:
+            manager_cls: type[MCPClientManager] = (
+                PersistentMCPClientManager if self._persistent_mcp else MCPClientManager
+            )
+            self.mcp_client = manager_cls([server])
+            return
+        await self.mcp_client.add_server(server)
+
+    async def remove_mcp_server(self, name: str) -> None:
+        """Unregister an MCP server by ``name``.
+
+        Raises :class:`ConfigurationError` if the client has no MCP
+        manager configured; raises :class:`KeyError` if no server is
+        registered under that name.  For a persistent manager the
+        per-server session is torn down before the server is dropped.
+        """
+
+        if self.mcp_client is None:
+            raise ConfigurationError(
+                "LLMClient has no MCP client configured; nothing to remove."
+            )
+        await self.mcp_client.remove_server(name)
 
     async def _prepare_mcp_tools_for_call(
         self,

@@ -102,6 +102,29 @@ Concurrency and safety:
 
 For custom lifecycles, build your own manager and pass it via `mcp_client=`. Both the stateless and persistent managers implement the same minimal surface (`list_tools`, `get_tool_definitions`, `dispatch_tool`, `close`).
 
+## Adding and removing servers at runtime
+
+Servers can be registered or unregistered after the client is constructed — useful for per-user MCP configs, on-demand connector loading, or test harnesses that need to swap transports.
+
+```python
+client = LLMClient(model="openai/gpt-4o-mini")
+
+await client.add_mcp_server(MCPServerStdio(name="fs", command="npx", args=[...]))
+await client.add_mcp_server(MCPServerStreamableHTTP(name="github", url="..."))
+
+# Later…
+await client.remove_mcp_server("github")
+```
+
+Semantics:
+
+- `add_mcp_server` lazily creates the underlying manager on first call; the type is `MCPClientManager` by default and `PersistentMCPClientManager` when the client was constructed with `persistent_mcp=True`. Subsequent calls delegate to the existing manager.
+- Adding a server with a duplicate `name` raises `ConfigurationError`.
+- Tool-name collisions with other servers or local `ToolFactory` tools are detected lazily at the next discovery pass (same contract as constructor-time registration), not at add time.
+- `remove_mcp_server(name)` raises `KeyError` if the server isn't registered — guard with `name in client.mcp_client.servers` for idempotent removal.
+- For a `PersistentMCPClientManager`, `remove_mcp_server` tears down the per-server session (closes the subprocess / HTTP stream) before dropping the entry.
+- Both operations invalidate the tool-definition cache so the next `generate()` call re-discovers across the new server set. In-flight dispatches that already resolved tools may still complete against the old set; lifecycle changes take effect on the next generation.
+
 ## Notes
 
 - MCP is optional and imported lazily. Importing `llm_factory_toolkit` does not require the `mcp` package.
