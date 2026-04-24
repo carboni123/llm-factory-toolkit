@@ -83,12 +83,15 @@ class CatalogToolSelector:
     ) -> ToolSelectionPlan:
         catalog = input.catalog
         text = (input.latest_user_text or "").strip()
+        text_lower = text.lower()
+        diagnostics: dict[str, Any] = {}
+        if not text:
+            diagnostics["empty_text"] = True
 
         scored: list[tuple[ToolCandidate, float]] = []
         for entry in catalog.list_all():
             base_score = entry.relevance_score(text) if text else 0.0
             alias_score = 0.0
-            text_lower = text.lower()
             for alias in entry.aliases:
                 if alias.lower() in text_lower:
                     alias_score = max(alias_score, self._weight_alias)
@@ -123,7 +126,7 @@ class CatalogToolSelector:
                 )
             )
 
-        scored.sort(key=lambda pair: pair[1], reverse=True)
+        scored.sort(key=lambda pair: (-pair[1], pair[0].name))
         candidates = [c for c, _ in scored]
 
         # use_tools filter
@@ -179,4 +182,5 @@ class CatalogToolSelector:
             rejected_tools=rejected,
             confidence=confidence,
             reason=reason,
+            diagnostics=diagnostics,
         )

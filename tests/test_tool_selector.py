@@ -114,3 +114,83 @@ class TestCatalogToolSelector:
         )
         assert "create_task" not in plan.selected_tools
         assert "create_task" in plan.rejected_tools
+
+    async def test_empty_text_yields_empty_selection_with_diagnostic(
+        self, crm_catalog: InMemoryToolCatalog
+    ) -> None:
+        sel = CatalogToolSelector()
+        plan = await sel.select_tools(
+            _make_input("", crm_catalog),
+            ToolLoadingConfig(mode="preselect"),
+        )
+        assert plan.selected_tools == []
+        assert plan.confidence == 0.0
+        assert plan.reason == "no candidates"
+        assert plan.diagnostics.get("empty_text") is True
+
+    async def test_budget_cap_rejects_overflow(self) -> None:
+        # Build a small catalog where token_count is meaningful.
+        factory = ToolFactory()
+        factory.register_tool(
+            function=lambda: {},
+            name="cheap_tool",
+            description="cheap",
+            parameters={"type": "object", "properties": {}},
+            tags=["cheap"],
+        )
+        factory.register_tool(
+            function=lambda: {},
+            name="expensive_tool",
+            description="expensive",
+            parameters={"type": "object", "properties": {}},
+            tags=["cheap"],
+        )
+        catalog = InMemoryToolCatalog(factory)
+        # Force a small token budget (token_count is auto-estimated, ~10-20 tokens
+        # per tool here). Set budget low enough to fit one but not both.
+        inp = _make_input("cheap", catalog)
+        sel = CatalogToolSelector()
+        plan = await sel.select_tools(
+            inp,
+            ToolLoadingConfig(
+                mode="preselect",
+                selection_budget_tokens=1,
+                max_selected_tools=4,
+            ),
+        )
+        # First-scored fits (or both rejected if both exceed). Either way, the
+        # second should be rejected with the budget reason.
+        assert any(
+            reason == "selection_budget_tokens exceeded"
+            for reason in plan.rejected_tools.values()
+        )
+
+    async def test_use_tools_filter_positive(
+        self, crm_catalog: InMemoryToolCatalog
+    ) -> None:
+        """When use_tools allows a tool that matches, it ends up selected."""
+        sel = CatalogToolSelector()
+        inp = _make_input("query customers please", crm_catalog)
+        inp.use_tools = ["query_customers"]
+        plan = await sel.select_tools(
+            inp, ToolLoadingConfig(mode="preselect", min_selection_score=0.0)
+        )
+        assert "query_customers" in plan.selected_tools
+
+    async def test_rejection_reason_precedence(
+        self, crm_catalog: InMemoryToolCatalog
+    ) -> None:
+        """use_tools rejection wins over min_selection_score rejection."""
+        sel = CatalogToolSelector()
+        inp = _make_input("create a task", crm_catalog)
+        inp.use_tools = ["query_customers"]  # create_task NOT allowed
+        plan = await sel.select_tools(
+            inp,
+            ToolLoadingConfig(
+                mode="preselect",
+                min_selection_score=0.99,  # would also reject below this
+            ),
+        )
+        # create_task is excluded by use_tools; it must NOT be tagged with the
+        # min_selection_score reason.
+        assert plan.rejected_tools.get("create_task") == "not in use_tools"
