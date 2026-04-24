@@ -7,11 +7,12 @@ when a configured MCP server is queried or called.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -304,6 +305,21 @@ class MCPClientManager:
 
     @asynccontextmanager
     async def _session_for_server(self, server: MCPServer) -> AsyncIterator[Any]:
+        async with AsyncExitStack() as stack:
+            session = await self._open_session_on_stack(stack, server)
+            yield session
+
+    @staticmethod
+    async def _open_session_on_stack(stack: AsyncExitStack, server: MCPServer) -> Any:
+        """Enter transport + ClientSession context managers onto *stack*.
+
+        Shared by the stateless and persistent managers.  The caller owns the
+        stack lifetime: the stateless manager uses a function-scoped stack so
+        the session is torn down on exit; the persistent manager uses a
+        long-lived stack stored on ``self`` so the session survives across
+        calls.
+        """
+
         try:
             from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
@@ -324,28 +340,27 @@ class MCPClientManager:
             if server.cwd is not None:
                 params_kwargs["cwd"] = server.cwd
             server_params = StdioServerParameters(**params_kwargs)
-            async with stdio_client(server_params) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    yield session
-            return
-
-        if isinstance(server, MCPServerStreamableHTTP):
+            read_stream, write_stream = await stack.enter_async_context(
+                stdio_client(server_params)
+            )
+        elif isinstance(server, MCPServerStreamableHTTP):
             http_kwargs: dict[str, Any] = {}
             if server.headers is not None:
                 http_kwargs["headers"] = dict(server.headers)
             if server.timeout is not None:
                 http_kwargs["timeout"] = server.timeout
-            async with streamable_http_client(
-                server.url, **http_kwargs
-            ) as stream_tuple:
-                read_stream, write_stream = stream_tuple[0], stream_tuple[1]
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    yield session
-            return
+            stream_tuple = await stack.enter_async_context(
+                streamable_http_client(server.url, **http_kwargs)
+            )
+            read_stream, write_stream = stream_tuple[0], stream_tuple[1]
+        else:
+            raise ConfigurationError(f"Unsupported MCP server config: {server!r}")
 
-        raise ConfigurationError(f"Unsupported MCP server config: {server!r}")
+        session = await stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        await session.initialize()
+        return session
 
     @staticmethod
     def _normalise_call_result(tool: MCPTool, raw_result: Any) -> ToolExecutionResult:
@@ -400,3 +415,115 @@ class MCPClientManager:
             metadata=metadata,
             error=content if is_error else None,
         )
+
+
+class PersistentMCPClientManager(MCPClientManager):
+    """MCP manager that keeps one :class:`ClientSession` per server alive.
+
+    Unlike the stateless parent, this manager opens the MCP transport and
+    session on first use and reuses them for every subsequent ``list_tools``
+    and ``dispatch_tool`` call.  For stdio servers this avoids respawning
+    the subprocess on every tool call; for HTTP servers it avoids
+    re-handshaking the stream.
+
+    Concurrency safety:
+
+    * Operations on the same server are serialised through a per-server
+      :class:`asyncio.Lock` — MCP sessions share a single duplex stream per
+      session, which is not safe for overlapping reads/writes.
+    * Different servers run concurrently.
+    * Session creation is itself guarded so two tasks racing to open the
+      same server only spawn one session.
+
+    Failure handling:
+
+    * If an operation raises inside the locked block (for example the
+      subprocess died or the HTTP stream dropped), the cached session is
+      dropped so the next call re-opens it cleanly.  The original exception
+      still propagates to the caller.
+
+    Call ``close()`` (or let ``LLMClient.close()`` call it) to release
+    every persistent session.  Reusing the manager after ``close()`` will
+    re-open sessions lazily.
+    """
+
+    def __init__(self, servers: Sequence[MCPServer]) -> None:
+        super().__init__(servers)
+        self._sessions: dict[str, Any] = {}
+        self._exit_stacks: dict[str, AsyncExitStack] = {}
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._open_lock: asyncio.Lock | None = None
+
+    async def close(self) -> None:
+        """Close every persistent session.  Swallows per-session errors."""
+
+        for name in list(self._exit_stacks):
+            stack = self._exit_stacks.pop(name, None)
+            if stack is None:
+                continue
+            try:
+                await stack.aclose()
+            except Exception:
+                logger.exception("Error closing persistent MCP session: %s", name)
+        self._sessions.clear()
+        self._session_locks.clear()
+
+    @asynccontextmanager
+    async def _session_for_server(self, server: MCPServer) -> AsyncIterator[Any]:
+        session, lock = await self._ensure_session(server)
+        async with lock:
+            try:
+                yield session
+            except Exception:
+                await self._invalidate_session(server.name)
+                raise
+
+    async def _ensure_session(self, server: MCPServer) -> tuple[Any, asyncio.Lock]:
+        """Return a live session and its per-server serialisation lock.
+
+        The first call for a given server opens the session; subsequent
+        calls reuse it.  Two concurrent first-calls only open one session.
+        """
+
+        cached = self._sessions.get(server.name)
+        cached_lock = self._session_locks.get(server.name)
+        if cached is not None and cached_lock is not None:
+            return cached, cached_lock
+
+        # Lazy-init the open lock so AsyncIO event loop binding happens at
+        # first use (not at manager construction time).
+        if self._open_lock is None:
+            self._open_lock = asyncio.Lock()
+
+        async with self._open_lock:
+            cached = self._sessions.get(server.name)
+            cached_lock = self._session_locks.get(server.name)
+            if cached is not None and cached_lock is not None:
+                return cached, cached_lock
+
+            stack = AsyncExitStack()
+            try:
+                session = await self._open_session_on_stack(stack, server)
+            except Exception:
+                await stack.aclose()
+                raise
+
+            lock = asyncio.Lock()
+            self._sessions[server.name] = session
+            self._session_locks[server.name] = lock
+            self._exit_stacks[server.name] = stack
+            return session, lock
+
+    async def _invalidate_session(self, name: str) -> None:
+        """Drop the cached session for *name* so the next call reopens it."""
+
+        self._sessions.pop(name, None)
+        self._session_locks.pop(name, None)
+        stack = self._exit_stacks.pop(name, None)
+        if stack is not None:
+            try:
+                await stack.aclose()
+            except Exception:
+                logger.debug(
+                    "Error invalidating MCP session for %s", name, exc_info=True
+                )

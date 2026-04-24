@@ -126,6 +126,7 @@ from .mcp import (
     MCPServerStdio,
     MCPServerStreamableHTTP,
     MCPTool,
+    PersistentMCPClientManager,
 )
 from .models import ModelInfo, compute_cost, get_model_info, list_models
 from .tools import builtins
@@ -178,6 +179,7 @@ __all__ = [
     "MCPServerStreamableHTTP",
     "MCPTool",
     "ModelInfo",
+    "PersistentMCPClientManager",
     "ProviderError",
     "QuotaExhaustedError",
     "RetryExhaustedError",

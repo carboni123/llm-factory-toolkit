@@ -24,7 +24,7 @@ from .exceptions import (
     ToolError,
     UnsupportedFeatureError,
 )
-from .mcp import MCPClientManager, MCPServer
+from .mcp import MCPClientManager, MCPServer, PersistentMCPClientManager
 from .providers import ProviderRouter
 from .providers._base import DEFAULT_MAX_TOOL_ITERATIONS
 from .tools.catalog import InMemoryToolCatalog
@@ -148,6 +148,7 @@ class LLMClient:
         tool_factory: ToolFactory | None = None,
         mcp_servers: Sequence[MCPServer] | None = None,
         mcp_client: MCPClientManager | None = None,
+        persistent_mcp: bool = False,
         timeout: float = 180.0,
         max_retries: int = 3,
         retry_min_wait: float = 1.0,
@@ -169,9 +170,15 @@ class LLMClient:
         self.usage_metadata = usage_metadata or {}
         self.pricing = pricing
         self.tool_factory = tool_factory or ToolFactory()
-        self.mcp_client = mcp_client or (
-            MCPClientManager(mcp_servers) if mcp_servers else None
-        )
+        if mcp_client is not None:
+            self.mcp_client: MCPClientManager | None = mcp_client
+        elif mcp_servers:
+            manager_cls: type[MCPClientManager] = (
+                PersistentMCPClientManager if persistent_mcp else MCPClientManager
+            )
+            self.mcp_client = manager_cls(mcp_servers)
+        else:
+            self.mcp_client = None
 
         self.provider = ProviderRouter(
             model=model,
