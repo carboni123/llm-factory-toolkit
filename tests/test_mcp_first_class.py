@@ -114,7 +114,7 @@ class FakeRouter:
 
 
 @pytest.mark.asyncio
-async def test_client_injects_mcp_tool_definitions_and_dispatch_context() -> None:
+async def test_client_injects_mcp_tool_definitions_and_dispatcher() -> None:
     fake_mcp = FakeMCPClient()
     fake_router = FakeRouter()
     client = LLMClient(model="openai/gpt-4o-mini", mcp_client=fake_mcp)  # type: ignore[arg-type]
@@ -130,9 +130,12 @@ async def test_client_injects_mcp_tool_definitions_and_dispatch_context() -> Non
         for d in fake_router.generate_kwargs["extra_tool_definitions"]
     }
     assert names == {"fs__read_file", "fs__search"}
+    # New typed path: the ExternalToolDispatcher is forwarded as a kwarg,
+    # not injected into tool_execution_context as magic keys.
+    assert fake_router.generate_kwargs["external_dispatcher"] is fake_mcp
     ctx = fake_router.generate_kwargs["tool_execution_context"]
-    assert ctx["_mcp_tool_names"] == {"fs__read_file", "fs__search"}
-    assert callable(ctx["_mcp_dispatch"])
+    assert ctx is None or "_mcp_dispatch" not in ctx
+    assert ctx is None or "_mcp_tool_names" not in ctx
 
 
 @pytest.mark.asyncio
@@ -215,26 +218,61 @@ class DummyProvider(BaseProvider):
         return definitions
 
 
-@pytest.mark.asyncio
-async def test_base_provider_dispatches_mcp_tool_result() -> None:
-    provider = DummyProvider(tool_factory=ToolFactory())
+class _ProtocolDispatcher:
+    """Minimal ExternalToolDispatcher implementation for tests."""
 
-    async def mcp_dispatch(name: str, args: str) -> ToolExecutionResult:
+    def __init__(self) -> None:
+        self._names = {"fs__read_file"}
+
+    @property
+    def tool_names(self) -> set[str]:
+        return set(self._names)
+
+    async def dispatch_tool(
+        self, public_name: str, arguments_json: str | None = None
+    ) -> ToolExecutionResult:
         return ToolExecutionResult(
             content="MCP result",
-            payload={"name": name, "args": args},
+            payload={"name": public_name, "args": arguments_json},
             metadata={"mcp": True},
         )
 
+
+@pytest.mark.asyncio
+async def test_base_provider_dispatches_via_external_dispatcher_kwarg() -> None:
+    provider = DummyProvider(tool_factory=ToolFactory())
+    dispatcher = _ProtocolDispatcher()
+
     results, payloads, call_info = await provider._dispatch_tool_calls(
         [ProviderToolCall(call_id="call_1", name="fs__read_file", arguments="{}")],
-        tool_execution_context={
-            "_mcp_dispatch": mcp_dispatch,
-            "_mcp_tool_names": {"fs__read_file"},
-        },
+        external_dispatcher=dispatcher,
     )
 
     assert results[0].content == "MCP result"
     assert payloads[0]["payload"] == {"name": "fs__read_file", "args": "{}"}
     assert payloads[0]["metadata"] == {"mcp": True}
     assert call_info == [("fs__read_file", "{}", False)]
+
+
+@pytest.mark.asyncio
+async def test_legacy_mcp_context_keys_still_dispatch_with_deprecation_warning() -> None:
+    """The pre-first-class ``_mcp_dispatch`` / ``_mcp_tool_names`` context
+    keys remain supported for one release so external callers have a
+    migration window; using them must emit a ``DeprecationWarning``.
+    """
+
+    provider = DummyProvider(tool_factory=ToolFactory())
+
+    async def legacy_dispatch(name: str, args: str) -> ToolExecutionResult:
+        return ToolExecutionResult(content="legacy ok")
+
+    with pytest.warns(DeprecationWarning, match="external_dispatcher"):
+        results, _, _ = await provider._dispatch_tool_calls(
+            [ProviderToolCall(call_id="c", name="fs__read_file", arguments="{}")],
+            tool_execution_context={
+                "_mcp_dispatch": legacy_dispatch,
+                "_mcp_tool_names": {"fs__read_file"},
+            },
+        )
+
+    assert results[0].content == "legacy ok"

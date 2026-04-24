@@ -132,7 +132,13 @@ from .models import ModelInfo, compute_cost, get_model_info, list_models
 from .tools import builtins
 from .tools.base_tool import BaseTool
 from .tools.catalog import InMemoryToolCatalog, ToolCatalog, ToolCatalogEntry
-from .tools.models import GenerationResult, StreamChunk, ToolExecutionResult, UsageEvent
+from .tools.models import (
+    ExternalToolDispatcher,
+    GenerationResult,
+    StreamChunk,
+    ToolExecutionResult,
+    UsageEvent,
+)
 from .tools.session import ToolSession
 from .tools.tool_factory import ToolFactory
 
@@ -168,6 +174,7 @@ __all__ = [
     "BaseCache",
     "BaseTool",
     "ConfigurationError",
+    "ExternalToolDispatcher",
     "GenerationResult",
     "InMemoryCache",
     "InMemoryToolCatalog",

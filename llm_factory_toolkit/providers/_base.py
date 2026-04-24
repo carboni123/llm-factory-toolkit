@@ -25,6 +25,7 @@ from ..exceptions import (
 )
 from ..models import compute_cost
 from ..tools.models import (
+    ExternalToolDispatcher,
     GenerationResult,
     ParsedToolCall,
     StreamChunk,
@@ -623,6 +624,43 @@ class BaseProvider(abc.ABC):
     # Unified tool dispatch
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_external_dispatcher(
+        external_dispatcher: ExternalToolDispatcher | None,
+        tool_execution_context: dict[str, Any] | None,
+    ) -> tuple[set[str], Callable[..., Any] | None]:
+        """Resolve external tool routing, preferring the typed protocol.
+
+        Returns ``(tool_names, dispatch_callable)``.  The new
+        ``external_dispatcher`` kwarg wins; falling back to the legacy
+        ``_mcp_dispatch`` / ``_mcp_tool_names`` context keys emits a
+        :class:`DeprecationWarning` once per call site.
+        """
+
+        if external_dispatcher is not None:
+            return set(
+                external_dispatcher.tool_names
+            ), external_dispatcher.dispatch_tool
+
+        context = tool_execution_context or {}
+        legacy_dispatch = context.get("_mcp_dispatch")
+        legacy_names = context.get("_mcp_tool_names")
+        if legacy_dispatch is not None or legacy_names:
+            import warnings
+
+            warnings.warn(
+                "Passing '_mcp_dispatch' / '_mcp_tool_names' via "
+                "tool_execution_context is deprecated; pass an "
+                "ExternalToolDispatcher (e.g. MCPClientManager) as the "
+                "'external_dispatcher' kwarg instead. The context-key path "
+                "will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            return set(legacy_names or set()), legacy_dispatch
+
+        return set(), None
+
     async def _dispatch_tool_calls(
         self,
         tool_calls: list[ProviderToolCall],
@@ -633,6 +671,7 @@ class BaseProvider(abc.ABC):
         max_concurrent_tools: int | None = None,
         max_tool_output_chars: int | None = None,
         tool_timeout: float | None = None,
+        external_dispatcher: ExternalToolDispatcher | None = None,
     ) -> tuple[
         list[ToolResultMessage], list[dict[str, Any]], list[tuple[str, str, bool]]
     ]:
@@ -642,14 +681,22 @@ class BaseProvider(abc.ABC):
         Returns :class:`ToolResultMessage` objects that each adapter can
         format into its native message format, plus per-call error tracking
         info as ``(tool_name, arguments_json, is_error)`` tuples.
-        """
-        context = tool_execution_context or {}
-        _mcp_dispatch = context.get("_mcp_dispatch")
-        _mcp_tool_names = set(context.get("_mcp_tool_names", set()))
 
-        if self.tool_factory is None and not (_mcp_dispatch and _mcp_tool_names):
+        Tool names matching ``external_dispatcher.tool_names`` are routed
+        through the dispatcher (first-class MCP uses this path); everything
+        else goes through :attr:`tool_factory`.
+
+        The legacy ``_mcp_dispatch`` / ``_mcp_tool_names`` keys in
+        ``tool_execution_context`` are still honoured for one release
+        with a :class:`DeprecationWarning`; prefer ``external_dispatcher``.
+        """
+        _external_names, _external_dispatch = self._resolve_external_dispatcher(
+            external_dispatcher, tool_execution_context
+        )
+
+        if self.tool_factory is None and not (_external_dispatch and _external_names):
             raise UnsupportedFeatureError(
-                "Received tool calls but no ToolFactory or MCP dispatcher is configured."
+                "Received tool calls but no ToolFactory or external dispatcher is configured."
             )
         factory = self.tool_factory
         results_list: list[ToolResultMessage] = []
@@ -658,7 +705,7 @@ class BaseProvider(abc.ABC):
         async def _handle_one(
             tc: ProviderToolCall,
         ) -> tuple[ToolResultMessage, dict[str, Any] | None, bool]:
-            is_mcp_tool = bool(_mcp_dispatch and tc.name in _mcp_tool_names)
+            is_mcp_tool = bool(_external_dispatch and tc.name in _external_names)
             if tc.name and factory is not None and not is_mcp_tool:
                 factory.increment_tool_usage(tc.name)
 
@@ -680,11 +727,12 @@ class BaseProvider(abc.ABC):
                 )
 
             try:
-                if is_mcp_tool and _mcp_dispatch is not None:
-                    # Route to a first-class MCP server.  The dispatcher may
-                    # return a full ToolExecutionResult so structured MCP output
-                    # can flow into GenerationResult.payloads.
-                    mcp_result = await _mcp_dispatch(tc.name, tc.arguments or "{}")
+                if is_mcp_tool and _external_dispatch is not None:
+                    # Route to a first-class external dispatcher (MCP server,
+                    # remote tool router, etc.).  The dispatcher may return a
+                    # full ToolExecutionResult so structured output can flow
+                    # into GenerationResult.payloads.
+                    mcp_result = await _external_dispatch(tc.name, tc.arguments or "{}")
                     if isinstance(mcp_result, ToolExecutionResult):
                         result = mcp_result
                     else:
@@ -692,7 +740,7 @@ class BaseProvider(abc.ABC):
                 else:
                     if factory is None:
                         raise ToolError(
-                            "Received a non-MCP tool call but no ToolFactory is configured."
+                            "Received a non-external tool call but no ToolFactory is configured."
                         )
                     result = await factory.dispatch_tool(
                         tc.name,
@@ -1052,6 +1100,7 @@ class BaseProvider(abc.ABC):
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         tool_session: ToolSession | None = None,
         extra_tool_definitions: list[dict[str, Any]] | None = None,
+        external_dispatcher: ExternalToolDispatcher | None = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
         max_tool_output_chars: int | None = None,
@@ -1267,10 +1316,9 @@ class BaseProvider(abc.ABC):
 
             # --- Tool execution ---
             logger.info("Tool calls received: %d", len(response.tool_calls))
-            if not self.tool_factory:
-                raise UnsupportedFeatureError(
-                    "Received tool calls from LLM but no ToolFactory is configured."
-                )
+            # _dispatch_tool_calls raises UnsupportedFeatureError when there
+            # is neither a ToolFactory nor an ExternalToolDispatcher to handle
+            # the calls, so no preflight check is needed here.
 
             results, payloads, call_error_info = await self._dispatch_tool_calls(
                 response.tool_calls,
@@ -1280,6 +1328,7 @@ class BaseProvider(abc.ABC):
                 max_concurrent_tools=max_concurrent_tools,
                 max_tool_output_chars=max_tool_output_chars,
                 tool_timeout=tool_timeout,
+                external_dispatcher=external_dispatcher,
             )
 
             # Feed tool results back into conversation
@@ -1357,6 +1406,7 @@ class BaseProvider(abc.ABC):
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         tool_session: ToolSession | None = None,
         extra_tool_definitions: list[dict[str, Any]] | None = None,
+        external_dispatcher: ExternalToolDispatcher | None = None,
         compact_tools: bool = False,
         repetition_threshold: int = 3,
         max_tool_output_chars: int | None = None,
@@ -1463,10 +1513,9 @@ class BaseProvider(abc.ABC):
             if pending_response and pending_response.tool_calls:
                 current_messages.extend(pending_response.raw_messages)
 
-                if not self.tool_factory:
-                    raise UnsupportedFeatureError(
-                        "Received tool calls but no ToolFactory is configured."
-                    )
+                # _dispatch_tool_calls raises UnsupportedFeatureError when
+                # neither a ToolFactory nor an ExternalToolDispatcher can
+                # handle the calls.
 
                 results, _, call_error_info = await self._dispatch_tool_calls(
                     pending_response.tool_calls,
@@ -1476,6 +1525,7 @@ class BaseProvider(abc.ABC):
                     max_concurrent_tools=max_concurrent_tools,
                     max_tool_output_chars=max_tool_output_chars,
                     tool_timeout=tool_timeout,
+                    external_dispatcher=external_dispatcher,
                 )
                 tool_msgs = self._format_tool_results_for_conversation(results)
                 current_messages.extend(tool_msgs)

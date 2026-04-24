@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from ..exceptions import ConfigurationError, ProviderError
 from ..tools.models import (
+    ExternalToolDispatcher,
     GenerationResult,
     StreamChunk,
     ToolExecutionResult,
@@ -64,6 +65,7 @@ class _CallContext:
     mock_mode: bool = False
     tool_timeout: float | None = None
     max_turns_override: int | None = None
+    external_dispatcher: ExternalToolDispatcher | None = None
     payloads: list[Any] = field(default_factory=list)
     tool_call_records: list[dict[str, Any]] = field(default_factory=list)
 
@@ -313,6 +315,7 @@ class ClaudeCodeAdapter(BaseProvider):
             mock_mode=mock_tools,
             tool_timeout=tool_timeout,
             max_turns_override=max_tool_iterations,
+            external_dispatcher=kwargs.get("external_dispatcher"),
         )
         token = _call_ctx_var.set(ctx)
 
@@ -415,6 +418,7 @@ class ClaudeCodeAdapter(BaseProvider):
             mock_mode=mock_tools,
             tool_timeout=tool_timeout,
             max_turns_override=max_tool_iterations,
+            external_dispatcher=kwargs.get("external_dispatcher"),
         )
         token = _call_ctx_var.set(ctx)
 
@@ -523,11 +527,9 @@ class ClaudeCodeAdapter(BaseProvider):
             ) -> dict[str, Any]:
                 ctx = _call_ctx_var.get()
                 call_id = f"cc_{_name}_{len(ctx.tool_call_records)}"
-                tool_context = ctx.tool_context or {}
-                mcp_dispatch = tool_context.get("_mcp_dispatch")
-                mcp_tool_names = set(tool_context.get("_mcp_tool_names", set()))
-                if mcp_dispatch and _name in mcp_tool_names:
-                    raw_result = await mcp_dispatch(_name, json.dumps(args))
+                external = ctx.external_dispatcher
+                if external is not None and _name in external.tool_names:
+                    raw_result = await external.dispatch_tool(_name, json.dumps(args))
                     if isinstance(raw_result, ToolExecutionResult):
                         result = raw_result
                     else:
@@ -535,7 +537,7 @@ class ClaudeCodeAdapter(BaseProvider):
                 else:
                     if self.tool_factory is None:
                         raise ConfigurationError(
-                            "ToolFactory is required for non-MCP bridge tools"
+                            "ToolFactory is required for non-external bridge tools"
                         )
                     result = await self.tool_factory.dispatch_tool(
                         _name,

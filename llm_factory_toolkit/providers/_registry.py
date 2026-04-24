@@ -12,7 +12,12 @@ from typing import (
 from pydantic import BaseModel
 
 from ..exceptions import ConfigurationError
-from ..tools.models import GenerationResult, StreamChunk, ToolIntentOutput
+from ..tools.models import (
+    ExternalToolDispatcher,
+    GenerationResult,
+    StreamChunk,
+    ToolIntentOutput,
+)
 from ..tools.session import ToolSession
 from ..tools.tool_factory import ToolFactory
 from ._base import DEFAULT_MAX_TOOL_ITERATIONS
@@ -246,6 +251,7 @@ class ProviderRouter:
         web_search: bool | dict[str, Any] = False,
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         tool_session: ToolSession | None = None,
+        external_dispatcher: ExternalToolDispatcher | None = None,
         compact_tools: bool = False,
         max_validation_retries: int = 0,
         on_usage: Callable[..., Any] | None = None,
@@ -271,6 +277,7 @@ class ProviderRouter:
             web_search=web_search,
             file_search=file_search,
             tool_session=tool_session,
+            external_dispatcher=external_dispatcher,
             compact_tools=compact_tools,
             max_validation_retries=max_validation_retries,
             on_usage=on_usage,
@@ -295,6 +302,7 @@ class ProviderRouter:
         web_search: bool | dict[str, Any] = False,
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
         tool_session: ToolSession | None = None,
+        external_dispatcher: ExternalToolDispatcher | None = None,
         compact_tools: bool = False,
         on_usage: Callable[..., Any] | None = None,
         usage_metadata: dict[str, Any] | None = None,
@@ -319,6 +327,7 @@ class ProviderRouter:
             web_search=web_search,
             file_search=file_search,
             tool_session=tool_session,
+            external_dispatcher=external_dispatcher,
             compact_tools=compact_tools,
             on_usage=on_usage,
             usage_metadata=usage_metadata,

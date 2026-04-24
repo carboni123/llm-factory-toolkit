@@ -398,15 +398,25 @@ class LLMClient:
         self,
         *,
         use_tools: Sequence[str] | None,
-        tool_execution_context: dict[str, Any] | None,
-    ) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
-        """Resolve MCP tools and inject MCP dispatch into tool context."""
+    ) -> tuple[
+        list[dict[str, Any]] | None,
+        MCPClientManager | None,
+    ]:
+        """Resolve MCP tools and return the dispatcher for the call.
+
+        Returns ``(tool_definitions, external_dispatcher)``.  The
+        dispatcher is the configured :class:`MCPClientManager` (or
+        subclass) and implements the
+        :class:`~llm_factory_toolkit.ExternalToolDispatcher` protocol.
+        Returns ``(None, None)`` when there is no MCP client or when
+        ``use_tools=None`` disables tools.
+        """
         if self.mcp_client is None or use_tools is None:
-            return None, tool_execution_context
+            return None, None
 
         definitions = await self.mcp_client.get_tool_definitions(use_tools=use_tools)
         if not definitions:
-            return None, tool_execution_context
+            return None, None
 
         mcp_tool_names = {
             str(definition.get("function", {}).get("name"))
@@ -423,11 +433,7 @@ class LLMClient:
                 "namespacing, or rename the local tool."
             )
 
-        ctx = dict(tool_execution_context or {})
-        existing_mcp_names = set(ctx.get("_mcp_tool_names", set()))
-        ctx["_mcp_tool_names"] = existing_mcp_names.union(mcp_tool_names)
-        ctx["_mcp_dispatch"] = self.mcp_client.dispatch_tool
-        return definitions, ctx
+        return definitions, self.mcp_client
 
     # ------------------------------------------------------------------
     # Generation
@@ -703,14 +709,12 @@ class LLMClient:
 
         # Resolve MCP tools before provider dispatch. MCP tools are disabled
         # when use_tools=None, follow the same filter semantics as local tools,
-        # and dispatch through the shared BaseProvider loop.
+        # and dispatch through the shared BaseProvider loop via the typed
+        # external_dispatcher kwarg.
         (
             extra_tool_definitions,
-            tool_execution_context,
-        ) = await self._prepare_mcp_tools_for_call(
-            use_tools=use_tools,
-            tool_execution_context=tool_execution_context,
-        )
+            external_dispatcher,
+        ) = await self._prepare_mcp_tools_for_call(use_tools=use_tools)
 
         # Resolve compact_tools: per-call override > constructor default
         effective_compact = (
@@ -738,6 +742,7 @@ class LLMClient:
             "web_search": web_search,
             "tool_session": tool_session,
             "extra_tool_definitions": extra_tool_definitions,
+            "external_dispatcher": external_dispatcher,
             "compact_tools": effective_compact,
             "repetition_threshold": repetition_threshold,
             "max_tool_output_chars": max_tool_output_chars,

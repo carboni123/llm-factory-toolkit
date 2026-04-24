@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -184,3 +184,43 @@ class ToolExecutionResult(BaseModel):
     payload: Any = None
     metadata: dict[str, Any] | None = None
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# External dispatch protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class ExternalToolDispatcher(Protocol):
+    """Typed dispatch surface for tools not registered in a ``ToolFactory``.
+
+    Implementations expose a set of public tool names and an async
+    ``dispatch_tool`` method returning a :class:`ToolExecutionResult`.
+    :class:`llm_factory_toolkit.MCPClientManager` and
+    :class:`llm_factory_toolkit.PersistentMCPClientManager` are the
+    reference implementations; any object matching this protocol can be
+    passed as ``external_dispatcher`` to :meth:`BaseProvider.generate`
+    to route named tool calls through the shared agentic loop.
+
+    The protocol replaces the legacy ``_mcp_dispatch`` /
+    ``_mcp_tool_names`` context-dict keys — those are still read for one
+    release with a :class:`DeprecationWarning`.
+    """
+
+    @property
+    def tool_names(self) -> set[str]:
+        """Public tool names this dispatcher can handle."""
+        ...
+
+    async def dispatch_tool(
+        self,
+        public_name: str,
+        arguments_json: str | None = None,
+    ) -> ToolExecutionResult:
+        """Dispatch a tool call by its public name.
+
+        Must always return a :class:`ToolExecutionResult`; never raise
+        for expected failures (use ``error=...`` on the result instead).
+        """
+        ...

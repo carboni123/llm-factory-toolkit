@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Type, Union
 
 import pytest
@@ -26,6 +27,35 @@ from llm_factory_toolkit.tools.tool_factory import ToolFactory
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _Dispatcher:
+    """Minimal :class:`ExternalToolDispatcher` for BaseProvider dispatch tests.
+
+    Wraps a bare async callable ``dispatch(name, args_json)`` and the set
+    of public names it owns so test cases can be written succinctly
+    without having to restructure each as a full class.  Return values
+    of type ``str`` / ``dict`` / other are wrapped by BaseProvider into
+    a :class:`ToolExecutionResult`; tests that need a specific
+    ``ToolExecutionResult`` shape can return one directly.
+    """
+
+    def __init__(
+        self,
+        dispatch: Callable[[str, str], Any],
+        names: set[str],
+    ) -> None:
+        self._dispatch = dispatch
+        self._names = set(names)
+
+    @property
+    def tool_names(self) -> set[str]:
+        return set(self._names)
+
+    async def dispatch_tool(
+        self, public_name: str, arguments_json: Optional[str] = None
+    ) -> Any:
+        return await self._dispatch(public_name, arguments_json or "{}")
 
 
 def _text_response(text: str = "done") -> ProviderResponse:
@@ -168,10 +198,7 @@ class TestMcpDispatchRouting:
         result = await adapter.generate(
             input=[{"role": "user", "content": "test"}],
             model="test-model",
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"mcp_tool"},
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"mcp_tool"}),
         )
 
         assert len(dispatch_log) == 1
@@ -215,10 +242,7 @@ class TestMcpDispatchRouting:
         result = await adapter.generate(
             input=[{"role": "user", "content": "greet Alice"}],
             model="test-model",
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"mcp_tool"},  # greet not in this set
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"mcp_tool"}),
         )
 
         assert len(dispatch_log) == 0, "MCP dispatch should not be called for factory tools"
@@ -302,10 +326,7 @@ class TestMcpDispatchRouting:
         result = await adapter.generate(
             input=[{"role": "user", "content": "search and process"}],
             model="test-model",
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"mcp_search"},
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"mcp_search"}),
         )
 
         assert mcp_log == ["mcp_search"]
@@ -329,10 +350,7 @@ class TestMcpDispatchRouting:
         result = await adapter.generate(
             input=[{"role": "user", "content": "weather?"}],
             model="test-model",
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"get_weather"},
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"get_weather"}),
         )
 
         assert result.content == "It's sunny and 25C in SP"
@@ -359,10 +377,7 @@ class TestMcpDispatchRouting:
         result = await adapter.generate(
             input=[{"role": "user", "content": "call broken tool"}],
             model="test-model",
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"broken_tool"},
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"broken_tool"}),
         )
 
         # The payload records status as "success" because ToolExecutionResult.error is None
@@ -387,10 +402,7 @@ class TestMcpDispatchRouting:
         result = await adapter.generate(
             input=[{"role": "user", "content": "call remote"}],
             model="test-model",
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"remote_tool"},
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"remote_tool"}),
         )
 
         # The generic except Exception block should catch this
@@ -428,10 +440,7 @@ class TestMcpDispatchRouting:
         await adapter.generate(
             input=[{"role": "user", "content": "go"}],
             model="test-model",
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": set(),  # empty
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, set()),
         )
 
         assert not dispatch_called
@@ -577,10 +586,7 @@ class TestExtraToolDefinitions:
             input=[{"role": "user", "content": "search twice"}],
             model="test-model",
             extra_tool_definitions=self.EXTRA_TOOLS,
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"mcp_search"},
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"mcp_search"}),
         )
 
         assert result.content == "final"
@@ -647,10 +653,7 @@ class TestMcpEndToEnd:
             input=[{"role": "user", "content": "Find Alice and create Bob"}],
             model="test-model",
             extra_tool_definitions=mcp_tool_defs,
-            tool_execution_context={
-                "_mcp_dispatch": mcp_dispatch,
-                "_mcp_tool_names": {"crm_search", "crm_create"},
-            },
+            external_dispatcher=_Dispatcher(mcp_dispatch, {"crm_search", "crm_create"}),
         )
 
         assert result.content == "Found Alice, created Bob."
