@@ -255,19 +255,28 @@ async def test_base_provider_dispatches_via_external_dispatcher_kwarg() -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_mcp_context_keys_still_dispatch_with_deprecation_warning() -> None:
+async def test_legacy_mcp_context_keys_no_longer_dispatch() -> None:
     """The pre-first-class ``_mcp_dispatch`` / ``_mcp_tool_names`` context
-    keys remain supported for one release so external callers have a
-    migration window; using them must emit a ``DeprecationWarning``.
+    keys were removed in v1.0.  They are silently ignored — callers must
+    pass an :class:`ExternalToolDispatcher` via ``external_dispatcher``.
+    The legacy callable must not be invoked and no ``DeprecationWarning``
+    must be emitted.
     """
+
+    import warnings as _warnings
 
     provider = DummyProvider(tool_factory=ToolFactory())
 
+    called = False
+
     async def legacy_dispatch(name: str, args: str) -> ToolExecutionResult:
+        nonlocal called
+        called = True
         return ToolExecutionResult(content="legacy ok")
 
-    with pytest.warns(DeprecationWarning, match="external_dispatcher"):
-        results, _, _ = await provider._dispatch_tool_calls(
+    with _warnings.catch_warnings(record=True) as captured:
+        _warnings.simplefilter("always")
+        _, _, call_info = await provider._dispatch_tool_calls(
             [ProviderToolCall(call_id="c", name="fs__read_file", arguments="{}")],
             tool_execution_context={
                 "_mcp_dispatch": legacy_dispatch,
@@ -275,4 +284,13 @@ async def test_legacy_mcp_context_keys_still_dispatch_with_deprecation_warning()
             },
         )
 
-    assert results[0].content == "legacy ok"
+    assert called is False
+    assert not any(
+        issubclass(w.category, DeprecationWarning)
+        and "external_dispatcher" in str(w.message)
+        for w in captured
+    )
+    # The call falls through to the empty ToolFactory, which returns an
+    # error result for the unregistered tool name.
+    assert call_info[0][0] == "fs__read_file"
+    assert call_info[0][2] is True  # is_error

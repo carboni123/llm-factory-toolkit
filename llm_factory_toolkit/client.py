@@ -154,7 +154,7 @@ class LLMClient:
         tool_factory: ToolFactory | None = None,
         mcp_servers: Sequence[MCPServer] | None = None,
         mcp_client: MCPClientManager | None = None,
-        persistent_mcp: bool = False,
+        persistent_mcp: bool = True,
         mcp_approval_hook: ApprovalHook | None = None,
         mcp_auto_approve: Sequence[str] | None = None,
         mcp_on_call: MCPCallCallback | None = None,
@@ -426,9 +426,10 @@ class LLMClient:
         """Register an MCP server at runtime.
 
         If the client was constructed without any MCP configuration,
-        this call lazily creates the underlying :class:`MCPClientManager`
-        (or :class:`PersistentMCPClientManager` when the constructor's
-        ``persistent_mcp=True`` flag was set).  Subsequent calls
+        this call lazily creates the underlying
+        :class:`PersistentMCPClientManager` (the default) or the
+        stateless :class:`MCPClientManager` when the constructor's
+        ``persistent_mcp=False`` flag was set.  Subsequent calls
         delegate to the existing manager.
 
         The tool-definition cache is invalidated so the next

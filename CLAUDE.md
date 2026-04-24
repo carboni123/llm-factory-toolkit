@@ -49,7 +49,7 @@ This library uses **native provider adapters** with a shared agentic loop:
 | File | Purpose | Lines |
 |------|---------|-------|
 | `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading`, `on_usage`/`usage_metadata`/`pricing` observability, history merging, `mcp_servers`/`mcp_client`/`persistent_mcp` first-class MCP wiring | ~1150 |
-| `mcp.py` | First-class Model Context Protocol client: `MCPServer`/`MCPServerStdio`/`MCPServerStreamableHTTP` configs, `MCPTool`, stateless `MCPClientManager`, `PersistentMCPClientManager` (one-session-per-server lifetime). Lazy-imports the optional `mcp` SDK. | ~530 |
+| `mcp.py` | First-class Model Context Protocol client: `MCPServer`/`MCPServerStdio`/`MCPServerStreamableHTTP` configs, `MCPTool`, stateless `MCPClientManager`, `PersistentMCPClientManager` (one-session-per-server lifetime, v1.0 default). Lazy-imports the optional `mcp` SDK. | ~530 |
 | `providers/__init__.py` | Package exports: `ProviderRouter`, `BaseProvider`, normalised types | ~10 |
 | `providers/_base.py` | `BaseProvider` ABC -- shared agentic loop, tool dispatch, compact mode, auto-compact, repetitive loop detection, tool output truncation, bounded concurrency, tool timeout | ~1140 |
 | `providers/_registry.py` | `ProviderRouter` -- model prefix routing, lazy adapter caching | ~150 |
@@ -140,11 +140,11 @@ Tools return `ToolExecutionResult(content="for LLM", payload={...})`. The `conte
 - External API always returns Chat Completions format for consistency
 
 ### First-class MCP
-MCP servers are a core abstraction alongside `ToolFactory`, not a Claude Code adapter detail. `LLMClient(mcp_servers=[MCPServerStdio(...), MCPServerStreamableHTTP(...)])` auto-builds an `MCPClientManager`; set `persistent_mcp=True` to use `PersistentMCPClientManager` which keeps one `ClientSession` per server alive for the client's lifetime (avoids stdio subprocess respawn per call).
+MCP servers are a core abstraction alongside `ToolFactory`, not a Claude Code adapter detail. `LLMClient(mcp_servers=[MCPServerStdio(...), MCPServerStreamableHTTP(...)])` auto-builds a `PersistentMCPClientManager` (the v1.0 default) which keeps one `ClientSession` per server alive for the client's lifetime (avoids stdio subprocess respawn per call). Pass `persistent_mcp=False` to opt into the stateless `MCPClientManager` for cold-path callers.
 
-MCP tool definitions flow through the shared `BaseProvider` loop via the `extra_tool_definitions` kwarg; dispatch is wired through the `tool_execution_context` keys `_mcp_dispatch` (async callable) and `_mcp_tool_names` (set of public names). Public tool names are namespaced as `<server>__<tool>` so different servers can't collide; overlap with a local `ToolFactory` tool raises `ConfigurationError` at call time. `use_tools=None` disables both local and MCP tools; `use_tools=[...]` filters both by public name.
+MCP tool definitions flow through the shared `BaseProvider` loop via the `extra_tool_definitions` kwarg; dispatch is wired through the typed `external_dispatcher: ExternalToolDispatcher` kwarg (`MCPClientManager` implements the protocol). Public tool names are namespaced as `<server>__<tool>` so different servers can't collide; overlap with a local `ToolFactory` tool raises `ConfigurationError` at call time. `use_tools=None` disables both local and MCP tools; `use_tools=[...]` filters both by public name.
 
-`generate_tool_intent()` and `execute_tool_intents()` both understand MCP tools. The Claude Code bridge forwards external MCP tool calls through the same `_mcp_dispatch` path it uses for local tools.
+`generate_tool_intent()` and `execute_tool_intents()` both understand MCP tools. The Claude Code bridge forwards external MCP tool calls through the same `ExternalToolDispatcher` path it uses for local tools.
 
 Servers can be added and removed at runtime via `await client.add_mcp_server(MCPServer...)` / `await client.remove_mcp_server(name)` — the first `add_mcp_server` lazily creates the manager (honouring `persistent_mcp`). Mutations run under a per-manager `asyncio.Lock` and invalidate the tool-definition cache; `PersistentMCPClientManager.remove_server` also tears down the per-server session.
 

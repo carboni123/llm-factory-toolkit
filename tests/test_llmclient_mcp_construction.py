@@ -1,10 +1,10 @@
 """Unit tests for :class:`LLMClient` MCP-manager construction branches.
 
-Locks in the four resolution paths in ``LLMClient.__init__``:
+Locks in the resolution paths in ``LLMClient.__init__``:
 
 1. No ``mcp_servers`` / ``mcp_client`` → ``self.mcp_client is None``.
-2. ``mcp_servers=[...]`` → stateless ``MCPClientManager``.
-3. ``mcp_servers=[...]`` + ``persistent_mcp=True`` → ``PersistentMCPClientManager``.
+2. ``mcp_servers=[...]`` → ``PersistentMCPClientManager`` (v1.0 default).
+3. ``mcp_servers=[...]`` + ``persistent_mcp=False`` → stateless ``MCPClientManager``.
 4. Explicit ``mcp_client=...`` wins over ``mcp_servers`` and ``persistent_mcp``.
 
 These are cheap assertions — no network, no subprocess — but they keep
@@ -31,14 +31,26 @@ def test_no_mcp_servers_no_client() -> None:
     assert client.mcp_client is None
 
 
-def test_mcp_servers_default_manager_is_stateless() -> None:
+def test_mcp_servers_default_manager_is_persistent() -> None:
+    """v1.0 default: the persistent manager is used unless opted out."""
     client = LLMClient(model="openai/gpt-4o-mini", mcp_servers=[_server()])
+    assert isinstance(client.mcp_client, PersistentMCPClientManager)
+
+
+def test_persistent_mcp_false_downgrades_to_stateless_manager() -> None:
+    """Opt-out path: ``persistent_mcp=False`` keeps the stateless manager."""
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        mcp_servers=[_server()],
+        persistent_mcp=False,
+    )
     assert isinstance(client.mcp_client, MCPClientManager)
-    # Stateless manager must not be the persistent subclass.
     assert not isinstance(client.mcp_client, PersistentMCPClientManager)
 
 
-def test_persistent_mcp_flag_upgrades_to_persistent_manager() -> None:
+def test_persistent_mcp_true_still_works_for_explicitness() -> None:
+    """Explicit ``persistent_mcp=True`` still produces a persistent manager
+    (redundant after the v1.0 default flip, but must not break)."""
     client = LLMClient(
         model="openai/gpt-4o-mini",
         mcp_servers=[_server()],

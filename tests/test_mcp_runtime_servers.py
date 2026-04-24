@@ -229,22 +229,24 @@ async def test_persistent_remove_server_without_open_session() -> None:
 
 @pytest.mark.asyncio
 async def test_llmclient_add_mcp_server_auto_creates_manager() -> None:
+    """v1.0 default: lazy-created manager is persistent."""
     client = LLMClient(model="openai/gpt-4o-mini")
+    assert client.mcp_client is None
+
+    await client.add_mcp_server(_server("fs"))
+    assert isinstance(client.mcp_client, PersistentMCPClientManager)
+    assert set(client.mcp_client.servers) == {"fs"}
+
+
+@pytest.mark.asyncio
+async def test_llmclient_add_mcp_server_honours_persistent_false_opt_out() -> None:
+    """Opt-out: ``persistent_mcp=False`` keeps the stateless manager."""
+    client = LLMClient(model="openai/gpt-4o-mini", persistent_mcp=False)
     assert client.mcp_client is None
 
     await client.add_mcp_server(_server("fs"))
     assert isinstance(client.mcp_client, MCPClientManager)
     assert not isinstance(client.mcp_client, PersistentMCPClientManager)
-    assert set(client.mcp_client.servers) == {"fs"}
-
-
-@pytest.mark.asyncio
-async def test_llmclient_add_mcp_server_honours_persistent_flag() -> None:
-    client = LLMClient(model="openai/gpt-4o-mini", persistent_mcp=True)
-    assert client.mcp_client is None
-
-    await client.add_mcp_server(_server("fs"))
-    assert isinstance(client.mcp_client, PersistentMCPClientManager)
     assert set(client.mcp_client.servers) == {"fs"}
 
 

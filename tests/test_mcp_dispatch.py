@@ -1,7 +1,7 @@
-"""Tests for MCP dispatch hook and extra_tool_definitions in BaseProvider.
+"""Tests for external-dispatcher routing and extra_tool_definitions in BaseProvider.
 
 Covers:
-- _mcp_dispatch routing in _dispatch_tool_calls
+- ExternalToolDispatcher routing in _dispatch_tool_calls
 - extra_tool_definitions merging in generate() and generate_stream()
 """
 
@@ -176,10 +176,10 @@ class _MockAdapter(BaseProvider):
 
 
 class TestMcpDispatchRouting:
-    """Verify _mcp_dispatch routes tool calls to the MCP handler."""
+    """Verify the external_dispatcher kwarg routes tool calls correctly."""
 
     async def test_mcp_tool_routed_to_dispatch(self) -> None:
-        """When tool name is in _mcp_tool_names, _mcp_dispatch is called."""
+        """When tool name is in dispatcher.tool_names, dispatch_tool is called."""
         dispatch_log: List[Tuple[str, str]] = []
 
         async def mcp_dispatch(name: str, arguments: str) -> str:
@@ -206,7 +206,7 @@ class TestMcpDispatchRouting:
         assert result.content == "final"
 
     async def test_factory_tool_not_routed_to_mcp(self) -> None:
-        """When tool name is NOT in _mcp_tool_names, ToolFactory handles it."""
+        """When tool name is NOT in dispatcher.tool_names, ToolFactory handles it."""
         dispatch_log: List[Tuple[str, str]] = []
 
         async def mcp_dispatch(name: str, arguments: str) -> str:
@@ -250,7 +250,7 @@ class TestMcpDispatchRouting:
         assert factory_log[0] == "Alice"
 
     async def test_no_mcp_dispatch_falls_through_to_factory(self) -> None:
-        """When _mcp_dispatch is not in context, all tools go to ToolFactory."""
+        """When no external_dispatcher is provided, all tools go to ToolFactory."""
         factory = ToolFactory()
         factory_log: List[str] = []
 
@@ -280,7 +280,7 @@ class TestMcpDispatchRouting:
         result = await adapter.generate(
             input=[{"role": "user", "content": "echo"}],
             model="test-model",
-            tool_execution_context={},  # no _mcp_dispatch
+            tool_execution_context={},  # no external_dispatcher passed
         )
 
         assert len(factory_log) == 1
@@ -386,7 +386,7 @@ class TestMcpDispatchRouting:
         assert tool_payload["status"] == "success"
 
     async def test_mcp_dispatch_exception_caught(self) -> None:
-        """If _mcp_dispatch raises, the exception handler produces an error result."""
+        """If the dispatcher raises, the exception handler produces an error result."""
         async def mcp_dispatch(name: str, arguments: str) -> str:
             raise ConnectionError("MCP server unreachable")
 
@@ -411,7 +411,7 @@ class TestMcpDispatchRouting:
         assert tool_payload["status"] == "error"
 
     async def test_mcp_dispatch_empty_tool_names_falls_through(self) -> None:
-        """When _mcp_tool_names is empty, all tools go to ToolFactory."""
+        """When dispatcher.tool_names is empty, all tools go to ToolFactory."""
         dispatch_called = False
 
         async def mcp_dispatch(name: str, arguments: str) -> str:
@@ -600,7 +600,7 @@ class TestExtraToolDefinitions:
 
 
 class TestMcpEndToEnd:
-    """Full flow: extra_tool_definitions provides the schema, _mcp_dispatch handles calls."""
+    """Full flow: extra_tool_definitions provides the schema, external_dispatcher handles calls."""
 
     async def test_full_mcp_flow(self) -> None:
         """Simulate full MCP integration: tools injected + dispatch routing."""
@@ -811,10 +811,7 @@ class TestTyxterMcpIntegration:
                         input=[{"role": "user", "content": "test"}],
                         model="test-model",
                         extra_tool_definitions=tool_defs,
-                        tool_execution_context={
-                            "_mcp_dispatch": mcp_dispatch,
-                            "_mcp_tool_names": tool_names,
-                        },
+                        external_dispatcher=_Dispatcher(mcp_dispatch, tool_names),
                     )
 
                     assert result.content == "Tool executed successfully"

@@ -2,6 +2,51 @@
 
 `llm_factory_toolkit` can expose tools from Model Context Protocol (MCP) servers through the same agentic loop used for local `ToolFactory` tools.
 
+## Feature matrix
+
+### MCP primitive × capability
+
+| Capability | Tools | Resources | Prompts |
+|---|---|---|---|
+| Discovery (`list_*`) | ✅ cached, invalidated on server mutation | ✅ cached, invalidated on server mutation | ✅ cached, invalidated on server mutation |
+| Dispatch / read | ✅ `dispatch_tool` | ✅ `read_resource(server, uri)` | ✅ `get_prompt(server, name, args)` |
+| Per-server allow/deny filter | ✅ `MCPServer(allowed_tools=, denied_tools=)` | ❌ (all resources always exposed) | ❌ (all prompts always exposed) |
+| Per-call `use_tools=` filter | ✅ on public names | ❌ n/a | ❌ n/a |
+| Namespaced public names | ✅ `server__tool` | ❌ scoped by `(server, uri)` | ❌ scoped by `(server, name)` |
+| Approval hook (human-in-the-loop) | ✅ gates before session open | ❌ passes through | ❌ passes through |
+| `MCPCallEvent` telemetry | ✅ one event per dispatch | ❌ no event | ❌ no event |
+| HTTP 401 single-call retry | ✅ `_call_with_auth_retry` | ❌ self-healing only on next call (persistent manager) | ❌ self-healing only on next call (persistent manager) |
+| Flows through agentic loop | ✅ tool definitions injected | ❌ read on demand by app | ❌ read on demand by app |
+
+### Transport × capability
+
+| Capability | Stdio (`MCPServerStdio`) | Streamable HTTP (`MCPServerStreamableHTTP`) |
+|---|---|---|
+| Session open | Subprocess spawn | HTTP connection + MCP handshake |
+| Static bearer token | n/a | ✅ `headers={"Authorization": "Bearer ..."}` |
+| Rotating OAuth2 token | n/a | ✅ `bearer_token_provider=BearerTokenProvider(...)` |
+| Refresh-on-401 retry | n/a | ✅ single retry, stays outside approval/telemetry |
+| Persistent session (v1.0 default) | ✅ one subprocess per server, reused across calls | ✅ one connection per server, reused across calls |
+| Stateless session (opt in with `persistent_mcp=False`) | ⚠ respawns subprocess per call | ⚠ re-handshakes per call |
+| Runtime `add_mcp_server` / `remove_mcp_server` | ✅ | ✅ |
+
+### Session manager × behaviour
+
+| Behaviour | `MCPClientManager` | `PersistentMCPClientManager` (default in v1.0) |
+|---|---|---|
+| Session lifetime | Per `dispatch_tool` / `list_tools` call | Per `(server, manager)` pair until `close()` |
+| Per-server concurrency | N/A (each call independent) | Serialised through per-server `asyncio.Lock` |
+| Cross-server concurrency | Trivially concurrent | Concurrent (separate locks) |
+| Invalidate-on-error reconnect | N/A | ✅ next call opens a fresh session |
+| Resource cleanup | Automatic (scope exits per call) | `await client.close()` or `async with client` |
+| Suitable for | Ad-hoc scripts, per-request SaaS workers | Long-running agents, stdio servers, hot paths |
+
+### Known limitations
+
+- Approval hook and `MCPCallEvent` telemetry only fire for tool calls. Resources and prompts pass through without gating or observation. Reads are rarely destructive — the v0.3 scope decision was to keep the API surface small. See `docs/MCP_MIGRATION.md` for the rationale.
+- HTTP 401 single-call retry only wraps tool dispatches. Resource/prompt calls rely on the persistent manager's next-call invalidate-on-error path for self-healing.
+- Discovery caches are flat per-manager. `refresh=True` forces re-discovery; `add_mcp_server` / `remove_mcp_server` invalidate automatically.
+
 ## Install
 
 ```bash
@@ -143,16 +188,26 @@ Two managers are available:
 
 | Manager | Session lifetime | When to use |
 |---|---|---|
-| `MCPClientManager` (default) | One session per `list_tools` / `dispatch_tool` call | Cold paths, ad-hoc scripts, per-request SaaS workers |
-| `PersistentMCPClientManager` | One session per server kept alive for the manager's lifetime | Hot paths, long-running processes, stdio servers (avoids subprocess respawn on every call) |
+| `PersistentMCPClientManager` (default) | One session per server kept alive for the manager's lifetime | Hot paths, long-running processes, stdio servers (avoids subprocess respawn on every call) |
+| `MCPClientManager` | One session per `list_tools` / `dispatch_tool` call | Cold paths, ad-hoc scripts, per-request SaaS workers |
 
-Opt in to persistent sessions with a single flag:
+Persistent sessions are the v1.0 default. Opt out for cold-path workloads
+with a single flag:
 
 ```python
 client = LLMClient(
     model="openai/gpt-4o-mini",
     mcp_servers=[MCPServerStdio(name="filesystem", command="npx", args=[...])],
-    persistent_mcp=True,
+    persistent_mcp=False,  # stateless — opens a fresh session per call
+)
+```
+
+Persistent usage — the default — keeps the session alive across calls:
+
+```python
+client = LLMClient(
+    model="openai/gpt-4o-mini",
+    mcp_servers=[MCPServerStdio(name="filesystem", command="npx", args=[...])],
 )
 
 async with client:
@@ -338,7 +393,7 @@ await client.remove_mcp_server("github")
 
 Semantics:
 
-- `add_mcp_server` lazily creates the underlying manager on first call; the type is `MCPClientManager` by default and `PersistentMCPClientManager` when the client was constructed with `persistent_mcp=True`. Subsequent calls delegate to the existing manager.
+- `add_mcp_server` lazily creates the underlying manager on first call; the type is `PersistentMCPClientManager` by default (v1.0), or `MCPClientManager` when the client was constructed with `persistent_mcp=False`. Subsequent calls delegate to the existing manager.
 - Adding a server with a duplicate `name` raises `ConfigurationError`.
 - Tool-name collisions with other servers or local `ToolFactory` tools are detected lazily at the next discovery pass (same contract as constructor-time registration), not at add time.
 - `remove_mcp_server(name)` raises `KeyError` if the server isn't registered — guard with `name in client.mcp_client.servers` for idempotent removal.

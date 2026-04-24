@@ -202,10 +202,6 @@ class ExternalToolDispatcher(Protocol):
     reference implementations; any object matching this protocol can be
     passed as ``external_dispatcher`` to :meth:`BaseProvider.generate`
     to route named tool calls through the shared agentic loop.
-
-    The protocol replaces the legacy ``_mcp_dispatch`` /
-    ``_mcp_tool_names`` context-dict keys — those are still read for one
-    release with a :class:`DeprecationWarning`.
     """
 
     @property

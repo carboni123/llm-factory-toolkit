@@ -627,37 +627,17 @@ class BaseProvider(abc.ABC):
     @staticmethod
     def _resolve_external_dispatcher(
         external_dispatcher: ExternalToolDispatcher | None,
-        tool_execution_context: dict[str, Any] | None,
     ) -> tuple[set[str], Callable[..., Any] | None]:
-        """Resolve external tool routing, preferring the typed protocol.
+        """Resolve external tool routing from the typed dispatcher kwarg.
 
-        Returns ``(tool_names, dispatch_callable)``.  The new
-        ``external_dispatcher`` kwarg wins; falling back to the legacy
-        ``_mcp_dispatch`` / ``_mcp_tool_names`` context keys emits a
-        :class:`DeprecationWarning` once per call site.
+        Returns ``(tool_names, dispatch_callable)``.  Returns an empty
+        set and ``None`` when no dispatcher is provided.
         """
 
         if external_dispatcher is not None:
             return set(
                 external_dispatcher.tool_names
             ), external_dispatcher.dispatch_tool
-
-        context = tool_execution_context or {}
-        legacy_dispatch = context.get("_mcp_dispatch")
-        legacy_names = context.get("_mcp_tool_names")
-        if legacy_dispatch is not None or legacy_names:
-            import warnings
-
-            warnings.warn(
-                "Passing '_mcp_dispatch' / '_mcp_tool_names' via "
-                "tool_execution_context is deprecated; pass an "
-                "ExternalToolDispatcher (e.g. MCPClientManager) as the "
-                "'external_dispatcher' kwarg instead. The context-key path "
-                "will be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            return set(legacy_names or set()), legacy_dispatch
 
         return set(), None
 
@@ -685,13 +665,9 @@ class BaseProvider(abc.ABC):
         Tool names matching ``external_dispatcher.tool_names`` are routed
         through the dispatcher (first-class MCP uses this path); everything
         else goes through :attr:`tool_factory`.
-
-        The legacy ``_mcp_dispatch`` / ``_mcp_tool_names`` keys in
-        ``tool_execution_context`` are still honoured for one release
-        with a :class:`DeprecationWarning`; prefer ``external_dispatcher``.
         """
         _external_names, _external_dispatch = self._resolve_external_dispatcher(
-            external_dispatcher, tool_execution_context
+            external_dispatcher
         )
 
         if self.tool_factory is None and not (_external_dispatch and _external_names):
