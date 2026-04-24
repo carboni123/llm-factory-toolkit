@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel
 
@@ -21,6 +21,20 @@ class BaseTool(ABC):
     TAGS: list[str] | None = None  # Tags for catalog search
     GROUP: str | None = None  # Dotted namespace for group filtering
     BLOCKING: bool = False  # Offload sync execute() to a thread
+    ALIASES: ClassVar[list[str]] = []  # Alternative names selectors may match against
+    REQUIRES: ClassVar[list[str]] = []  # Tools that must load alongside this one
+    SUGGESTED_WITH: ClassVar[
+        list[str]
+    ] = []  # Tools commonly used together with this one
+    RISK_LEVEL: Literal["low", "medium", "high"] = "low"  # Risk for HITL gates
+    READ_ONLY: bool = False  # True when the tool performs no mutating side effects
+    AUTH_SCOPES: ClassVar[list[str]] = []  # Auth scopes required to invoke the tool
+    SELECTION_EXAMPLES: ClassVar[
+        list[str]
+    ] = []  # Utterances that should select this tool
+    NEGATIVE_EXAMPLES: ClassVar[
+        list[str]
+    ] = []  # Utterances that should NOT select this tool
 
     @abstractmethod
     def execute(self, **kwargs: Any) -> ToolExecutionResult:

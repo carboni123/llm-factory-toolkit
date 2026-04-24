@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
+    Literal,
     cast,
 )
 
@@ -47,7 +48,7 @@ class ToolRegistration:
     aliases: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
     suggested_with: list[str] = field(default_factory=list)
-    risk_level: str = "low"
+    risk_level: Literal["low", "medium", "high"] = "low"
     read_only: bool = False
     auth_scopes: list[str] = field(default_factory=list)
     selection_examples: list[str] = field(default_factory=list)
@@ -173,7 +174,7 @@ class ToolFactory:
         aliases: list[str] | None = None,
         requires: list[str] | None = None,
         suggested_with: list[str] | None = None,
-        risk_level: str = "low",
+        risk_level: Literal["low", "medium", "high"] = "low",
         read_only: bool = False,
         auth_scopes: list[str] | None = None,
         selection_examples: list[str] | None = None,
@@ -327,7 +328,9 @@ class ToolFactory:
         aliases = getattr(tool_class, "ALIASES", None)
         requires = getattr(tool_class, "REQUIRES", None)
         suggested_with = getattr(tool_class, "SUGGESTED_WITH", None)
-        risk_level = getattr(tool_class, "RISK_LEVEL", "low")
+        risk_level: Literal["low", "medium", "high"] = getattr(
+            tool_class, "RISK_LEVEL", "low"
+        )
         read_only = getattr(tool_class, "READ_ONLY", False)
         auth_scopes = getattr(tool_class, "AUTH_SCOPES", None)
         selection_examples = getattr(tool_class, "SELECTION_EXAMPLES", None)

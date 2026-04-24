@@ -311,7 +311,7 @@ class LLMClient:
         aliases: list[str] | None = None,
         requires: list[str] | None = None,
         suggested_with: list[str] | None = None,
-        risk_level: str = "low",
+        risk_level: Literal["low", "medium", "high"] = "low",
         read_only: bool = False,
         auth_scopes: list[str] | None = None,
         selection_examples: list[str] | None = None,
