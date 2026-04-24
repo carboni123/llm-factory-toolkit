@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from llm_factory_toolkit.client import LLMClient
+from llm_factory_toolkit.tools.models import GenerationResult
 from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
 
@@ -168,3 +171,166 @@ class TestToolLoadingResolution:
         assert cfg.max_selected_tools == 12
         assert cfg.selection_budget_tokens == 4000
         assert cfg.allow_recovery is False
+
+
+_DUMMY_RESULT = GenerationResult(content="ok")
+
+
+def _crm_factory() -> ToolFactory:
+    f = ToolFactory()
+    f.register_tool(
+        function=lambda: {},
+        name="create_task",
+        description="Create a follow-up task.",
+        parameters={"type": "object", "properties": {}},
+        category="task",
+        tags=["task", "create"],
+        group="crm.tasks",
+    )
+    f.register_tool(
+        function=lambda: {},
+        name="query_customers",
+        description="Look up customers by name.",
+        parameters={"type": "object", "properties": {}},
+        category="customer",
+        tags=["customer", "lookup"],
+        group="crm.customers",
+        aliases=["lookup_customer"],
+    )
+    f.register_tool(
+        function=lambda: {},
+        name="send_email",
+        description="Send an email.",
+        parameters={"type": "object", "properties": {}},
+        category="comm",
+        tags=["email"],
+    )
+    return f
+
+
+@pytest.mark.asyncio
+class TestPreselect:
+    async def test_preselect_exposes_business_tools_only(self) -> None:
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=_crm_factory(),
+            tool_loading="preselect",
+            max_selected_tools=2,
+        )
+
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return _DUMMY_RESULT
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            await client.generate(
+                input=[
+                    {
+                        "role": "user",
+                        "content": "create_task for lookup_customer Joao Santos",
+                    }
+                ],
+            )
+
+        session = captured[0]
+        assert session is not None
+        active = set(session.list_active())
+        assert "create_task" in active
+        assert "query_customers" in active
+        # No meta-tools in initial visible set
+        assert "browse_toolkit" not in active
+        assert "load_tools" not in active
+
+    async def test_core_tools_always_visible_in_preselect(self) -> None:
+        factory = _crm_factory()
+        factory.register_tool(
+            function=lambda: {},
+            name="call_human",
+            description="Escalate to a human.",
+            parameters={"type": "object", "properties": {}},
+        )
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=factory,
+            tool_loading="preselect",
+            core_tools=["call_human"],
+        )
+
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return _DUMMY_RESULT
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            await client.generate(
+                input=[{"role": "user", "content": "create_task tomorrow"}]
+            )
+
+        active = set(captured[0].list_active())
+        assert "call_human" in active
+        assert "create_task" in active
+
+    async def test_explicit_tool_session_overrides_selector(self) -> None:
+        """When the caller passes tool_session=, the selector does NOT run."""
+        from llm_factory_toolkit.tools.session import ToolSession
+
+        factory = _crm_factory()
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=factory,
+            tool_loading="preselect",
+        )
+        user_session = ToolSession()
+        user_session.load(["send_email"])
+
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return _DUMMY_RESULT
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            await client.generate(
+                input=[{"role": "user", "content": "create_task tomorrow"}],
+                tool_session=user_session,
+            )
+
+        # The user-supplied session must be passed through unchanged
+        assert captured[0] is user_session
+        assert set(user_session.list_active()) == {"send_email"}
+
+    async def test_preselect_with_no_match_yields_only_core(self) -> None:
+        """When user text matches no tool, preselect still loads core_tools."""
+        factory = _crm_factory()
+        factory.register_tool(
+            function=lambda: {},
+            name="call_human",
+            description="Escalate to a human.",
+            parameters={"type": "object", "properties": {}},
+        )
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=factory,
+            tool_loading="preselect",
+            core_tools=["call_human"],
+        )
+
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return _DUMMY_RESULT
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            await client.generate(
+                input=[{"role": "user", "content": "completely unrelated query"}],
+            )
+
+        active = set(captured[0].list_active())
+        # Core remains visible
+        assert "call_human" in active
+        # Empty min_selection_score (default 0.35) should drop weak matches
+        # but core stays

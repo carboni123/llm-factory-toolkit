@@ -39,13 +39,19 @@ from .tools.loading_config import (
     ToolLoadingMode,
     resolve_tool_loading_mode,
 )
+from .tools.loading_strategy import apply_selection_plan
 from .tools.models import (
     GenerationResult,
     StreamChunk,
     ToolExecutionResult,
     ToolIntentOutput,
 )
-from .tools.selection import CatalogToolSelector, ToolSelector
+from .tools.selection import (
+    CatalogToolSelector,
+    ToolSelectionInput,
+    ToolSelectionPlan,
+    ToolSelector,
+)
 from .tools.session import ToolSession
 from .tools.tool_factory import ToolFactory
 
@@ -394,6 +400,79 @@ class LLMClient:
         ]
         initial = list(dict.fromkeys(self.core_tools + meta))
         session.load(initial)
+        return session
+
+    async def _build_tool_selection_plan(
+        self,
+        *,
+        input: list[dict[str, Any]],
+        use_tools: Sequence[str] | None,
+    ) -> ToolSelectionPlan | None:
+        """Run the configured selector. Returns None when mode does not need it."""
+        mode = self.tool_loading_mode
+        if mode in {"static_all", "none", "agentic"}:
+            return None  # No selector run for these modes.
+
+        catalog = self.tool_factory.get_catalog()
+        if catalog is None:
+            return None
+
+        # Latest user text — best-effort.
+        latest = ""
+        for msg in reversed(input):
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    latest = content
+                    break
+
+        # System prompt (best-effort)
+        system_prompt = next(
+            (m.get("content") for m in input if m.get("role") == "system"),
+            None,
+        )
+        if not isinstance(system_prompt, str):
+            system_prompt = None
+
+        # Normalize use_tools — empty tuple/list means "all", not a filter
+        use_tools_list: list[str] | None = None
+        if use_tools is not None and len(use_tools) > 0:
+            use_tools_list = list(use_tools)
+
+        selection_input = ToolSelectionInput(
+            messages=list(input),
+            system_prompt=system_prompt,
+            latest_user_text=latest,
+            catalog=catalog,
+            active_tools=[],
+            core_tools=list(self.core_tools),
+            use_tools=use_tools_list,
+            provider=self.model.split("/")[0] if "/" in self.model else "openai",
+            model=self.model,
+            token_budget=self.tool_loading_config.selection_budget_tokens,
+            metadata={},
+        )
+        import time
+
+        start = time.monotonic()
+        plan = await self.tool_selector.select_tools(
+            selection_input, self.tool_loading_config
+        )
+        plan.diagnostics["latency_ms"] = int((time.monotonic() - start) * 1000)
+        plan.core_tools = list(self.core_tools)
+        return plan
+
+    def _apply_tool_selection_plan(
+        self,
+        *,
+        tool_session: ToolSession | None,
+        plan: ToolSelectionPlan | None,
+    ) -> ToolSession | None:
+        """Build (or extend) a ToolSession from *plan* and return it."""
+        if plan is None:
+            return tool_session
+        session = tool_session or ToolSession()
+        apply_selection_plan(session, plan)
         return session
 
     # ------------------------------------------------------------------
@@ -899,8 +978,18 @@ class LLMClient:
             async for chunk in stream:
                 print(chunk.content, end="")
         """
-        if self.dynamic_tool_loading and tool_session is None:
-            tool_session = self._build_dynamic_session()
+        selection_plan: ToolSelectionPlan | None = None
+        if tool_session is None:
+            if self.tool_loading_mode == "agentic":
+                # Legacy behavior
+                tool_session = self._build_dynamic_session()
+            elif self.tool_loading_mode in {"preselect", "hybrid"}:
+                selection_plan = await self._build_tool_selection_plan(
+                    input=input, use_tools=use_tools
+                )
+                tool_session = self._apply_tool_selection_plan(
+                    tool_session=None, plan=selection_plan
+                )
 
         # Inject core_tools into context so unload_tools can protect them
         if self.dynamic_tool_loading and self.core_tools:
