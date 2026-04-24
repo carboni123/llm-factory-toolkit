@@ -48,7 +48,8 @@ This library uses **native provider adapters** with a shared agentic loop:
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading`, `on_usage`/`usage_metadata`/`pricing` observability, history merging | ~780 |
+| `client.py` | `LLMClient` -- public API, tool registration, `core_tools`/`dynamic_tool_loading`, `on_usage`/`usage_metadata`/`pricing` observability, history merging, `mcp_servers`/`mcp_client`/`persistent_mcp` first-class MCP wiring | ~1150 |
+| `mcp.py` | First-class Model Context Protocol client: `MCPServer`/`MCPServerStdio`/`MCPServerStreamableHTTP` configs, `MCPTool`, stateless `MCPClientManager`, `PersistentMCPClientManager` (one-session-per-server lifetime). Lazy-imports the optional `mcp` SDK. | ~530 |
 | `providers/__init__.py` | Package exports: `ProviderRouter`, `BaseProvider`, normalised types | ~10 |
 | `providers/_base.py` | `BaseProvider` ABC -- shared agentic loop, tool dispatch, compact mode, auto-compact, repetitive loop detection, tool output truncation, bounded concurrency, tool timeout | ~1140 |
 | `providers/_registry.py` | `ProviderRouter` -- model prefix routing, lazy adapter caching | ~150 |
@@ -137,6 +138,13 @@ Tools return `ToolExecutionResult(content="for LLM", payload={...})`. The `conte
 - Anthropic adapter converts to/from Messages API format internally
 - Gemini adapter converts to/from GenerateContent format internally
 - External API always returns Chat Completions format for consistency
+
+### First-class MCP
+MCP servers are a core abstraction alongside `ToolFactory`, not a Claude Code adapter detail. `LLMClient(mcp_servers=[MCPServerStdio(...), MCPServerStreamableHTTP(...)])` auto-builds an `MCPClientManager`; set `persistent_mcp=True` to use `PersistentMCPClientManager` which keeps one `ClientSession` per server alive for the client's lifetime (avoids stdio subprocess respawn per call).
+
+MCP tool definitions flow through the shared `BaseProvider` loop via the `extra_tool_definitions` kwarg; dispatch is wired through the `tool_execution_context` keys `_mcp_dispatch` (async callable) and `_mcp_tool_names` (set of public names). Public tool names are namespaced as `<server>__<tool>` so different servers can't collide; overlap with a local `ToolFactory` tool raises `ConfigurationError` at call time. `use_tools=None` disables both local and MCP tools; `use_tools=[...]` filters both by public name.
+
+`generate_tool_intent()` and `execute_tool_intents()` both understand MCP tools. The Claude Code bridge forwards external MCP tool calls through the same `_mcp_dispatch` path it uses for local tools. Key files: `mcp.py`, `client.py::_prepare_mcp_tools_for_call`, `providers/_base.py::_dispatch_tool_calls`, `providers/claude_code.py::_bridge_tools_to_mcp`. See `docs/MCP.md` for user-facing docs and `docs/MCP_ROADMAP.md` for tracked improvements.
 
 ### Dynamic Tool Loading
 Two modes of operation:
@@ -274,9 +282,10 @@ pytest --cov=llm_factory_toolkit --cov-fail-under=80 tests/
 | `openai` | >=2.7.1 | Optional (`[openai]`) |
 | `anthropic` | >=0.40 | Optional (`[anthropic]`) |
 | `google-genai` | >=1.0 | Optional (`[gemini]`) |
+| `mcp` | >=1 | Optional (`[mcp]`) — first-class MCP client |
 | `sympy` | >=1.12 | Optional (`[builtins]`) |
 
-Install all provider SDKs with `pip install -e ".[all]"`.
+Install all provider SDKs with `pip install -e ".[all]"` (also pulls in `mcp`).
 
 ## PR Checklist
 

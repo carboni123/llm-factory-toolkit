@@ -28,6 +28,38 @@ async def stdio_example() -> None:
         print(result.content)
 
 
+async def persistent_stdio_example() -> None:
+    """Keep one MCP subprocess alive across many calls.
+
+    ``persistent_mcp=True`` switches the auto-built manager to
+    :class:`llm_factory_toolkit.PersistentMCPClientManager` — a hot-path
+    win for stdio servers because each call would otherwise respawn the
+    subprocess.  ``async with client`` releases the session on exit.
+    """
+
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        mcp_servers=[
+            MCPServerStdio(
+                name="filesystem",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+            )
+        ],
+        persistent_mcp=True,
+    )
+    async with client:
+        for prompt in (
+            "List files in /tmp.",
+            "Summarise the largest one.",
+            "Find anything that looks like a log.",
+        ):
+            result = await client.generate(
+                input=[{"role": "user", "content": prompt}],
+            )
+            print(result.content)
+
+
 async def streamable_http_example() -> None:
     client = LLMClient(
         model="anthropic/claude-sonnet-4-5",
