@@ -68,3 +68,115 @@ class ToolSelector(Protocol):
         input: ToolSelectionInput,
         config: ToolLoadingConfig,
     ) -> ToolSelectionPlan: ...
+
+
+class CatalogToolSelector:
+    """Default selector — scores entries via catalog relevance + aliases."""
+
+    def __init__(self, *, weight_alias: float = 0.95) -> None:
+        self._weight_alias = weight_alias
+
+    async def select_tools(
+        self,
+        input: ToolSelectionInput,
+        config: ToolLoadingConfig,
+    ) -> ToolSelectionPlan:
+        catalog = input.catalog
+        text = (input.latest_user_text or "").strip()
+
+        scored: list[tuple[ToolCandidate, float]] = []
+        for entry in catalog.list_all():
+            base_score = entry.relevance_score(text) if text else 0.0
+            alias_score = 0.0
+            text_lower = text.lower()
+            for alias in entry.aliases:
+                if alias.lower() in text_lower:
+                    alias_score = max(alias_score, self._weight_alias)
+            if entry.name.lower() in text_lower:
+                alias_score = max(alias_score, 1.0)
+
+            score = max(base_score, alias_score)
+            if score <= 0.0:
+                continue
+            reasons: list[str] = []
+            if alias_score >= 1.0:
+                reasons.append("exact name")
+            elif alias_score > 0.0:
+                reasons.append("alias match")
+            else:
+                reasons.append("relevance score")
+            scored.append(
+                (
+                    ToolCandidate(
+                        name=entry.name,
+                        score=round(score, 4),
+                        reasons=reasons,
+                        category=entry.category,
+                        group=entry.group,
+                        tags=list(entry.tags),
+                        estimated_tokens=entry.token_count or None,
+                        requires=list(entry.requires),
+                        suggested_with=list(entry.suggested_with),
+                        risk_level=entry.risk_level,
+                    ),
+                    score,
+                )
+            )
+
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        candidates = [c for c, _ in scored]
+
+        # use_tools filter
+        rejected: dict[str, str] = {}
+        if input.use_tools is not None:
+            allowed = set(input.use_tools)
+            kept: list[ToolCandidate] = []
+            for c in candidates:
+                if c.name in allowed:
+                    kept.append(c)
+                else:
+                    rejected[c.name] = "not in use_tools"
+            candidates = kept
+
+        # min_score filter
+        kept2: list[ToolCandidate] = []
+        for c in candidates:
+            if c.score < config.min_selection_score:
+                rejected.setdefault(c.name, "below min_selection_score")
+                continue
+            kept2.append(c)
+        candidates = kept2
+
+        # Token budget cap
+        budget = config.selection_budget_tokens
+        if budget is not None:
+            total = 0
+            kept3: list[ToolCandidate] = []
+            for c in candidates:
+                cost = c.estimated_tokens or 0
+                if total + cost > budget:
+                    rejected.setdefault(c.name, "selection_budget_tokens exceeded")
+                    continue
+                total += cost
+                kept3.append(c)
+            candidates = kept3
+
+        selected = [c.name for c in candidates[: config.max_selected_tools]]
+        for c in candidates[config.max_selected_tools :]:
+            rejected.setdefault(c.name, "exceeds max_selected_tools")
+
+        confidence = candidates[0].score if candidates else 0.0
+        reason = (
+            "no candidates"
+            if not candidates
+            else f"top score {candidates[0].score:.2f}"
+        )
+        return ToolSelectionPlan(
+            mode=config.mode,
+            selected_tools=selected,
+            core_tools=list(input.core_tools),
+            candidates=candidates,
+            rejected_tools=rejected,
+            confidence=confidence,
+            reason=reason,
+        )
