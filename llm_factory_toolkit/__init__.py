@@ -123,6 +123,7 @@ from .exceptions import (
 from .mcp import (
     ApprovalDecision,
     ApprovalHook,
+    BearerTokenProvider,
     MCPCallCallback,
     MCPCallEvent,
     MCPClientManager,
@@ -180,6 +181,7 @@ __all__ = [
     "ApprovalHook",
     "BaseCache",
     "BaseTool",
+    "BearerTokenProvider",
     "ConfigurationError",
     "ExternalToolDispatcher",
     "GenerationResult",

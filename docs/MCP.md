@@ -36,6 +36,8 @@ The public tool names are namespaced by default as `<server>__<tool>`, for examp
 
 ## Streamable HTTP server
 
+Static bearer token (simplest case — token never rotates):
+
 ```python
 from llm_factory_toolkit import LLMClient, MCPServerStreamableHTTP
 
@@ -50,6 +52,52 @@ client = LLMClient(
     ],
 )
 ```
+
+### Rotating bearer tokens with refresh
+
+For OAuth2 flows where the access token expires and needs refreshing, pass a `BearerTokenProvider` instead of a static header. The token is injected at session-open; on a 401 response the manager calls `refresh()` exactly once and retries the call with the fresh token.
+
+```python
+from llm_factory_toolkit import BearerTokenProvider, MCPServerStreamableHTTP
+
+class OAuth2Provider:
+    def __init__(self, client_id: str, refresh_token: str) -> None:
+        self._client_id = client_id
+        self._refresh_token = refresh_token
+        self._access_token: str | None = None
+        self._expires_at: float = 0.0
+
+    async def get_token(self) -> str:
+        # Serve from cache while valid; refresh near expiry.
+        if self._access_token is None or time.time() > self._expires_at - 60:
+            await self.refresh()
+        assert self._access_token is not None
+        return self._access_token
+
+    async def refresh(self) -> str:
+        # Hit your OAuth2 token endpoint.
+        data = await token_endpoint.post(...)
+        self._access_token = data["access_token"]
+        self._expires_at = time.time() + data["expires_in"]
+        return self._access_token
+
+server = MCPServerStreamableHTTP(
+    name="github",
+    url="https://mcp.example.com/mcp",
+    bearer_token_provider=OAuth2Provider(
+        client_id="...",
+        refresh_token="...",
+    ),
+)
+```
+
+Semantics:
+
+- `get_token()` is awaited every time a new session opens — providers own their own caching + expiry.
+- On a 401 from the tool call, `refresh()` is awaited once, then a **single retry** opens a new session (which reads the fresh token via `get_token()`). Persistent sessions are invalidated before the retry so nobody races against the stale transport.
+- The retry fires only when the exception looks like HTTP 401 — duck-typed on `exc.response.status_code == 401` (httpx-style) with fallback substring matching on the error message. Other errors (5xx, connection resets) are not retried.
+- If `refresh()` itself raises, the retry is aborted and the caller sees the original 401 error — no double-fault surprises.
+- Approval hooks and telemetry stay **outside** the retry loop: one approval prompt, one `MCPCallEvent`, per logical call regardless of transport retries.
 
 ## Filtering tools
 

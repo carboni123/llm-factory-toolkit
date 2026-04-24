@@ -23,7 +23,7 @@ from collections.abc import (
 )
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from .exceptions import ConfigurationError, ToolError
 from .tools.models import ToolExecutionResult
@@ -61,6 +61,49 @@ def _normalise_schema(schema: Any) -> dict[str, Any]:
     if out.get("type") == "object" and "properties" not in out:
         out["properties"] = {}
     return out
+
+
+@runtime_checkable
+class BearerTokenProvider(Protocol):
+    """Async OAuth2 bearer token provider for streamable-HTTP MCP servers.
+
+    Returned tokens are injected into the session's ``Authorization``
+    header at session-open time.  On a 401 response :meth:`refresh` is
+    called exactly once before a single retry — implementations should
+    invalidate any cached token and mint / fetch a fresh one.
+
+    Both methods are async so providers can perform I/O (OAuth token
+    endpoint, secret store lookup, etc.) without blocking the event
+    loop.  A static token that never refreshes belongs in
+    ``MCPServerStreamableHTTP(headers={"Authorization": "Bearer ..."})``
+    instead of this protocol.
+    """
+
+    async def get_token(self) -> str:
+        """Return the current bearer token, cached or freshly issued."""
+        ...
+
+    async def refresh(self) -> str:
+        """Force a token refresh and return the new token."""
+        ...
+
+
+def _looks_like_http_auth_failure(exc: BaseException) -> bool:
+    """Best-effort detection that an exception represents HTTP 401.
+
+    Duck-types on httpx-style ``exc.response.status_code == 401`` first,
+    falls back to substring matches ("401" / "unauthorized") so adapters
+    that wrap the original in a new exception type still trigger the
+    retry-on-refresh path.  Deliberately permissive — one extra refresh
+    attempt is cheap and the provider is expected to be idempotent.
+    """
+
+    resp = getattr(exc, "response", None)
+    status = getattr(resp, "status_code", None)
+    if status == 401:
+        return True
+    msg = str(exc).lower()
+    return "401" in msg or "unauthorized" in msg
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -121,11 +164,20 @@ class MCPServerStdio(MCPServer):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MCPServerStreamableHTTP(MCPServer):
-    """MCP server reached through the Streamable HTTP transport."""
+    """MCP server reached through the Streamable HTTP transport.
+
+    For OAuth2 bearer flows with refresh, pass a
+    :class:`BearerTokenProvider` as ``bearer_token_provider``.  The
+    token is injected as ``Authorization: Bearer <token>`` when each
+    session opens, and on a 401 response the manager calls
+    :meth:`BearerTokenProvider.refresh` once before a single retry.
+    Static tokens that never rotate can go in ``headers`` directly.
+    """
 
     url: str
     headers: Mapping[str, str] | None = None
     timeout: float | None = None
+    bearer_token_provider: BearerTokenProvider | None = None
     transport: Literal["streamable_http"] = "streamable_http"
 
 
@@ -502,20 +554,19 @@ class MCPClientManager:
                     return result
 
             server = self._servers[tool.server_name]
-            try:
-                async with self._session_for_server(server) as session:
-                    raw_result = await session.call_tool(tool.name, arguments=arguments)
-            except Exception as exc:
-                logger.exception("MCP tool call failed: %s.%s", server.name, tool.name)
+            raw_result, transport_error = await self._call_with_auth_retry(
+                server, tool, arguments
+            )
+            if transport_error is not None:
                 result = ToolExecutionResult(
-                    content=json.dumps({"error": str(exc)}),
+                    content=json.dumps({"error": str(transport_error)}),
                     metadata={
                         "mcp": True,
                         "server": server.name,
                         "tool_name": public_name,
                         "mcp_tool_name": tool.name,
                     },
-                    error=str(exc),
+                    error=str(transport_error),
                 )
                 return result
 
@@ -596,6 +647,76 @@ class MCPClientManager:
             },
             error=reason,
         )
+
+    async def _call_with_auth_retry(
+        self,
+        server: MCPServer,
+        tool: MCPTool,
+        arguments: dict[str, Any],
+    ) -> tuple[Any | None, Exception | None]:
+        """Open a session, call the tool, retry once on 401 if configured.
+
+        Returns ``(raw_result, None)`` on success or ``(None, exc)`` on
+        an unrecoverable transport error.  When the server has a
+        :class:`BearerTokenProvider` attached and the first attempt
+        looks like an HTTP 401, calls ``provider.refresh()`` once and
+        retries — the refresh happens between the failed attempt and
+        the next session-open, so the new session sees the fresh token
+        via ``get_token()``.
+
+        Approval gating and telemetry stay outside this method: one
+        approval prompt, one :class:`MCPCallEvent`, even on retry.
+        """
+
+        has_provider = bool(
+            isinstance(server, MCPServerStreamableHTTP)
+            and server.bearer_token_provider is not None
+        )
+        max_attempts = 2 if has_provider else 1
+
+        last_exc: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                async with self._session_for_server(server) as session:
+                    raw_result = await session.call_tool(tool.name, arguments=arguments)
+                return raw_result, None
+            except Exception as exc:
+                last_exc = exc
+                is_last_attempt = attempt == max_attempts - 1
+                if is_last_attempt:
+                    logger.exception(
+                        "MCP tool call failed: %s.%s", server.name, tool.name
+                    )
+                    break
+                if not _looks_like_http_auth_failure(exc):
+                    logger.exception(
+                        "MCP tool call failed: %s.%s", server.name, tool.name
+                    )
+                    break
+                # Auth failure with retry headroom — refresh and loop.
+                # ``has_provider`` narrowed these invariants at loop entry.
+                provider = (
+                    server.bearer_token_provider
+                    if isinstance(server, MCPServerStreamableHTTP)
+                    else None
+                )
+                if provider is None:
+                    break
+                logger.info(
+                    "MCP HTTP 401 from %s; refreshing bearer token and retrying",
+                    server.name,
+                )
+                try:
+                    await provider.refresh()
+                except Exception:
+                    logger.warning(
+                        "Bearer refresh failed for %s; aborting retry",
+                        server.name,
+                        exc_info=True,
+                    )
+                    break
+
+        return None, last_exc
 
     async def _emit_mcp_call_event(
         self,
@@ -754,8 +875,16 @@ class MCPClientManager:
             )
         elif isinstance(server, MCPServerStreamableHTTP):
             http_kwargs: dict[str, Any] = {}
-            if server.headers is not None:
-                http_kwargs["headers"] = dict(server.headers)
+            effective_headers: dict[str, str] = dict(server.headers or {})
+            if server.bearer_token_provider is not None:
+                # Pulled lazily per session-open so providers can manage
+                # their own caching + expiry.  If a 401 surfaces later,
+                # dispatch_tool calls provider.refresh() and re-opens the
+                # session — this path runs again with the fresh token.
+                token = await server.bearer_token_provider.get_token()
+                effective_headers["Authorization"] = f"Bearer {token}"
+            if effective_headers:
+                http_kwargs["headers"] = effective_headers
             if server.timeout is not None:
                 http_kwargs["timeout"] = server.timeout
             stream_tuple = await stack.enter_async_context(
