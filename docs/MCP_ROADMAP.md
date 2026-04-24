@@ -33,13 +33,13 @@ Status legend: `[ ]` planned · `[~]` in progress · `[x]` done
 
 ---
 
-## v0.1 — production-safe ⏳ in progress
+## v0.1 — production-safe ✅ complete
 
-**Exit criteria:** one session per server per client lifetime; real-MCP CI gate; no magic context keys.
+**Exit criteria met:** one session per server per client lifetime; real-MCP CI gate via `pytest --run-integration`; typed `external_dispatcher` kwarg replaces magic context keys (legacy path warns but still works for one release).
 
 - [x] **#1 Persistent MCP sessions** — `PersistentMCPClientManager` keeps one `ClientSession` per server alive for the manager's lifetime, guarded by a per-server `asyncio.Lock`, with invalidate-on-error reconnect. Opt-in via `LLMClient(..., persistent_mcp=True)` or by passing an explicit `mcp_client=PersistentMCPClientManager(...)`. Public facade identical to the stateless manager. (7 unit tests covering open-once, close lifecycle, reopen-after-close, invalidate-on-error, concurrent-first-call race, per-server isolation, per-server lock serialisation.)
 - [x] **#2 Real-MCP integration tests** — `tests/test_mcp_real.py` drives the bundled `tests/mcp_echo_server.py` (a minimal Python stdio MCP server — no Node dependency) through real subprocess handshake. Gated by `pytest.mark.integration` + `pytest.importorskip("mcp")` so they opt in via `pytest --run-integration` and skip cleanly without the optional SDK. 8 tests covering discovery, text/structured/error dispatch, stateless per-call spawn, persistent single-subprocess reuse, close-then-reopen, and concurrent-call session sharing.
-- [ ] **#3 Typed dispatcher protocol** — `ExternalToolDispatcher` Protocol in `tools/models.py`; thread as first-class kwarg on `BaseProvider.generate()` / `_dispatch_tool_calls()`. Legacy context-key path kept one release with `DeprecationWarning`.
+- [x] **#3 Typed dispatcher protocol** — `ExternalToolDispatcher` Protocol in `tools/models.py` (runtime-checkable, `tool_names: set[str]` + `async dispatch_tool(...) -> ToolExecutionResult`). Threaded as first-class `external_dispatcher` kwarg through `BaseProvider.generate()` / `generate_stream()` / `_dispatch_tool_calls()` and `ProviderRouter`. `LLMClient._prepare_mcp_tools_for_call` returns `(definitions, dispatcher)` and no longer mutates `tool_execution_context`. Claude Code `_CallContext` gains `external_dispatcher` so the bridge handler reads it directly. Legacy `_mcp_dispatch` / `_mcp_tool_names` context-key path kept one release with a `DeprecationWarning` via `BaseProvider._resolve_external_dispatcher`; pre-existing `tests/test_mcp_dispatch.py` migrated to the new kwarg. Bundled with the stale-session race fix in `PersistentMCPClientManager._session_for_server`: after acquiring the per-server lock, re-check that the cached session is still the one we read before yielding, otherwise loop to pick up a fresh one. New `test_concurrent_caller_skips_stale_session_after_upstream_error` pins the behaviour (verified to FAIL without the fix).
 
 ## v0.2 — safety & parity
 

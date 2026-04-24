@@ -52,6 +52,11 @@ class _FakeSession:
         )
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        if self.closed:
+            # A closed real MCP session raises on any further I/O; mirror
+            # that so tests can verify the manager never hands a dead
+            # session to a caller.
+            raise RuntimeError("session already closed")
         self.call_tool_calls.append((name, dict(arguments)))
         if self._fail_next_call:
             self._fail_next_call = False
@@ -257,6 +262,68 @@ async def test_per_server_lock_serialises_calls() -> None:
             manager.dispatch_tool("fs__read_file", "{}"),
         )
         assert observed_overlap is False
+    finally:
+        patcher.stop()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_caller_skips_stale_session_after_upstream_error() -> None:
+    """Reproduces the tier-A race flagged in the pre-phase-3 health check.
+
+    Task A enters the locked block, errors and invalidates the session.
+    Task B arrived first and was already waiting on the same per-server
+    lock.  Before the fix, B would acquire the now-orphaned lock and
+    operate on the dead session, producing a spurious second failure.
+    After the fix, B notices the cached session has changed and loops
+    to pick up a fresh one.
+    """
+
+    manager, factory, patcher = _make_manager()
+    try:
+        await manager.list_tools(refresh=True)
+        first_session = factory.opened[0]
+
+        # Plant a failing call that yields to the event loop first, so
+        # task B can queue on the same per-server lock *while* task A is
+        # still inside the locked block.  Without a real yield, asyncio
+        # would let A run to completion before B even starts.
+        async def _slow_fail(name: str, arguments: dict[str, Any]) -> Any:
+            first_session.call_tool_calls.append((name, dict(arguments)))
+            await asyncio.sleep(0.02)
+            raise RuntimeError("session stream dropped")
+
+        first_session.call_tool = _slow_fail  # type: ignore[method-assign]
+
+        # Start two dispatches concurrently.  Task A will fail and
+        # invalidate; task B would previously receive the dead session.
+        task_a = asyncio.create_task(
+            manager.dispatch_tool("fs__read_file", '{"who": "a"}')
+        )
+        # Yield so task A reaches the await inside call_tool and B can
+        # queue on the lock held by A.
+        await asyncio.sleep(0)
+        task_b = asyncio.create_task(
+            manager.dispatch_tool("fs__read_file", '{"who": "b"}')
+        )
+
+        result_a, result_b = await asyncio.gather(task_a, task_b)
+
+        # A saw the planted failure.
+        assert result_a.error is not None
+        assert "session stream dropped" in result_a.error
+        # B transparently got a fresh session — success, not a second error.
+        assert result_b.error is None
+        # Exactly two sessions opened: the dead first + the replacement.
+        assert len(factory.opened) == 2
+        assert factory.opened[0] is first_session
+        # B was served by the second session.
+        assert factory.opened[1] is not first_session
+        # call_tool_calls stores (name, arguments_dict) tuples.  B's
+        # request should be the only call on the replacement session.
+        assert [
+            args.get("who") for _, args in factory.opened[1].call_tool_calls
+        ] == ["b"]
     finally:
         patcher.stop()
         await manager.close()

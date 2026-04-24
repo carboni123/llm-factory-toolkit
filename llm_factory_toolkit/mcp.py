@@ -470,13 +470,34 @@ class PersistentMCPClientManager(MCPClientManager):
 
     @asynccontextmanager
     async def _session_for_server(self, server: MCPServer) -> AsyncIterator[Any]:
-        session, lock = await self._ensure_session(server)
-        async with lock:
+        # Spin until we have a (session, lock) pair where the session is
+        # still the cached one *after* we have acquired the per-server lock.
+        # This closes the race where task A yields, errors and invalidates
+        # while task B is waiting on the same lock: without the re-check,
+        # B would acquire the now-orphaned lock and operate on a dead
+        # session, producing a spurious second failure.
+        while True:
+            session, lock = await self._ensure_session(server)
+            await lock.acquire()
+            if self._sessions.get(server.name) is session:
+                break
+            lock.release()
+
+        try:
             try:
                 yield session
             except Exception:
                 await self._invalidate_session(server.name)
                 raise
+        finally:
+            # ``_invalidate_session`` clears the mapping but does NOT release
+            # our local lock handle, so the release here is safe even after
+            # an error path fired.
+            if lock.locked():
+                try:
+                    lock.release()
+                except RuntimeError:
+                    pass
 
     async def _ensure_session(self, server: MCPServer) -> tuple[Any, asyncio.Lock]:
         """Return a live session and its per-server serialisation lock.
