@@ -267,8 +267,44 @@ class LLMClient:
             )
         self.fallback = fallback
 
-        # Dynamic tool loading setup — normalise str to True + model name
+        # Dynamic tool loading setup — normalise str to True + model name.
+        # ``self.core_tools`` is set BEFORE _configure_tool_loading so the
+        # helper can validate against the registered tool names.
         self.core_tools = core_tools or []
+        self._configure_tool_loading(
+            tool_factory_provided=(tool_factory is not None),
+            tool_loading=tool_loading,
+            dynamic_tool_loading=dynamic_tool_loading,
+            max_selected_tools=max_selected_tools,
+            tool_selection_budget_tokens=tool_selection_budget_tokens,
+            tool_selector=tool_selector,
+            allow_tool_loading_recovery=allow_tool_loading_recovery,
+        )
+
+    def _configure_tool_loading(
+        self,
+        *,
+        tool_factory_provided: bool,
+        tool_loading: ToolLoadingMode | None,
+        dynamic_tool_loading: bool | str,
+        max_selected_tools: int,
+        tool_selection_budget_tokens: int | None,
+        tool_selector: ToolSelector | None,
+        allow_tool_loading_recovery: bool,
+    ) -> None:
+        """Resolve tool loading mode, build config, and prepare catalog/meta-tools.
+
+        Sets the following attributes on ``self``:
+
+        * ``tool_loading_mode`` -- resolved :class:`ToolLoadingMode`.
+        * ``tool_loading_config`` -- :class:`ToolLoadingConfig` snapshot.
+        * ``tool_selector`` -- :class:`ToolSelector` instance.
+        * ``dynamic_tool_loading`` -- legacy bool, ``True`` iff mode == ``"agentic"``.
+        * ``_search_agent_model`` -- model string when ``dynamic_tool_loading``
+          was passed as a string, else ``None``.
+        * ``_search_agent`` -- lazily built :class:`LLMClient` for semantic
+          search (only when mode is ``"agentic"`` and a model is configured).
+        """
         if isinstance(dynamic_tool_loading, str):
             self._search_agent_model: str | None = dynamic_tool_loading
         else:
@@ -285,7 +321,7 @@ class LLMClient:
             selection_budget_tokens=tool_selection_budget_tokens,
             allow_recovery=allow_tool_loading_recovery,
         )
-        self._tool_selector: ToolSelector = tool_selector or CatalogToolSelector()
+        self.tool_selector: ToolSelector = tool_selector or CatalogToolSelector()
 
         # Legacy attribute kept for `generate()` and downstream consumers.
         self.dynamic_tool_loading: bool = self.tool_loading_mode == "agentic"
@@ -296,42 +332,46 @@ class LLMClient:
             "hybrid",
             "auto",
         }
-        if needs_catalog:
-            if tool_factory is None:
-                # Legacy callers using ``dynamic_tool_loading`` get a more
-                # familiar error message; v2 callers see the new mode.
-                if dynamic_tool_loading and tool_loading is None:
-                    raise ConfigurationError(
-                        "dynamic_tool_loading requires an explicit "
-                        "tool_factory with registered tools."
-                    )
-                raise ConfigurationError(
-                    f"tool_loading mode {self.tool_loading_mode!r} requires an "
-                    "explicit tool_factory with registered tools."
-                )
-            if self.tool_factory.get_catalog() is None:
-                self.tool_factory.set_catalog(InMemoryToolCatalog(self.tool_factory))
-            # Register meta-tools for agentic discovery + hybrid recovery.
-            # auto/preselect don't need them up front, but registering is
-            # harmless (they're only visible if a ToolSession adds them).
-            if self.tool_loading_mode in {"agentic", "hybrid", "auto"}:
-                if "browse_toolkit" not in self.tool_factory.available_tool_names:
-                    self.tool_factory.register_meta_tools()
+        if not needs_catalog:
+            return
 
-            invalid = [
-                t
-                for t in self.core_tools
-                if t not in self.tool_factory.available_tool_names
-            ]
-            if invalid:
+        if not tool_factory_provided:
+            # Legacy callers using ``dynamic_tool_loading`` get a more
+            # familiar error message; v2 callers see the new mode.
+            if dynamic_tool_loading and tool_loading is None:
                 raise ConfigurationError(
-                    f"core_tools contain unregistered tool names: {invalid}"
+                    "dynamic_tool_loading requires an explicit "
+                    "tool_factory with registered tools."
                 )
-            # Semantic search sub-agent (legacy: agentic mode only)
-            if self.tool_loading_mode == "agentic" and self._search_agent_model:
-                self._search_agent = LLMClient(model=self._search_agent_model)
-                if "find_tools" not in self.tool_factory.available_tool_names:
-                    self.tool_factory.register_find_tools()
+            raise ConfigurationError(
+                f"tool_loading mode {self.tool_loading_mode!r} requires an "
+                "explicit tool_factory with registered tools."
+            )
+        if self.tool_factory.get_catalog() is None:
+            self.tool_factory.set_catalog(InMemoryToolCatalog(self.tool_factory))
+        # agentic uses meta-tools as the discovery API; hybrid registers them
+        # so recovery (Task 13) can lazily load them via session.load.
+        # preselect skips meta-tool registration — preselected business tools
+        # are exposed directly. auto picks among these at runtime, so
+        # registering is harmless.
+        if self.tool_loading_mode in {"agentic", "hybrid", "auto"}:
+            if "browse_toolkit" not in self.tool_factory.available_tool_names:
+                self.tool_factory.register_meta_tools()
+
+        invalid = [
+            t
+            for t in self.core_tools
+            if t not in self.tool_factory.available_tool_names
+        ]
+        if invalid:
+            raise ConfigurationError(
+                f"core_tools contain unregistered tool names: {invalid}"
+            )
+        # Semantic search sub-agent (legacy: agentic mode only)
+        if self.tool_loading_mode == "agentic" and self._search_agent_model:
+            self._search_agent = LLMClient(model=self._search_agent_model)
+            if "find_tools" not in self.tool_factory.available_tool_names:
+                self.tool_factory.register_find_tools()
 
     # ------------------------------------------------------------------
     # Dynamic tool loading

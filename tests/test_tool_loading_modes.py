@@ -109,7 +109,7 @@ class TestToolLoadingResolution:
             tool_selector=MySelector(),  # type: ignore[arg-type]
         )
         # The default CatalogToolSelector is replaced
-        assert isinstance(client._tool_selector, MySelector)
+        assert isinstance(client.tool_selector, MySelector)
 
     def test_default_selector_is_catalog_tool_selector(self) -> None:
         from llm_factory_toolkit.tools.selection import CatalogToolSelector
@@ -119,4 +119,52 @@ class TestToolLoadingResolution:
             tool_factory=_factory(),
             tool_loading="preselect",
         )
-        assert isinstance(client._tool_selector, CatalogToolSelector)
+        assert isinstance(client.tool_selector, CatalogToolSelector)
+
+    def test_none_mode_does_not_build_catalog(self) -> None:
+        factory = _factory()
+        LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=factory,
+            tool_loading="none",
+        )
+        # 'none' is the explicit no-tools mode — no catalog, no meta-tools
+        assert factory.get_catalog() is None
+        assert "browse_toolkit" not in factory.available_tool_names
+
+    def test_provider_deferred_does_not_auto_build_catalog(self) -> None:
+        factory = _factory()
+        LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=factory,
+            tool_loading="provider_deferred",
+        )
+        # provider_deferred relies on provider-native tool search — no catalog
+        # is required client-side
+        assert factory.get_catalog() is None
+
+    def test_core_tools_validated_in_preselect(self) -> None:
+        from llm_factory_toolkit.exceptions import ConfigurationError
+
+        factory = _factory()
+        with pytest.raises(ConfigurationError, match="unregistered"):
+            LLMClient(
+                model="openai/gpt-4o-mini",
+                tool_factory=factory,
+                tool_loading="preselect",
+                core_tools=["nonexistent_tool"],
+            )
+
+    def test_config_carries_budget_and_recovery_flags(self) -> None:
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=_factory(),
+            tool_loading="hybrid",
+            max_selected_tools=12,
+            tool_selection_budget_tokens=4000,
+            allow_tool_loading_recovery=False,
+        )
+        cfg = client.tool_loading_config
+        assert cfg.max_selected_tools == 12
+        assert cfg.selection_budget_tokens == 4000
+        assert cfg.allow_recovery is False
