@@ -7,7 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from .tool_factory import ToolFactory
@@ -56,6 +56,14 @@ class ToolCatalogEntry:
     category: str | None = None
     group: str | None = None
     token_count: int = 0
+    aliases: list[str] = field(default_factory=list)
+    requires: list[str] = field(default_factory=list)
+    suggested_with: list[str] = field(default_factory=list)
+    risk_level: Literal["low", "medium", "high"] = "low"
+    read_only: bool = False
+    auth_scopes: list[str] = field(default_factory=list)
+    selection_examples: list[str] = field(default_factory=list)
+    negative_examples: list[str] = field(default_factory=list)
 
     def matches_query(self, query: str) -> bool:
         """Return True if *query* keywords match name, description, or tags.
@@ -183,6 +191,14 @@ class LazyCatalogEntry(ToolCatalogEntry):
         group: str | None = None,
         token_count: int = 0,
         resolver: Callable[[], dict[str, Any] | None] | None = None,
+        aliases: list[str] | None = None,
+        requires: list[str] | None = None,
+        suggested_with: list[str] | None = None,
+        risk_level: Literal["low", "medium", "high"] = "low",
+        read_only: bool = False,
+        auth_scopes: list[str] | None = None,
+        selection_examples: list[str] | None = None,
+        negative_examples: list[str] | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -192,6 +208,14 @@ class LazyCatalogEntry(ToolCatalogEntry):
             category=category,
             group=group,
             token_count=token_count,
+            aliases=list(aliases) if aliases else [],
+            requires=list(requires) if requires else [],
+            suggested_with=list(suggested_with) if suggested_with else [],
+            risk_level=risk_level,
+            read_only=read_only,
+            auth_scopes=list(auth_scopes) if auth_scopes else [],
+            selection_examples=list(selection_examples) if selection_examples else [],
+            negative_examples=list(negative_examples) if negative_examples else [],
         )
         object.__setattr__(self, "_resolver", resolver)
         object.__setattr__(self, "_resolved", False)
@@ -377,6 +401,14 @@ class InMemoryToolCatalog(ToolCatalog):
                 tags=list(reg.tags),
                 token_count=estimate_token_count(reg.definition),
                 resolver=self._make_resolver(name),
+                aliases=list(reg.aliases),
+                requires=list(reg.requires),
+                suggested_with=list(reg.suggested_with),
+                risk_level=reg.risk_level,
+                read_only=reg.read_only,
+                auth_scopes=list(reg.auth_scopes),
+                selection_examples=list(reg.selection_examples),
+                negative_examples=list(reg.negative_examples),
             )
         logger.info(
             "InMemoryToolCatalog built with %d lazy entries.", len(self._entries)

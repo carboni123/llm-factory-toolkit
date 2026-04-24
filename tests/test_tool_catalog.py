@@ -335,3 +335,65 @@ class TestAutoPopulatedMetadata:
         assert "my_tool" in regs
         assert regs["my_tool"].category == "test_cat"
         assert regs["my_tool"].tags == ["a", "b"]
+
+
+class TestSelectionMetadataPropagation:
+    def test_catalog_entry_carries_selection_metadata(self) -> None:
+        from llm_factory_toolkit.tools.catalog import InMemoryToolCatalog
+        from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+        def _noop() -> dict:
+            return {}
+
+        factory = ToolFactory()
+        factory.register_tool(
+            function=_noop,
+            name="delete_customer",
+            description="Delete a customer.",
+            parameters={"type": "object", "properties": {}},
+            aliases=["remove_customer"],
+            requires=["query_customers"],
+            suggested_with=["audit_log"],
+            risk_level="high",
+            read_only=False,
+            auth_scopes=["customer.write"],
+            selection_examples=["delete the customer with id 123"],
+            negative_examples=["look up a customer"],
+        )
+        catalog = InMemoryToolCatalog(factory)
+        entry = catalog.get_entry("delete_customer")
+        assert entry is not None
+        assert entry.aliases == ["remove_customer"]
+        assert entry.requires == ["query_customers"]
+        assert entry.suggested_with == ["audit_log"]
+        assert entry.risk_level == "high"
+        assert entry.read_only is False
+        assert entry.auth_scopes == ["customer.write"]
+        assert entry.selection_examples == ["delete the customer with id 123"]
+        assert entry.negative_examples == ["look up a customer"]
+
+    def test_catalog_entry_defaults_when_not_specified(self) -> None:
+        from llm_factory_toolkit.tools.catalog import InMemoryToolCatalog
+        from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+        def _noop() -> dict:
+            return {}
+
+        factory = ToolFactory()
+        factory.register_tool(
+            function=_noop,
+            name="ping",
+            description="ping",
+            parameters={"type": "object", "properties": {}},
+        )
+        catalog = InMemoryToolCatalog(factory)
+        entry = catalog.get_entry("ping")
+        assert entry is not None
+        assert entry.aliases == []
+        assert entry.requires == []
+        assert entry.suggested_with == []
+        assert entry.risk_level == "low"
+        assert entry.read_only is False
+        assert entry.auth_scopes == []
+        assert entry.selection_examples == []
+        assert entry.negative_examples == []
