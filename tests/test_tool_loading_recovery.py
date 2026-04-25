@@ -277,10 +277,12 @@ async def test_hybrid_loads_meta_tools_only_after_failure() -> None:
     )
 
     sessions_seen: list = []
+    inputs_seen: list = []
     iter_count = {"n": 0}
 
     async def _fake_generate(**kwargs):
         sessions_seen.append(set(kwargs["tool_session"].list_active()))
+        inputs_seen.append(list(kwargs["input"]))
         iter_count["n"] += 1
         if iter_count["n"] == 1:
             return GenerationResult(
@@ -313,6 +315,16 @@ async def test_hybrid_loads_meta_tools_only_after_failure() -> None:
     assert tl["recovery_calls"] == 1
     # Mode is reflected
     assert tl["mode"] == "hybrid"
+    # Recovery nudge contains the meta-tool names so the model knows to use them
+    second_call_input = inputs_seen[1]
+    nudge_messages = [
+        m
+        for m in second_call_input
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), str)
+        and "browse_toolkit" in m["content"]
+    ]
+    assert len(nudge_messages) >= 1, "Recovery prompt must mention browse_toolkit"
 
 
 @pytest.mark.asyncio

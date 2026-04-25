@@ -72,7 +72,10 @@ def apply_selection_plan(session: ToolSession, plan: ToolSelectionPlan) -> list[
 # the recovery floor (model is genuinely uncertain), not the selector floor
 # (would-have-selected). They happen to share the value 0.35.
 _LOW_CONFIDENCE_THRESHOLD: float = 0.35
-_NO_TOOL_PHRASES: tuple[str, ...] = (
+
+#: Canonical set of refusal substrings we treat as "the model lacked a tool".
+#: Match is case-insensitive substring against assistant text content.
+NO_TOOL_PHRASES: tuple[str, ...] = (
     "don't have a tool",
     "do not have a tool",
     "no relevant tool",
@@ -86,6 +89,25 @@ _NO_TOOL_PHRASES: tuple[str, ...] = (
     "there's no tool",
     "no function for",
 )
+
+#: Backwards-compatible private alias. Prefer :data:`NO_TOOL_PHRASES`.
+_NO_TOOL_PHRASES = NO_TOOL_PHRASES
+
+
+def is_refusal_text(content: Any) -> bool:
+    """Return True if *content* is a string containing a refusal phrase.
+
+    Used by hybrid recovery to detect when the assistant signalled it
+    lacked a tool, both for triggering recovery and for evaluating
+    whether recovery succeeded.
+
+    Non-string content (``None``, list-of-blocks, dicts, ints, ...)
+    returns ``False`` — callers don't need to pre-validate.
+    """
+    if not isinstance(content, str):
+        return False
+    lower = content.lower()
+    return any(phrase in lower for phrase in NO_TOOL_PHRASES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,11 +163,8 @@ class LoadingRecoveryDetector:
             return True
 
         # Trigger 3: assistant verbally said it lacks a tool
-        content = assistant_message.get("content")
-        if isinstance(content, str):
-            lower = content.lower()
-            if any(phrase in lower for phrase in _NO_TOOL_PHRASES):
-                return True
+        if is_refusal_text(assistant_message.get("content")):
+            return True
 
         return False
 

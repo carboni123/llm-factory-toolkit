@@ -47,6 +47,7 @@ from .tools.loading_config import (
 from .tools.loading_strategy import (
     LoadingRecoveryDetector,
     apply_selection_plan,
+    is_refusal_text,
     trigger_recovery,
 )
 from .tools.meta_tools import META_TOOL_NAMES
@@ -1128,74 +1129,14 @@ class LLMClient:
                 and self.tool_loading_config.allow_recovery
                 and tool_session is not None
             ):
-                detector = LoadingRecoveryDetector(
-                    max_recovery_calls=self.tool_loading_config.max_recovery_discovery_calls,
-                    max_recovery_tools=self.tool_loading_config.max_recovery_loaded_tools,
+                result = await self._run_hybrid_recovery(
+                    result=result,
+                    common_kwargs=common_kwargs,
+                    file_search=file_search,
+                    fallback_input=input,
+                    tool_session=tool_session,
+                    selection_plan=selection_plan,
                 )
-                last_assistant = next(
-                    (
-                        m
-                        for m in reversed(result.messages or [])
-                        if m.get("role") == "assistant"
-                    ),
-                    {
-                        "role": "assistant",
-                        "content": (
-                            result.content if isinstance(result.content, str) else ""
-                        ),
-                    },
-                )
-                if detector.should_recover(
-                    assistant_message=last_assistant,
-                    plan=selection_plan,
-                    session=tool_session,
-                    tool_errors=[],
-                ):
-                    trigger_recovery(
-                        tool_session,
-                        max_recovery_tools=self.tool_loading_config.max_recovery_loaded_tools,
-                    )
-                    # Build the recovery prompt: include the prior transcript
-                    # and a nudge to use browse_toolkit + load_tools.
-                    recovery_input = list(result.messages or input)
-                    recovery_input.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "If a needed tool was missing, use "
-                                "browse_toolkit and load_tools to find it, "
-                                "then complete the task."
-                            ),
-                        }
-                    )
-                    recovery_kwargs = dict(common_kwargs)
-                    recovery_kwargs["input"] = recovery_input
-                    recovery_kwargs["tool_session"] = tool_session
-
-                    result = await self.provider.generate(
-                        **recovery_kwargs, file_search=file_search
-                    )
-                    # Refresh metadata to reflect the recovery
-                    md = dict(result.metadata or {})
-                    md["tool_loading"] = self._build_tool_loading_metadata(
-                        mode=self.tool_loading_mode,
-                        plan=selection_plan,
-                        messages=result.messages or [],
-                    )
-                    tl = md["tool_loading"]
-                    tl["recovery_used"] = True
-                    tl["recovery_calls"] = tool_session.metadata.get(
-                        "recovery_calls", 1
-                    )
-                    tl["recovery_success"] = bool(result.content) and not any(
-                        phrase in str(result.content).lower()
-                        for phrase in (
-                            "don't have a tool",
-                            "no relevant tool",
-                            "i'm not able to",
-                        )
-                    )
-                    result.metadata = md
 
             # --- Cache store ---
             if _cache_key is not None and cache is not None:
@@ -1243,6 +1184,83 @@ class LLMClient:
         except Exception as e:
             logger.error("Unexpected error during generation: %s", e, exc_info=True)
             raise LLMToolkitError("Unexpected generation error") from e
+
+    async def _run_hybrid_recovery(
+        self,
+        *,
+        result: GenerationResult,
+        common_kwargs: dict[str, Any],
+        file_search: Any,
+        fallback_input: list[dict[str, Any]],
+        tool_session: ToolSession,
+        selection_plan: ToolSelectionPlan,
+    ) -> GenerationResult:
+        """Run a single hybrid-recovery pass when the first turn refused.
+
+        Returns the post-recovery ``GenerationResult`` (or the original
+        ``result`` when no recovery was needed). Mutates ``tool_session`` to
+        add ``browse_toolkit`` + ``load_tools`` if recovery fires.
+        """
+        detector = LoadingRecoveryDetector(
+            max_recovery_calls=self.tool_loading_config.max_recovery_discovery_calls,
+            max_recovery_tools=self.tool_loading_config.max_recovery_loaded_tools,
+        )
+        last_assistant = next(
+            (
+                m
+                for m in reversed(result.messages or [])
+                if m.get("role") == "assistant"
+            ),
+            {
+                "role": "assistant",
+                "content": result.content if isinstance(result.content, str) else "",
+            },
+        )
+        if not detector.should_recover(
+            assistant_message=last_assistant,
+            plan=selection_plan,
+            session=tool_session,
+            tool_errors=[],
+        ):
+            return result
+
+        trigger_recovery(
+            tool_session,
+            max_recovery_tools=self.tool_loading_config.max_recovery_loaded_tools,
+        )
+        # Full transcript intentionally re-fed so the model sees prior reasoning.
+        recovery_input = list(result.messages or fallback_input)
+        recovery_input.append(
+            {
+                "role": "user",
+                "content": (
+                    "If a needed tool was missing, use browse_toolkit and "
+                    "load_tools to find it, then complete the task."
+                ),
+            }
+        )
+        recovery_kwargs = dict(common_kwargs)
+        recovery_kwargs["input"] = recovery_input
+        recovery_kwargs["tool_session"] = tool_session
+
+        new_result = await self.provider.generate(
+            **recovery_kwargs, file_search=file_search
+        )
+
+        md = dict(new_result.metadata or {})
+        md["tool_loading"] = self._build_tool_loading_metadata(
+            mode=self.tool_loading_mode,
+            plan=selection_plan,
+            messages=new_result.messages or [],
+        )
+        tl = md["tool_loading"]
+        tl["recovery_used"] = True
+        tl["recovery_calls"] = tool_session.metadata.get("recovery_calls", 1)
+        tl["recovery_success"] = bool(new_result.content) and not is_refusal_text(
+            str(new_result.content) if new_result.content is not None else ""
+        )
+        new_result.metadata = md
+        return new_result
 
     async def _generate_stream_with_fallback(
         self,
