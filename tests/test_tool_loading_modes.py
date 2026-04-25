@@ -571,3 +571,117 @@ class TestAutoMode:
         }
         # Crucially: not 'auto'
         assert result.metadata["tool_loading"]["mode"] != "auto"
+
+    async def test_auto_threshold_at_max_selected_tools_boundary(self) -> None:
+        """Catalog size == max_selected_tools resolves to static_all (inclusive)."""
+        f = ToolFactory()
+        for i in range(8):  # exactly 8
+            f.register_tool(
+                function=lambda: {},
+                name=f"t{i}",
+                description=f"tool {i}",
+                parameters={"type": "object", "properties": {}},
+            )
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=f,
+            tool_loading="auto",
+            max_selected_tools=8,
+        )
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return GenerationResult(content="ok")
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            await client.generate(input=[{"role": "user", "content": "hi"}])
+
+        # n == threshold → static_all
+        assert captured[0] is None
+
+    async def test_auto_threshold_uses_configured_max_selected_tools(self) -> None:
+        """Custom max_selected_tools shifts the static_all threshold."""
+        f = ToolFactory()
+        for i in range(15):  # 15 tools
+            f.register_tool(
+                function=lambda: {},
+                name=f"t{i}",
+                description=f"tool {i}",
+                parameters={"type": "object", "properties": {}},
+            )
+        # max_selected_tools=20 means catalog of 15 is "small enough" → static_all
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=f,
+            tool_loading="auto",
+            max_selected_tools=20,
+        )
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return GenerationResult(content="ok")
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            await client.generate(input=[{"role": "user", "content": "hi"}])
+
+        assert captured[0] is None  # static_all
+
+    async def test_auto_per_call_model_override_changes_resolution(self) -> None:
+        """auto resolves against the per-call model, not the client's default."""
+        f = ToolFactory()
+        for i in range(20):
+            f.register_tool(
+                function=lambda: {},
+                name=f"tool_{i:02d}",
+                description=f"tool {i}",
+                parameters={"type": "object", "properties": {}},
+            )
+        # Client default: gpt-4o-mini (no tool_search)
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=f,
+            tool_loading="auto",
+        )
+
+        async def _fake(**kwargs):
+            return GenerationResult(content="done")
+
+        with patch.object(client.provider, "generate", side_effect=_fake):
+            # Per-call override to gpt-5.5 (DOES support tool_search)
+            result = await client.generate(
+                input=[{"role": "user", "content": "tool_05"}],
+                model="openai/gpt-5.5",
+            )
+
+        # Per-call model wins → provider_deferred resolution
+        assert result.metadata["tool_loading"]["mode"] == "provider_deferred"
+
+    async def test_auto_capable_model_with_small_catalog_picks_static_all(self) -> None:
+        """Catalog size dominates over provider capability."""
+        # gpt-5.5 supports tool_search but catalog is small (3 tools)
+        f = ToolFactory()
+        for i in range(3):
+            f.register_tool(
+                function=lambda: {},
+                name=f"t{i}",
+                description=f"t {i}",
+                parameters={"type": "object", "properties": {}},
+            )
+        client = LLMClient(
+            model="openai/gpt-5.5",
+            tool_factory=f,
+            tool_loading="auto",
+        )
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return GenerationResult(content="ok")
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            await client.generate(input=[{"role": "user", "content": "hi"}])
+
+        # Small catalog wins over tool_search capability
+        assert captured[0] is None

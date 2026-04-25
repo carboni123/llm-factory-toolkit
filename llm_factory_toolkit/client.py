@@ -417,17 +417,22 @@ class LLMClient:
         """Translate ``auto`` into a concrete mode for this client + catalog.
 
         Decision table:
-            - ``<=8`` tools in catalog → ``static_all`` (small catalog, send all).
-            - Provider supports ``tool_search`` → ``provider_deferred``
-              (provider does the loading).
+            - ``len(catalog) <= max_selected_tools`` → ``static_all``
+              (catalog isn't bigger than the selector would pick anyway).
+            - Provider supports ``tool_search`` → ``provider_deferred``.
             - Otherwise → ``hybrid`` (preselect + recovery fallback).
         """
         catalog = self.tool_factory.get_catalog()
         n = len(catalog.list_all()) if catalog else 0
-        if n <= 8:
+        threshold = self.tool_loading_config.max_selected_tools
+        if n <= threshold:
             return "static_all"
         caps = self.provider.adapter.capabilities(model)
         if caps.supports_provider_tool_search:
+            # NOTE: until Task 17 wires `provider_deferred=True` into the OpenAI
+            # adapter, this resolution behaves like preselect — the metadata label
+            # records the intended mode, but no provider-native deferred config
+            # is sent yet.
             return "provider_deferred"
         return "hybrid"
 
@@ -439,7 +444,8 @@ class LLMClient:
         mode: ToolLoadingMode,
     ) -> ToolSelectionPlan | None:
         """Run the configured selector. Returns None when mode does not need it."""
-        if mode in {"static_all", "none", "agentic", "auto"}:
+        # `auto` is resolved upstream in generate(); never reaches this method.
+        if mode in {"static_all", "none", "agentic"}:
             return None  # No selector run for these modes.
 
         catalog = self.tool_factory.get_catalog()
@@ -1611,7 +1617,10 @@ class LLMClient:
             candidate_count=len(plan.candidates),
             selector_confidence=plan.confidence,
             selector_latency_ms=int(plan.diagnostics.get("latency_ms", 0)),
-            provider_deferred=False,
+            provider_deferred=False,  # TODO: set True when Task 17/18 lands the
+            # OpenAI tool_search / Anthropic mcp_toolset paths.
+            # Resolution to "provider_deferred" mode currently
+            # only changes the metadata label.
             recovery_used=False,
             recovery_success=None,
             recovery_calls=0,
