@@ -853,8 +853,58 @@ async def test_preselect_with_no_match_does_not_leak_all_tools(monkeypatch) -> N
     assert captured_tool_lists == [[]]
 
 
-def test_get_effective_tools_returns_empty_when_session_is_empty() -> None:
-    """BaseProvider._get_effective_tools honours an empty session as authoritative."""
+@pytest.mark.asyncio
+async def test_preselect_empty_session_does_not_send_tools_to_provider(
+    monkeypatch,
+) -> None:
+    """End-to-end: when selector returns empty, provider's _call_api receives
+    tools=None (not the full registered list). This exercises the full
+    BaseProvider._get_effective_tools → _resolve_tool_definitions path that
+    the higher-level mock test doesn't touch.
+    """
+    from types import SimpleNamespace
+
+    from llm_factory_toolkit.providers._base import ProviderResponse
+    from llm_factory_toolkit.tools.selection import ToolSelectionPlan
+
+    f = ToolFactory()
+    for name in ("alpha", "beta", "gamma"):
+        f.register_tool(
+            function=lambda: {},
+            name=name,
+            description=f"{name} tool",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    class _EmptySelector:
+        async def select_tools(self, input, config):  # type: ignore[no-untyped-def]
+            return ToolSelectionPlan(mode=config.mode, selected_tools=[])
+
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        tool_factory=f,
+        tool_loading="preselect",
+        tool_selector=_EmptySelector(),  # type: ignore[arg-type]
+    )
+
+    captured: dict = {}
+
+    async def _fake_call_api(model, messages, *, tools=None, **kwargs):
+        captured["tools"] = tools
+        return ProviderResponse(content="ok", tool_calls=[], raw_messages=[])
+
+    monkeypatch.setattr(
+        client.provider.adapter, "_call_api", _fake_call_api
+    )
+
+    await client.generate(input=[{"role": "user", "content": "do something"}])
+
+    # Critical: tools=None, NOT [{...alpha...}, {...beta...}, {...gamma...}]
+    assert captured["tools"] is None
+
+
+def test_get_effective_tools_returns_none_when_session_is_empty() -> None:
+    """Empty session returns None (no tools), not [] (which downstream treats as 'all')."""
     from llm_factory_toolkit.providers._base import BaseProvider
     from llm_factory_toolkit.tools.session import ToolSession
 
@@ -871,7 +921,12 @@ def test_get_effective_tools_returns_empty_when_session_is_empty() -> None:
 
     adapter = _MinAdapter()
     empty_session = ToolSession()
-    # Even with use_tools=() (default = all), empty session wins
-    assert adapter._get_effective_tools((), empty_session) == []
-    # And with no session, use_tools is returned
+    # Empty session → None (unambiguous "no tools"). Returning [] would
+    # collapse to "all tools" in _resolve_tool_definitions.
+    assert adapter._get_effective_tools((), empty_session) is None
+    # Non-empty session returns active list
+    populated = ToolSession()
+    populated.load(["a", "b"])
+    assert adapter._get_effective_tools((), populated) == ["a", "b"]
+    # And with no session, use_tools is returned as-is
     assert adapter._get_effective_tools(("a", "b"), None) == ("a", "b")
