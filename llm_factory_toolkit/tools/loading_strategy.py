@@ -68,19 +68,27 @@ def apply_selection_plan(session: ToolSession, plan: ToolSelectionPlan) -> list[
     return failed
 
 
+# Intentionally decoupled from LoadingConfig.min_selection_score — this is
+# the recovery floor (model is genuinely uncertain), not the selector floor
+# (would-have-selected). They happen to share the value 0.35.
 _LOW_CONFIDENCE_THRESHOLD: float = 0.35
 _NO_TOOL_PHRASES: tuple[str, ...] = (
-    "no tool",
     "don't have a tool",
     "do not have a tool",
     "no relevant tool",
-    "i lack",
-    "unable to",
-    "i cannot",
+    "no available tool",
+    "none of the available tools",
+    "i'm not able to",
+    "i lack access",
+    "i lack a tool",
+    "isn't a tool",
+    "there is no tool",
+    "there's no tool",
+    "no function for",
 )
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class LoadingRecoveryDetector:
     """Decides whether hybrid mode should expose browse/load meta-tools.
 
@@ -148,7 +156,17 @@ def trigger_recovery(session: ToolSession, *, max_recovery_tools: int) -> None:
     Idempotent on the loaded tool names (``ToolSession.load`` deduplicates),
     but increments ``recovery_calls`` on every call so the detector's
     budget counter stays accurate.
+
+    The ``recovery_tools_budget`` uses ``setdefault`` semantics — the first
+    call wins so downstream consumers cannot have the budget raised out
+    from under them by a later caller.
     """
-    session.load(["browse_toolkit", "load_tools"])
+    failed = session.load(["browse_toolkit", "load_tools"])
+    if failed:
+        logger.warning(
+            "trigger_recovery: meta-tool load failed (max_tools/budget?): %s",
+            failed,
+        )
+        session.metadata["recovery_load_failed"] = list(failed)
     session.metadata["recovery_calls"] = session.metadata.get("recovery_calls", 0) + 1
-    session.metadata["recovery_tools_budget"] = max_recovery_tools
+    session.metadata.setdefault("recovery_tools_budget", max_recovery_tools)
