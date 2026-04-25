@@ -47,7 +47,7 @@ class ToolLoadingConfig:
 class ToolLoadingMetadata:
     """Diagnostics surfaced via ``GenerationResult.metadata["tool_loading"]``."""
 
-    mode: str
+    mode: ToolLoadingMode
     selected_tools: list[str] = field(default_factory=list)
     candidate_count: int = 0
     selector_confidence: float = 0.0

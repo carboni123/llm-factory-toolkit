@@ -151,3 +151,43 @@ async def test_metadata_counts_business_vs_meta_tool_calls() -> None:
     tl = result.metadata.get("tool_loading", {})
     assert tl.get("business_tool_calls") == 1
     assert tl.get("meta_tool_calls") == 0
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_dict_is_independent_from_plan() -> None:
+    """Mutating result.metadata diagnostics must not leak into the plan."""
+    captured_plan = {}
+
+    class _CapturingSelector:
+        async def select_tools(self, input, config):  # type: ignore[no-untyped-def]
+            from llm_factory_toolkit.tools.selection import ToolSelectionPlan
+
+            plan = ToolSelectionPlan(
+                mode=config.mode,
+                selected_tools=["create_task"],
+                diagnostics={"nested": {"key": "original"}},
+            )
+            captured_plan["plan"] = plan
+            return plan
+
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        tool_factory=_factory(),
+        tool_loading="preselect",
+        tool_selector=_CapturingSelector(),  # type: ignore[arg-type]
+    )
+
+    async def _fake(**kwargs):
+        return GenerationResult(content="ok")
+
+    with patch.object(client.provider, "generate", side_effect=_fake):
+        result = await client.generate(
+            input=[{"role": "user", "content": "create_task"}],
+        )
+
+    # Mutate the diagnostics on the result
+    result.metadata["tool_loading"]["diagnostics"]["nested"]["key"] = "mutated"
+
+    # The plan's diagnostics must remain unchanged
+    plan = captured_plan["plan"]
+    assert plan.diagnostics["nested"]["key"] == "original"

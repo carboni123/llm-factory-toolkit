@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import json
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import (
     Any,
-    ClassVar,
     Literal,
     overload,
 )
@@ -39,10 +40,12 @@ from .providers._registry import resolve_provider_key
 from .tools.catalog import InMemoryToolCatalog
 from .tools.loading_config import (
     ToolLoadingConfig,
+    ToolLoadingMetadata,
     ToolLoadingMode,
     resolve_tool_loading_mode,
 )
 from .tools.loading_strategy import apply_selection_plan
+from .tools.meta_tools import META_TOOL_NAMES
 from .tools.models import (
     GenerationResult,
     StreamChunk,
@@ -1104,24 +1107,11 @@ class LLMClient:
             # Surface tool_loading diagnostics on the result
             if selection_plan is not None:
                 md = dict(result.metadata or {})
-                counts = self._count_tool_call_kinds(result.messages or [])
-                md["tool_loading"] = {
-                    "mode": self.tool_loading_mode,
-                    "selected_tools": list(selection_plan.selected_tools),
-                    "candidate_count": len(selection_plan.candidates),
-                    "selector_confidence": selection_plan.confidence,
-                    "selector_latency_ms": int(
-                        selection_plan.diagnostics.get("latency_ms", 0)
-                    ),
-                    "provider_deferred": False,
-                    "recovery_used": False,
-                    "recovery_success": None,
-                    "recovery_calls": 0,
-                    "meta_tool_calls": counts["meta"],
-                    "business_tool_calls": counts["business"],
-                    "selection_reason": selection_plan.reason,
-                    "diagnostics": dict(selection_plan.diagnostics),
-                }
+                md["tool_loading"] = self._build_tool_loading_metadata(
+                    mode=self.tool_loading_mode,
+                    plan=selection_plan,
+                    messages=result.messages or [],
+                )
                 result.metadata = md
 
             # --- Cache store ---
@@ -1449,17 +1439,6 @@ class LLMClient:
 
         return merged
 
-    _META_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {
-            "browse_toolkit",
-            "load_tools",
-            "load_tool_group",
-            "unload_tool_group",
-            "unload_tools",
-            "find_tools",
-        }
-    )
-
     @staticmethod
     def _count_tool_call_kinds(messages: list[dict[str, Any]]) -> dict[str, int]:
         """Count business vs meta tool calls in a transcript.
@@ -1477,11 +1456,44 @@ class LLMClient:
                 name = (tc.get("function") or {}).get("name") or tc.get("name")
                 if not name:
                     continue
-                if name in LLMClient._META_TOOL_NAMES:
+                if name in META_TOOL_NAMES:
                     meta += 1
                 else:
                     business += 1
         return {"meta": meta, "business": business}
+
+    @staticmethod
+    def _build_tool_loading_metadata(
+        *,
+        mode: ToolLoadingMode,
+        plan: ToolSelectionPlan,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build the tool_loading metadata sub-dict for GenerationResult.metadata.
+
+        Returns a plain ``dict`` (via ``dataclasses.asdict``) so the wire format
+        stays JSON-friendly, but constructs through the typed
+        :class:`ToolLoadingMetadata` dataclass to prevent field-name drift.
+        The diagnostics sub-dict is deep-copied so callers can mutate
+        ``result.metadata`` without affecting the original plan.
+        """
+        counts = LLMClient._count_tool_call_kinds(messages)
+        meta = ToolLoadingMetadata(
+            mode=mode,
+            selected_tools=list(plan.selected_tools),
+            candidate_count=len(plan.candidates),
+            selector_confidence=plan.confidence,
+            selector_latency_ms=int(plan.diagnostics.get("latency_ms", 0)),
+            provider_deferred=False,
+            recovery_used=False,
+            recovery_success=None,
+            recovery_calls=0,
+            meta_tool_calls=counts["meta"],
+            business_tool_calls=counts["business"],
+            selection_reason=plan.reason,
+            diagnostics=copy.deepcopy(plan.diagnostics),
+        )
+        return dataclasses.asdict(meta)
 
     @staticmethod
     def _extract_text_content(content: Any) -> str:

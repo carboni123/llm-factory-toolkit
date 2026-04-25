@@ -322,8 +322,10 @@ def load_tool_group(
     )
 
 
-#: Tool names that cannot be unloaded (meta-tools themselves).
-_META_TOOL_NAMES = frozenset(
+#: Canonical set of meta-tool names. Tools in this set cannot be unloaded
+#: (they are protected alongside core tools) and are used across the codebase
+#: to distinguish meta-tool calls from business tool calls in diagnostics.
+META_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "browse_toolkit",
         "load_tools",
@@ -333,6 +335,9 @@ _META_TOOL_NAMES = frozenset(
         "find_tools",
     }
 )
+
+#: Backwards-compatible private alias. Prefer :data:`META_TOOL_NAMES`.
+_META_TOOL_NAMES = META_TOOL_NAMES
 
 
 # ------------------------------------------------------------------
