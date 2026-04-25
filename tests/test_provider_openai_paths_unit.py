@@ -371,3 +371,103 @@ async def test_openai_call_api_maps_sdk_error_to_provider_error(
             "gpt-4o-mini",
             [{"role": "user", "content": "hello"}],
         )
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_deferred_passes_tool_search_config() -> None:
+    """When provider_deferred=True is requested, the adapter sends tool_search."""
+    from types import SimpleNamespace
+    from llm_factory_toolkit.providers.openai import OpenAIAdapter
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    adapter = OpenAIAdapter(api_key="sk-test", tool_factory=ToolFactory())
+
+    captured: dict = {}
+
+    class _FakeResponses:
+        async def parse(self, **kwargs):
+            captured.update(kwargs)
+            # Minimal stub mimicking SDK response shape used by the adapter
+            return SimpleNamespace(
+                output_text="ok",
+                output=[],
+                output_parsed=None,
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_text="ok",
+                output=[],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+    fake_client = SimpleNamespace(responses=_FakeResponses())
+    adapter._async_client = fake_client  # type: ignore[attr-defined]
+
+    await adapter._call_api(
+        model="gpt-5.5",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        provider_deferred=True,
+        deferred_tool_names=["create_task", "query_customers"],
+    )
+
+    tools = captured.get("tools") or []
+    # Must include a tool_search config
+    tool_search_entries = [t for t in tools if t.get("type") == "tool_search"]
+    assert len(tool_search_entries) == 1
+    # And the deferred names must be passed (shape: filters or similar)
+    ts_entry = tool_search_entries[0]
+    # Allow either filters.names or names directly — depends on SDK version.
+    names = (
+        ts_entry.get("filters", {}).get("names")
+        or ts_entry.get("names")
+        or ts_entry.get("filter", {}).get("names")
+    )
+    assert names == ["create_task", "query_customers"]
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_deferred_omits_tool_search_when_not_set() -> None:
+    """Without provider_deferred, no tool_search entry is sent."""
+    from types import SimpleNamespace
+    from llm_factory_toolkit.providers.openai import OpenAIAdapter
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    adapter = OpenAIAdapter(api_key="sk-test", tool_factory=ToolFactory())
+    captured: dict = {}
+
+    class _FakeResponses:
+        async def parse(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_text="ok",
+                output=[],
+                output_parsed=None,
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_text="ok",
+                output=[],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+    adapter._async_client = SimpleNamespace(responses=_FakeResponses())  # type: ignore[attr-defined]
+
+    await adapter._call_api(
+        model="gpt-5.5",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        # provider_deferred not set
+    )
+
+    tools = captured.get("tools") or []
+    tool_search_entries = [
+        t for t in tools if isinstance(t, dict) and t.get("type") == "tool_search"
+    ]
+    assert tool_search_entries == []

@@ -645,6 +645,8 @@ class OpenAIAdapter(BaseProvider):
         response_format: dict[str, Any] | type[BaseModel] | None = None,
         web_search: bool | dict[str, Any] = False,
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        provider_deferred: bool = False,
+        deferred_tool_names: list[str] | None = None,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via OpenAI Responses API."""
@@ -654,10 +656,24 @@ class OpenAIAdapter(BaseProvider):
         # Convert Chat Completions → Responses API format
         api_input = self._convert_to_responses_api(messages)
 
+        # Provider-deferred tool selection: append a `tool_search` config so the
+        # Responses API performs tool selection server-side instead of passing
+        # every function definition. Honoured only when capability is advertised
+        # (callers gate this — see LLMClient.generate); other adapters silently
+        # ignore the kwargs.
+        request_tools: list[dict[str, Any]] | None
+        if provider_deferred:
+            tool_search_entry: dict[str, Any] = {"type": "tool_search"}
+            if deferred_tool_names:
+                tool_search_entry["filters"] = {"names": list(deferred_tool_names)}
+            request_tools = list(tools or []) + [tool_search_entry]
+        else:
+            request_tools = tools
+
         request = self._build_request(
             model,
             api_input,
-            tools=tools,
+            tools=request_tools,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             response_format=response_format,
@@ -719,6 +735,8 @@ class OpenAIAdapter(BaseProvider):
         response_format: dict[str, Any] | type[BaseModel] | None = None,
         web_search: bool | dict[str, Any] = False,
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        provider_deferred: bool = False,
+        deferred_tool_names: list[str] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream via OpenAI Responses API."""
@@ -727,10 +745,23 @@ class OpenAIAdapter(BaseProvider):
 
         api_input = self._convert_to_responses_api(messages)
 
+        # Mirror the non-streaming path: append a `tool_search` config when
+        # provider-deferred selection is requested. Streaming + provider-deferred
+        # is not exercised in production today, but the kwargs must be accepted
+        # cleanly so the shared streaming loop doesn't raise TypeError.
+        request_tools: list[dict[str, Any]] | None
+        if provider_deferred:
+            tool_search_entry: dict[str, Any] = {"type": "tool_search"}
+            if deferred_tool_names:
+                tool_search_entry["filters"] = {"names": list(deferred_tool_names)}
+            request_tools = list(tools or []) + [tool_search_entry]
+        else:
+            request_tools = tools
+
         request = self._build_request(
             model,
             api_input,
-            tools=tools,
+            tools=request_tools,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             response_format=response_format,

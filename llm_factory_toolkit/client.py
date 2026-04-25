@@ -429,10 +429,9 @@ class LLMClient:
             return "static_all"
         caps = self.provider.adapter.capabilities(model)
         if caps.supports_provider_tool_search:
-            # NOTE: until Task 17 wires `provider_deferred=True` into the OpenAI
-            # adapter, this resolution behaves like preselect — the metadata label
-            # records the intended mode, but no provider-native deferred config
-            # is sent yet.
+            # OpenAI's tool_search config is appended by the adapter in
+            # provider_deferred mode (Task 17). For other capable providers
+            # (e.g. Anthropic mcp_toolsets — Task 18) the same wiring will apply.
             return "provider_deferred"
         return "hybrid"
 
@@ -1126,6 +1125,20 @@ class LLMClient:
             }
         }
 
+        # Forward provider-deferred tool selection when applicable. Today only
+        # OpenAI honours these kwargs (see OpenAIAdapter._call_api); other
+        # adapters silently absorb them via **kwargs. The earlier
+        # UnsupportedFeatureError block (Task 16) ensures this path is only
+        # reached for capable providers.
+        if effective_mode == "provider_deferred":
+            common_kwargs["provider_deferred"] = True
+            if isinstance(use_tools, (list, tuple)) and len(use_tools) > 0:
+                common_kwargs["deferred_tool_names"] = list(use_tools)
+            else:
+                common_kwargs["deferred_tool_names"] = list(
+                    self.tool_factory.available_tool_names
+                )
+
         # --- Cache lookup (non-streaming, no tools) ---
         _cache_key: str | None = None
         if cache is not None and not stream and use_tools is None:
@@ -1174,10 +1187,10 @@ class LLMClient:
                 md["tool_loading"] = dataclasses.asdict(
                     ToolLoadingMetadata(
                         mode=effective_mode,
-                        # provider_deferred=True signals the wire mode; Task 17/18 will
-                        # set this only when the adapter actually sends tool_search /
-                        # mcp_toolset config. Today, the label-only resolution still
-                        # marks it as the user's intent.
+                        # provider_deferred=True reflects the wire mode now that
+                        # the OpenAI adapter actually sends tool_search config
+                        # (Task 17). Task 18 will extend this to Anthropic
+                        # mcp_toolsets.
                         provider_deferred=True,
                         selection_reason="explicit provider_deferred mode",
                     )
@@ -1652,10 +1665,7 @@ class LLMClient:
             candidate_count=len(plan.candidates),
             selector_confidence=plan.confidence,
             selector_latency_ms=int(plan.diagnostics.get("latency_ms", 0)),
-            provider_deferred=False,  # TODO: set True when Task 17/18 lands the
-            # OpenAI tool_search / Anthropic mcp_toolset paths.
-            # Resolution to "provider_deferred" mode currently
-            # only changes the metadata label.
+            provider_deferred=(mode == "provider_deferred"),
             recovery_used=False,
             recovery_success=None,
             recovery_calls=0,
