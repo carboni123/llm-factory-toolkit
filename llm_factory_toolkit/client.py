@@ -1020,6 +1020,20 @@ class LLMClient:
         if effective_mode == "auto":
             effective_mode = self._resolve_auto_mode(model=model or self.model)
 
+        # Validate explicit provider_deferred against actual provider support.
+        # `auto` callers reach this via _resolve_auto_mode, which already gates
+        # on supports_provider_tool_search — so they won't hit this branch.
+        if (
+            self.tool_loading_mode == "provider_deferred"
+            and effective_mode == "provider_deferred"
+        ):
+            caps = self.provider.adapter.capabilities(model or self.model)
+            if not (caps.supports_provider_tool_search or caps.supports_mcp_toolsets):
+                raise UnsupportedFeatureError(
+                    "provider_deferred tool loading is not supported by this "
+                    f"provider/model: {model or self.model}"
+                )
+
         selection_plan: ToolSelectionPlan | None = None
         if tool_session is None:
             if effective_mode == "agentic":
@@ -1147,6 +1161,12 @@ class LLMClient:
                     plan=selection_plan,
                     messages=result.messages or [],
                 )
+                result.metadata = md
+            elif effective_mode == "provider_deferred":
+                # Explicit provider_deferred runs without a catalog/plan, but
+                # still surface the resolved mode so callers can introspect it.
+                md = dict(result.metadata or {})
+                md["tool_loading"] = {"mode": effective_mode}
                 result.metadata = md
 
             # --- Hybrid recovery pass ---

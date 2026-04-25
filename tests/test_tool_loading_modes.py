@@ -685,3 +685,114 @@ class TestAutoMode:
 
         # Small catalog wins over tool_search capability
         assert captured[0] is None
+
+
+@pytest.mark.asyncio
+async def test_provider_deferred_unsupported_raises() -> None:
+    """Explicit provider_deferred + unsupported provider → UnsupportedFeatureError."""
+    from llm_factory_toolkit.exceptions import UnsupportedFeatureError
+
+    f = ToolFactory()
+    for i in range(10):
+        f.register_tool(
+            function=lambda: {},
+            name=f"t{i}",
+            description=f"tool {i}",
+            parameters={"type": "object", "properties": {}},
+        )
+    # Gemini does NOT support tool_search OR mcp_toolsets.
+    client = LLMClient(
+        model="gemini/gemini-2.5-flash",
+        tool_factory=f,
+        tool_loading="provider_deferred",
+    )
+
+    with pytest.raises(UnsupportedFeatureError, match="provider_deferred"):
+        await client.generate(input=[{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_provider_deferred_supported_does_not_raise() -> None:
+    """Explicit provider_deferred + supported provider → no error."""
+    f = ToolFactory()
+    for i in range(10):
+        f.register_tool(
+            function=lambda: {},
+            name=f"t{i}",
+            description=f"tool {i}",
+            parameters={"type": "object", "properties": {}},
+        )
+    # gpt-5.5 supports tool_search.
+    client = LLMClient(
+        model="openai/gpt-5.5",
+        tool_factory=f,
+        tool_loading="provider_deferred",
+    )
+
+    async def _fake(**kwargs):
+        return GenerationResult(content="ok")
+
+    with patch.object(client.provider, "generate", side_effect=_fake):
+        result = await client.generate(input=[{"role": "user", "content": "hi"}])
+
+    assert result.content == "ok"
+    # provider_deferred resolved (no fallback)
+    assert result.metadata["tool_loading"]["mode"] == "provider_deferred"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_deferred_supported_via_mcp_toolsets() -> None:
+    """Explicit provider_deferred + Anthropic (mcp_toolsets) → no error."""
+    f = ToolFactory()
+    for i in range(10):
+        f.register_tool(
+            function=lambda: {},
+            name=f"t{i}",
+            description=f"tool {i}",
+            parameters={"type": "object", "properties": {}},
+        )
+    client = LLMClient(
+        model="anthropic/claude-haiku-4-5",
+        tool_factory=f,
+        tool_loading="provider_deferred",
+    )
+
+    async def _fake(**kwargs):
+        return GenerationResult(content="ok")
+
+    with patch.object(client.provider, "generate", side_effect=_fake):
+        result = await client.generate(input=[{"role": "user", "content": "hi"}])
+
+    assert result.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_auto_falls_back_when_provider_deferred_unsupported() -> None:
+    """auto on a provider with no tool_search/mcp_toolsets must NOT raise."""
+    f = ToolFactory()
+    for i in range(40):
+        f.register_tool(
+            function=lambda: {},
+            name=f"extra_{i}",
+            description=f"extra {i}",
+            parameters={"type": "object", "properties": {}},
+        )
+    # Gemini → falls back to hybrid (per _resolve_auto_mode).
+    client = LLMClient(
+        model="gemini/gemini-2.5-flash",
+        tool_factory=f,
+        tool_loading="auto",
+    )
+
+    async def _capture(**kwargs):
+        return GenerationResult(content="ok")
+
+    with patch.object(client.provider, "generate", side_effect=_capture):
+        result = await client.generate(
+            input=[{"role": "user", "content": "extra_5"}]
+        )
+
+    # auto must NOT escalate to provider_deferred for Gemini
+    tl = result.metadata["tool_loading"]
+    assert tl["mode"] in {"hybrid", "preselect", "static_all"}
+    assert tl["mode"] != "provider_deferred"
