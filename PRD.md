@@ -464,6 +464,32 @@ llm_factory_toolkit/
 - **Aggregation** -- `get_analytics()` returns most_loaded, most_called, never_called
 - **Serialisation** -- Analytics included in `to_dict()`/`from_dict()` (backward compatible)
 
+## Dynamic Tool Loading v2 -- Acceptance Criteria
+
+The v2 tool-loading subsystem is complete when:
+
+1. `tool_loading="preselect"` solves benchmark cases without exposing
+   `browse_toolkit` or `load_tools` in the initial tool set.
+2. `tool_loading="hybrid"` performs at least as well as `agentic` on pass
+   rate and better on meta-tool overhead.
+3. Existing `dynamic_tool_loading=True` behavior is preserved (covered by
+   `tests/test_tool_loading_backcompat.py`).
+4. `GenerationResult.metadata["tool_loading"]` includes the diagnostic
+   surface (mode, selected_tools, selector_latency_ms, recovery_used,
+   recovery_success, business_tool_calls, meta_tool_calls).
+5. The benchmark `--tool-loading-mode` flag toggles between modes and
+   reports selection metrics.
+6. Provider adapters expose a `capabilities()` method with
+   `supports_provider_tool_search` and `supports_mcp_toolsets` flags.
+7. Explicit `tool_loading="provider_deferred"` raises
+   `UnsupportedFeatureError` for providers that lack the capability.
+8. `tool_loading="auto"` falls back to `hybrid` (or other) when
+   `provider_deferred` would be inappropriate.
+9. Tests cover all modes (see `tests/test_tool_loading_modes.py`,
+   `test_tool_loading_recovery.py`, `test_tool_loading_diagnostics.py`,
+   `test_provider_capabilities.py`, `test_tool_loading_backcompat.py`).
+10. README and BENCHMARK docs explain when to use each mode.
+
 ## Future Considerations
 - **Anthropic tool_use native path** -- Similar to OpenAI dual routing, Anthropic's native API could provide richer tool support.
 - **Callback/event hooks** -- Pre/post tool execution hooks for logging, metrics, and authorization.

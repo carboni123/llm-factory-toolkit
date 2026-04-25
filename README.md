@@ -202,7 +202,88 @@ for call in intent.tool_calls or []:
 results = await client.execute_tool_intents(intent)
 ```
 
-## Dynamic Tool Loading
+## Dynamic Tool Loading (v2)
+
+`tool_loading=` is the recommended way to control which tools are visible to
+the model. Modes scale from "send everything" to "let the runtime select" to
+"let the provider decide", with bounded recovery for hybrid setups.
+
+| Mode | Behavior | Use case |
+|------|----------|----------|
+| `none` | Tools fully disabled | Pure text generation |
+| `static_all` | Send all `use_tools` filtered tools (default) | Small catalogs, simple apps, tests |
+| `agentic` | Model sees `browse_toolkit`/`load_tools` and discovers tools mid-loop | Exploratory tasks; legacy behavior |
+| `preselect` | Runtime selector picks tools before the first model call | Production, large catalogs (>8) |
+| `hybrid` | Preselect + recovery fallback if model lacks a needed tool | **Recommended production default** |
+| `provider_deferred` | Provider-native tool search (OpenAI gpt-5.5+) or MCP toolset (Anthropic) | When the provider can do better than local heuristics |
+| `auto` | Runtime picks among the above based on catalog size + provider capabilities | Ergonomic default for new code |
+
+Recommended:
+```python
+client = LLMClient(
+    model="anthropic/claude-haiku-4-5",
+    tool_factory=factory,
+    tool_loading="hybrid",
+    core_tools=["call_human"],
+    max_selected_tools=8,
+)
+```
+
+### Selection metadata
+
+The selector reads optional metadata from each tool:
+
+```python
+factory.register_tool(
+    function=create_calendar_event,
+    name="create_calendar_event",
+    description="Create a calendar event.",
+    parameters=...,
+    aliases=["new_event", "schedule"],   # alternate names users may type
+    suggested_with=["query_calendar"],   # tools to load alongside
+    requires=[],                          # required dependencies
+    risk_level="medium",                  # low | medium | high
+    auth_scopes=["calendar.write"],       # documentation only
+)
+```
+
+When a primary candidate is selected, its `requires` and `suggested_with`
+dependencies are also pulled into the active session so the model has the
+companion tools needed to complete the task.
+
+### Migrating from `dynamic_tool_loading=`
+
+The legacy `dynamic_tool_loading` parameter is still supported. Mapping:
+
+| Old | New |
+|-----|-----|
+| `dynamic_tool_loading=False` (default) | `tool_loading="static_all"` (default) |
+| `dynamic_tool_loading=True` | `tool_loading="agentic"` |
+| `dynamic_tool_loading="openai/gpt-4o-mini"` | `tool_loading="agentic"` + the model string still wires up `find_tools` |
+| (none) | `tool_loading="hybrid"` recommended for production |
+
+Both forms work; if both are passed, `tool_loading=` wins.
+
+### Inspecting selection diagnostics
+
+`GenerationResult.metadata["tool_loading"]` records what the selector did:
+
+```python
+result = await client.generate(input=messages)
+tl = result.metadata["tool_loading"]
+print(tl["mode"])                # resolved mode (e.g. "hybrid")
+print(tl["selected_tools"])      # what the selector picked
+print(tl["selector_latency_ms"]) # how long the selector took
+print(tl["recovery_used"])       # whether hybrid fell back
+print(tl["business_tool_calls"]) # vs meta_tool_calls
+```
+
+## Dynamic Tool Loading (Legacy)
+
+> **Legacy.** The `dynamic_tool_loading=` parameter described below is still
+> supported but is no longer the recommended default. New code should use
+> `tool_loading=` (see [Dynamic Tool Loading (v2)](#dynamic-tool-loading-v2)
+> above).
 
 When your agent has many tools, sending all definitions to the LLM wastes context. Dynamic tool loading lets the agent start with a small set of core tools and discover/load additional tools on demand.
 

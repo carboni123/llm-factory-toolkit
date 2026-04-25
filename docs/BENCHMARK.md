@@ -314,3 +314,49 @@ These thresholds trigger warnings in the efficiency analysis:
 - Add argument-level scoring for cases with deterministic expected arguments
 - Add iteration count as an explicit metric
 - Add `--compare` mode that runs multiple models and outputs a comparison table
+
+## Tool loading modes
+
+The benchmark accepts a `--tool-loading-mode` flag:
+
+```bash
+python scripts/benchmark_dynamic_tools.py --model openai/gpt-4o-mini --tool-loading-mode preselect
+```
+
+Supported values: `static_all`, `agentic` (default), `preselect`,
+`provider_deferred`, `hybrid`, `auto`.
+
+For `agentic` (default), the benchmark behaves identically to v1.0. For
+the v2 modes, the runtime selector + `apply_selection_plan` builds a
+session per call and the report records v2-specific metrics.
+
+## V2 selection metrics
+
+When `--tool-loading-mode` is non-agentic, each case in the report includes:
+
+| Metric | Meaning |
+|--------|---------|
+| `selection_latency_ms` | Time the runtime selector took before the first model call |
+| `selected_tools_count` | Number of tools preloaded |
+| `selection_precision` | Selected tools that were actually called / selected tools |
+| `selection_recall` | Expected tools (from case fixture) / selected tools |
+| `business_first` | Whether the first non-meta tool call was a selected tool |
+| `recovery_used` | Whether hybrid mode triggered the recovery pass |
+| `recovery_success` | Whether the recovery pass produced a non-refusal response |
+| `provider_deferred_used` | Whether provider-native deferred loading was used |
+
+A "Selection Metrics Summary" section at the bottom of the report
+aggregates `business_first_rate`, `zero_meta_case_rate`, and average
+precision/recall across cases.
+
+## Success targets
+
+For the 13-case benchmark:
+
+| Mode | Target |
+|------|--------|
+| `agentic` | Existing protocol-compliance behavior preserved |
+| `preselect` | >= 11/13 pass, zero redundant discovery |
+| `hybrid` | >= 12/13 pass, <= 1 recovery call per failed-preselect case |
+| `provider_deferred` | Provider-specific; no local browse/load overhead |
+| `auto` | Equal or better than `agentic` on pass rate, lower meta overhead |
