@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import pytest
+
+from llm_factory_toolkit.client import LLMClient
 from llm_factory_toolkit.tools.loading_strategy import (
     LoadingRecoveryDetector,
     trigger_recovery,
 )
+from llm_factory_toolkit.tools.models import GenerationResult
 from llm_factory_toolkit.tools.selection import ToolSelectionPlan
 from llm_factory_toolkit.tools.session import ToolSession
+from llm_factory_toolkit.tools.tool_factory import ToolFactory
 
 
 def test_detector_triggers_on_unavailable_tool_attempt() -> None:
@@ -236,3 +243,142 @@ def test_detector_no_trigger_on_text_only_high_confidence() -> None:
         session=session,
         tool_errors=[],
     )
+
+
+def _hybrid_factory() -> ToolFactory:
+    f = ToolFactory()
+    f.register_tool(
+        function=lambda: {},
+        name="create_task",
+        description="Create a follow-up task.",
+        parameters={"type": "object", "properties": {}},
+        category="task",
+        tags=["task"],
+    )
+    f.register_tool(
+        function=lambda: {},
+        name="query_customers",
+        description="Look up customers by name.",
+        parameters={"type": "object", "properties": {}},
+        category="customer",
+        tags=["customer"],
+    )
+    return f
+
+
+@pytest.mark.asyncio
+async def test_hybrid_loads_meta_tools_only_after_failure() -> None:
+    """Hybrid does not expose browse_toolkit on first call; loads it after failure."""
+    factory = _hybrid_factory()
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        tool_factory=factory,
+        tool_loading="hybrid",
+    )
+
+    sessions_seen: list = []
+    iter_count = {"n": 0}
+
+    async def _fake_generate(**kwargs):
+        sessions_seen.append(set(kwargs["tool_session"].list_active()))
+        iter_count["n"] += 1
+        if iter_count["n"] == 1:
+            return GenerationResult(
+                content="I don't have a tool to look up customers.",
+                messages=[
+                    {"role": "user", "content": "..."},
+                    {
+                        "role": "assistant",
+                        "content": "I don't have a tool to look up customers.",
+                    },
+                ],
+            )
+        return GenerationResult(content="done")
+
+    with patch.object(client.provider, "generate", side_effect=_fake_generate):
+        result = await client.generate(
+            input=[
+                {"role": "user", "content": "make a task for customer José"},
+            ],
+        )
+
+    # First-call session: meta-tools NOT visible.
+    assert "browse_toolkit" not in sessions_seen[0]
+    # Second-call session: meta-tools ARE visible after recovery.
+    assert "browse_toolkit" in sessions_seen[1]
+    assert "load_tools" in sessions_seen[1]
+    # Metadata reflects the recovery
+    tl = result.metadata["tool_loading"]
+    assert tl["recovery_used"] is True
+    assert tl["recovery_calls"] == 1
+    # Mode is reflected
+    assert tl["mode"] == "hybrid"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_no_recovery_when_first_call_succeeds() -> None:
+    """Successful first call does NOT trigger recovery."""
+    factory = _hybrid_factory()
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        tool_factory=factory,
+        tool_loading="hybrid",
+    )
+
+    iter_count = {"n": 0}
+    sessions_seen: list = []
+
+    async def _fake(**kwargs):
+        sessions_seen.append(set(kwargs["tool_session"].list_active()))
+        iter_count["n"] += 1
+        return GenerationResult(content="done", messages=[])
+
+    with patch.object(client.provider, "generate", side_effect=_fake):
+        result = await client.generate(
+            input=[{"role": "user", "content": "create_task tomorrow"}],
+        )
+
+    # Provider called exactly once
+    assert iter_count["n"] == 1
+    # No meta-tools loaded — recovery did not run
+    assert "browse_toolkit" not in sessions_seen[0]
+    tl = result.metadata["tool_loading"]
+    assert tl["recovery_used"] is False
+    assert tl["recovery_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_hybrid_recovery_disabled_when_allow_recovery_false() -> None:
+    """allow_tool_loading_recovery=False suppresses the recovery pass."""
+    factory = _hybrid_factory()
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        tool_factory=factory,
+        tool_loading="hybrid",
+        allow_tool_loading_recovery=False,
+    )
+
+    iter_count = {"n": 0}
+
+    async def _fake(**kwargs):
+        iter_count["n"] += 1
+        return GenerationResult(
+            content="I don't have a tool for that.",
+            messages=[
+                {"role": "user", "content": "..."},
+                {
+                    "role": "assistant",
+                    "content": "I don't have a tool for that.",
+                },
+            ],
+        )
+
+    with patch.object(client.provider, "generate", side_effect=_fake):
+        result = await client.generate(
+            input=[{"role": "user", "content": "weird task"}],
+        )
+
+    # Only one provider call — no recovery
+    assert iter_count["n"] == 1
+    tl = result.metadata["tool_loading"]
+    assert tl["recovery_used"] is False

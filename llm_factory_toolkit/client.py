@@ -44,7 +44,11 @@ from .tools.loading_config import (
     ToolLoadingMode,
     resolve_tool_loading_mode,
 )
-from .tools.loading_strategy import apply_selection_plan
+from .tools.loading_strategy import (
+    LoadingRecoveryDetector,
+    apply_selection_plan,
+    trigger_recovery,
+)
 from .tools.meta_tools import META_TOOL_NAMES
 from .tools.models import (
     GenerationResult,
@@ -1113,6 +1117,85 @@ class LLMClient:
                     messages=result.messages or [],
                 )
                 result.metadata = md
+
+            # --- Hybrid recovery pass ---
+            # When the first turn signals "I lack a needed tool", expose
+            # browse_toolkit + load_tools on the same session and re-run
+            # provider.generate() once.
+            if (
+                self.tool_loading_mode == "hybrid"
+                and selection_plan is not None
+                and self.tool_loading_config.allow_recovery
+                and tool_session is not None
+            ):
+                detector = LoadingRecoveryDetector(
+                    max_recovery_calls=self.tool_loading_config.max_recovery_discovery_calls,
+                    max_recovery_tools=self.tool_loading_config.max_recovery_loaded_tools,
+                )
+                last_assistant = next(
+                    (
+                        m
+                        for m in reversed(result.messages or [])
+                        if m.get("role") == "assistant"
+                    ),
+                    {
+                        "role": "assistant",
+                        "content": (
+                            result.content if isinstance(result.content, str) else ""
+                        ),
+                    },
+                )
+                if detector.should_recover(
+                    assistant_message=last_assistant,
+                    plan=selection_plan,
+                    session=tool_session,
+                    tool_errors=[],
+                ):
+                    trigger_recovery(
+                        tool_session,
+                        max_recovery_tools=self.tool_loading_config.max_recovery_loaded_tools,
+                    )
+                    # Build the recovery prompt: include the prior transcript
+                    # and a nudge to use browse_toolkit + load_tools.
+                    recovery_input = list(result.messages or input)
+                    recovery_input.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "If a needed tool was missing, use "
+                                "browse_toolkit and load_tools to find it, "
+                                "then complete the task."
+                            ),
+                        }
+                    )
+                    recovery_kwargs = dict(common_kwargs)
+                    recovery_kwargs["input"] = recovery_input
+                    recovery_kwargs["tool_session"] = tool_session
+
+                    result = await self.provider.generate(
+                        **recovery_kwargs, file_search=file_search
+                    )
+                    # Refresh metadata to reflect the recovery
+                    md = dict(result.metadata or {})
+                    md["tool_loading"] = self._build_tool_loading_metadata(
+                        mode=self.tool_loading_mode,
+                        plan=selection_plan,
+                        messages=result.messages or [],
+                    )
+                    tl = md["tool_loading"]
+                    tl["recovery_used"] = True
+                    tl["recovery_calls"] = tool_session.metadata.get(
+                        "recovery_calls", 1
+                    )
+                    tl["recovery_success"] = bool(result.content) and not any(
+                        phrase in str(result.content).lower()
+                        for phrase in (
+                            "don't have a tool",
+                            "no relevant tool",
+                            "i'm not able to",
+                        )
+                    )
+                    result.metadata = md
 
             # --- Cache store ---
             if _cache_key is not None and cache is not None:
