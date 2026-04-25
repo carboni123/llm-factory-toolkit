@@ -983,6 +983,7 @@ async def run_case(
     model: str,
     verbose: bool = False,
     search_agent_model: str | None = None,
+    tool_loading_mode: str = "agentic",
 ) -> BenchmarkResult:
     """Run a single benchmark case and return the result."""
     start = time.time()
@@ -997,8 +998,10 @@ async def run_case(
 
         # Wire up semantic search sub-agent when requested.
         # find_tools REPLACES browse_toolkit — only one discovery tool.
+        # Only meaningful for legacy `agentic` mode; v2 modes manage the
+        # session themselves via apply_selection_plan.
         tool_execution_context: dict[str, Any] | None = None
-        if search_agent_model:
+        if search_agent_model and tool_loading_mode == "agentic":
             factory.register_find_tools()
             session.unload(["browse_toolkit"])
             session.load(["find_tools"])
@@ -1009,8 +1012,41 @@ async def run_case(
                 "find_tools" if t == "browse_toolkit" else t
                 for t in case.expect_meta_calls
             ]
+        elif search_agent_model and tool_loading_mode != "agentic":
+            _safe_print(
+                "  Note: --search-agent-model is only meaningful for "
+                "--tool-loading-mode=agentic; ignoring."
+            )
 
-        client = LLMClient(model=model, tool_factory=factory)
+        # Mode-aware client construction. The legacy `agentic` path keeps the
+        # explicit session built by `_build_simulation()`; every other mode
+        # lets the v2 auto-builder run by passing `tool_loading=` and NOT
+        # forwarding `tool_session=` to `generate()`.
+        client_kwargs: dict[str, Any]
+        if tool_loading_mode == "agentic":
+            client_kwargs = {
+                "model": model,
+                "tool_factory": factory,
+                "dynamic_tool_loading": True,
+            }
+            use_explicit_session = True
+        elif tool_loading_mode == "static_all":
+            client_kwargs = {
+                "model": model,
+                "tool_factory": factory,
+                "tool_loading": "static_all",
+            }
+            use_explicit_session = False
+        else:
+            # preselect / hybrid / provider_deferred / auto: v2 auto-builder
+            client_kwargs = {
+                "model": model,
+                "tool_factory": factory,
+                "tool_loading": tool_loading_mode,
+            }
+            use_explicit_session = False
+
+        client = LLMClient(**client_kwargs)
 
         all_tool_names_called: list[str] = []
         all_messages: list[dict] = []
@@ -1021,15 +1057,17 @@ async def run_case(
             # Multi-turn: messages is a list of message lists.
             # Each inner list is one generate() call.
             for turn_messages in case.messages:
-                result = await client.generate(
-                    input=turn_messages,
-                    model=model,
-                    temperature=0.0,
-                    tool_session=session,
-                    tool_execution_context=tool_execution_context,
-                    max_tool_iterations=case.max_tool_iterations,
-                    repetition_threshold=case.repetition_threshold,
-                )
+                generate_kwargs: dict[str, Any] = {
+                    "input": turn_messages,
+                    "model": model,
+                    "temperature": 0.0,
+                    "tool_execution_context": tool_execution_context,
+                    "max_tool_iterations": case.max_tool_iterations,
+                    "repetition_threshold": case.repetition_threshold,
+                }
+                if use_explicit_session:
+                    generate_kwargs["tool_session"] = session
+                result = await client.generate(**generate_kwargs)
                 all_tool_names_called.extend(extract_tool_names(result.messages or []))
                 all_messages.extend(result.messages or [])
                 if result.usage:
@@ -1041,15 +1079,17 @@ async def run_case(
                 {"role": "system", "content": case.system_prompt},
             ] + case.messages
 
-            result = await client.generate(
-                input=messages,
-                model=model,
-                temperature=0.0,
-                tool_session=session,
-                tool_execution_context=tool_execution_context,
-                max_tool_iterations=case.max_tool_iterations,
-                repetition_threshold=case.repetition_threshold,
-            )
+            generate_kwargs = {
+                "input": messages,
+                "model": model,
+                "temperature": 0.0,
+                "tool_execution_context": tool_execution_context,
+                "max_tool_iterations": case.max_tool_iterations,
+                "repetition_threshold": case.repetition_threshold,
+            }
+            if use_explicit_session:
+                generate_kwargs["tool_session"] = session
+            result = await client.generate(**generate_kwargs)
             all_tool_names_called = extract_tool_names(result.messages or [])
             all_messages = result.messages or []
             if result.usage:
@@ -1598,6 +1638,7 @@ async def run_benchmark(
     trace: bool = False,
     output: str | None = None,
     search_agent_model: str | None = None,
+    tool_loading_mode: str = "agentic",
 ) -> None:
     """Run the full benchmark suite."""
     all_cases = build_cases()
@@ -1620,6 +1661,7 @@ async def run_benchmark(
     _safe_print(f"  Model: {model}")
     if search_agent_model:
         _safe_print(f"  Search agent: {search_agent_model}")
+    _safe_print(f"  Tool loading mode: {tool_loading_mode}")
     _safe_print(f"  Cases: {len(all_cases)}")
     if tags:
         _safe_print(f"  Tags filter: {tags}")
@@ -1634,7 +1676,11 @@ async def run_benchmark(
         _safe_print(f"\n{progress} Running: {case.name} ({case.description[:60]}...)")
 
         result = await run_case(
-            case, model, verbose=verbose, search_agent_model=search_agent_model
+            case,
+            model,
+            verbose=verbose,
+            search_agent_model=search_agent_model,
+            tool_loading_mode=tool_loading_mode,
         )
         results.append(result)
 
@@ -1724,6 +1770,19 @@ def main() -> None:
         "--search-agent-model",
         help="Enable find_tools semantic search with this model as sub-agent (e.g. openai/gpt-4o-mini)",
     )
+    parser.add_argument(
+        "--tool-loading-mode",
+        choices=[
+            "static_all",
+            "agentic",
+            "preselect",
+            "provider_deferred",
+            "hybrid",
+            "auto",
+        ],
+        default="agentic",
+        help="Tool loading mode (default: agentic, matches existing benchmark)",
+    )
 
     args = parser.parse_args()
 
@@ -1739,6 +1798,7 @@ def main() -> None:
             trace=args.trace,
             output=args.output,
             search_agent_model=args.search_agent_model,
+            tool_loading_mode=args.tool_loading_mode,
         )
     )
 
