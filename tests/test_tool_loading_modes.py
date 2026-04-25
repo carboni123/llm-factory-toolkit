@@ -707,8 +707,13 @@ async def test_provider_deferred_unsupported_raises() -> None:
         tool_loading="provider_deferred",
     )
 
-    with pytest.raises(UnsupportedFeatureError, match="provider_deferred"):
+    with pytest.raises(UnsupportedFeatureError) as exc_info:
         await client.generate(input=[{"role": "user", "content": "hi"}])
+    msg = str(exc_info.value)
+    assert "provider_deferred" in msg
+    assert "gemini" in msg.lower()  # model echoed back
+    # Remediation guidance present
+    assert "auto" in msg or "hybrid" in msg or "preselect" in msg
 
 
 @pytest.mark.asyncio
@@ -764,6 +769,10 @@ async def test_anthropic_provider_deferred_supported_via_mcp_toolsets() -> None:
         result = await client.generate(input=[{"role": "user", "content": "hi"}])
 
     assert result.content == "ok"
+    # After the existing assertions, confirm metadata records the mode AND
+    # the provider_deferred flag.
+    assert result.metadata["tool_loading"]["mode"] == "provider_deferred"
+    assert result.metadata["tool_loading"]["provider_deferred"] is True
 
 
 @pytest.mark.asyncio
@@ -792,7 +801,8 @@ async def test_auto_falls_back_when_provider_deferred_unsupported() -> None:
             input=[{"role": "user", "content": "extra_5"}]
         )
 
-    # auto must NOT escalate to provider_deferred for Gemini
     tl = result.metadata["tool_loading"]
-    assert tl["mode"] in {"hybrid", "preselect", "static_all"}
+    # Removed `static_all` — 40 tools > default max_selected_tools (8) so unreachable.
+    assert tl["mode"] in {"hybrid", "preselect"}
     assert tl["mode"] != "provider_deferred"
+    assert tl["provider_deferred"] is False

@@ -1021,8 +1021,10 @@ class LLMClient:
             effective_mode = self._resolve_auto_mode(model=model or self.model)
 
         # Validate explicit provider_deferred against actual provider support.
-        # `auto` callers reach this via _resolve_auto_mode, which already gates
-        # on supports_provider_tool_search — so they won't hit this branch.
+        # `auto` callers cannot reach this branch: _resolve_auto_mode only returns
+        # "provider_deferred" when supports_provider_tool_search is true (a strict
+        # subset of what this validation accepts), and falls back to "hybrid"
+        # otherwise.
         if (
             self.tool_loading_mode == "provider_deferred"
             and effective_mode == "provider_deferred"
@@ -1030,8 +1032,11 @@ class LLMClient:
             caps = self.provider.adapter.capabilities(model or self.model)
             if not (caps.supports_provider_tool_search or caps.supports_mcp_toolsets):
                 raise UnsupportedFeatureError(
-                    "provider_deferred tool loading is not supported by this "
-                    f"provider/model: {model or self.model}"
+                    f"tool_loading='provider_deferred' is not supported by "
+                    f"{model or self.model} (no tool_search or mcp_toolsets capability). "
+                    f"Use tool_loading='auto' (will fall back to 'hybrid'), "
+                    f"'hybrid', or 'preselect' instead, or switch to an OpenAI gpt-5.5+ "
+                    f"or Anthropic claude-* model."
                 )
 
         selection_plan: ToolSelectionPlan | None = None
@@ -1166,7 +1171,17 @@ class LLMClient:
                 # Explicit provider_deferred runs without a catalog/plan, but
                 # still surface the resolved mode so callers can introspect it.
                 md = dict(result.metadata or {})
-                md["tool_loading"] = {"mode": effective_mode}
+                md["tool_loading"] = dataclasses.asdict(
+                    ToolLoadingMetadata(
+                        mode=effective_mode,
+                        # provider_deferred=True signals the wire mode; Task 17/18 will
+                        # set this only when the adapter actually sends tool_search /
+                        # mcp_toolset config. Today, the label-only resolution still
+                        # marks it as the user's intent.
+                        provider_deferred=True,
+                        selection_reason="explicit provider_deferred mode",
+                    )
+                )
                 result.metadata = md
 
             # --- Hybrid recovery pass ---
