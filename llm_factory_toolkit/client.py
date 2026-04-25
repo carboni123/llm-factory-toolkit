@@ -32,6 +32,7 @@ from .mcp import (
     MCPCallCallback,
     MCPClientManager,
     MCPServer,
+    MCPServerStreamableHTTP,
     PersistentMCPClientManager,
 )
 from .providers import ProviderRouter
@@ -715,7 +716,9 @@ class LLMClient:
         await self.mcp_client.remove_server(name)
 
     @staticmethod
-    def _mcp_server_to_anthropic_config(server: Any) -> dict[str, Any] | None:
+    def _mcp_server_to_anthropic_config(
+        server: MCPServer,
+    ) -> dict[str, Any] | None:
         """Translate an MCPServer config to Anthropic's mcp_toolset wire format.
 
         Anthropic's hosted MCP connector expects entries shaped as:
@@ -725,9 +728,6 @@ class LLMClient:
         :class:`MCPServerStdio` instances which Anthropic's hosted
         connector cannot reach).
         """
-        # Lazy import to avoid circulars.
-        from .mcp import MCPServerStreamableHTTP
-
         if isinstance(server, MCPServerStreamableHTTP):
             return {
                 "type": "url",
@@ -1160,17 +1160,27 @@ class LLMClient:
             # definitions are merged in alongside via extra_tool_definitions).
             if isinstance(use_tools, (list, tuple)) and len(use_tools) > 0:
                 common_kwargs["deferred_tool_names"] = list(use_tools)
-            # Anthropic adapter consumes mcp_servers; OpenAI adapter ignores it.
-            # When the user has configured MCP servers via LLMClient(mcp_servers=...),
-            # surface their wire-format config to the provider_deferred path so
-            # Anthropic's mcp_toolset entry can be built. Stdio servers are
-            # silently skipped — Anthropic's hosted connector cannot reach them.
-            if self.mcp_client is not None:
+            # mcp_servers is Anthropic-specific wire format; only forward when the
+            # adapter actually consumes it (supports_mcp_toolsets). OpenAI's
+            # _call_api would otherwise leak this kwarg into client.responses.parse.
+            caps = self.provider.adapter.capabilities(model or self.model)
+            if caps.supports_mcp_toolsets and self.mcp_client is not None:
                 mcp_server_configs: list[dict[str, Any]] = []
+                dropped_stdio: list[str] = []
                 for srv in self.mcp_client.servers.values():
                     cfg = self._mcp_server_to_anthropic_config(srv)
                     if cfg:
                         mcp_server_configs.append(cfg)
+                    else:
+                        dropped_stdio.append(getattr(srv, "name", "<unnamed>"))
+                if dropped_stdio:
+                    logger.warning(
+                        "provider_deferred mode: %d MCP server(s) silently dropped "
+                        "(stdio transport not supported by Anthropic's hosted "
+                        "connector): %s",
+                        len(dropped_stdio),
+                        dropped_stdio,
+                    )
                 if mcp_server_configs:
                     common_kwargs["mcp_servers"] = mcp_server_configs
 

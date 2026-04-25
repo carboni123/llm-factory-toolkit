@@ -916,3 +916,183 @@ async def test_anthropic_provider_deferred_streaming_accepts_kwargs(monkeypatch)
     assert any(
         isinstance(t, dict) and t.get("type") == "mcp_toolset" for t in sent_tools
     )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end provider_deferred routing tests through LLMClient
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_deferred_does_not_leak_mcp_servers(monkeypatch) -> None:
+    """When client has MCP servers configured but adapter is OpenAI,
+    mcp_servers must NOT be forwarded into the OpenAI request kwargs."""
+    from llm_factory_toolkit.client import LLMClient
+    from llm_factory_toolkit.mcp import MCPServerStreamableHTTP
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    factory = ToolFactory()
+    for i in range(15):
+        factory.register_tool(
+            function=lambda: {},
+            name=f"tool_{i}",
+            description=f"tool {i}",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    client = LLMClient(
+        model="openai/gpt-5.5",  # supports tool_search → provider_deferred allowed
+        tool_factory=factory,
+        tool_loading="provider_deferred",
+        mcp_servers=[
+            MCPServerStreamableHTTP(
+                url="https://example/mcp",
+                name="demo",
+            )
+        ],
+    )
+
+    # Short-circuit MCP discovery so the test doesn't try to reach the URL.
+    client.mcp_client.get_tool_definitions = AsyncMock(return_value=[])  # type: ignore[union-attr]
+
+    captured: dict = {}
+
+    async def _fake_parse(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_text="ok",
+            output=[],
+            output_parsed=None,
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    fake_client = SimpleNamespace(
+        responses=SimpleNamespace(parse=_fake_parse, create=_fake_parse)
+    )
+    monkeypatch.setattr(
+        client.provider.adapter, "_get_client", lambda: fake_client
+    )
+
+    await client.generate(input=[{"role": "user", "content": "hi"}])
+
+    # Critical: mcp_servers must NOT be in the OpenAI request payload
+    assert "mcp_servers" not in captured
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_deferred_forwards_mcp_servers_end_to_end(
+    monkeypatch,
+) -> None:
+    """Through the LLMClient stack, Anthropic + provider_deferred + http MCP
+    server forwards a wire-format mcp_toolset entry to messages.create."""
+    from llm_factory_toolkit.client import LLMClient
+    from llm_factory_toolkit.mcp import MCPServerStreamableHTTP
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    factory = ToolFactory()
+    for i in range(15):
+        factory.register_tool(
+            function=lambda: {},
+            name=f"a_tool_{i}",
+            description=f"a tool {i}",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    client = LLMClient(
+        model="anthropic/claude-haiku-4-5",
+        tool_factory=factory,
+        tool_loading="provider_deferred",
+        mcp_servers=[
+            MCPServerStreamableHTTP(
+                url="https://example/mcp",
+                name="demo",
+            )
+        ],
+    )
+
+    # Short-circuit MCP discovery so the test doesn't try to reach the URL.
+    client.mcp_client.get_tool_definitions = AsyncMock(return_value=[])  # type: ignore[union-attr]
+
+    captured: dict = {}
+
+    async def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(create=_fake_create)
+    )
+    monkeypatch.setattr(
+        client.provider.adapter, "_get_client", lambda: fake_client
+    )
+
+    await client.generate(input=[{"role": "user", "content": "hi"}])
+
+    sent_tools = captured.get("tools") or []
+    toolset = [
+        t for t in sent_tools if isinstance(t, dict) and t.get("type") == "mcp_toolset"
+    ]
+    assert len(toolset) == 1
+    assert toolset[0].get("servers") == [
+        {"type": "url", "url": "https://example/mcp", "name": "demo"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_deferred_warns_on_dropped_stdio(
+    monkeypatch, caplog
+) -> None:
+    """Stdio MCP servers are silently dropped from Anthropic's mcp_toolset,
+    but a warning is logged so users notice."""
+    import logging
+
+    from llm_factory_toolkit.client import LLMClient
+    from llm_factory_toolkit.mcp import MCPServerStdio
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    factory = ToolFactory()
+    for i in range(15):
+        factory.register_tool(
+            function=lambda: {},
+            name=f"x_{i}",
+            description=f"x {i}",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    client = LLMClient(
+        model="anthropic/claude-haiku-4-5",
+        tool_factory=factory,
+        tool_loading="provider_deferred",
+        mcp_servers=[
+            MCPServerStdio(command="echo", args=["hello"], name="demo-stdio"),
+        ],
+    )
+
+    # Short-circuit MCP discovery so the test doesn't try to spawn the process.
+    client.mcp_client.get_tool_definitions = AsyncMock(return_value=[])  # type: ignore[union-attr]
+
+    async def _fake_create(**kwargs):
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(create=_fake_create)
+    )
+    monkeypatch.setattr(
+        client.provider.adapter, "_get_client", lambda: fake_client
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await client.generate(input=[{"role": "user", "content": "hi"}])
+
+    assert any(
+        "stdio" in record.message.lower() and "demo-stdio" in record.message
+        for record in caplog.records
+    )
