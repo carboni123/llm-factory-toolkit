@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from ..tools.tool_factory import ToolFactory
+from .capabilities import ProviderCapabilities
 from .openai import OpenAIAdapter
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,18 @@ class XAIAdapter(OpenAIAdapter):
 
     def _supports_reasoning_effort(self, model: str) -> bool:
         return False
+
+    def capabilities(self, model: str) -> ProviderCapabilities:
+        # xAI uses the OpenAI SDK with custom base_url, but does NOT support
+        # OpenAI's tool_search hosted feature.
+        return ProviderCapabilities(
+            supports_function_tools=True,
+            supports_tool_choice=True,
+            supports_provider_tool_search=False,
+            supports_hosted_mcp=False,
+            supports_strict_schema=False,
+            supports_parallel_tool_calls=True,
+        )
 
     def _build_tool_definitions(
         self, definitions: list[dict[str, Any]]

@@ -36,6 +36,7 @@ from ..tools.models import (
 from ..tools.session import ToolSession
 from ..tools.tool_factory import ToolFactory
 from ._util import strip_urls
+from .capabilities import ProviderCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,15 @@ class BaseProvider(abc.ABC):
     def _should_omit_temperature(self, model: str) -> bool:
         """Return ``True`` if *model* rejects the ``temperature`` param."""
         return False
+
+    def capabilities(self, model: str) -> ProviderCapabilities:
+        """Return the capability profile for *model*.
+
+        Default returns the safe minimum: function tools + tool_choice
+        supported, no provider-native tool search or MCP toolsets.
+        Adapters override to expose their full capability surface.
+        """
+        return ProviderCapabilities()
 
     # ------------------------------------------------------------------
     # Message helpers

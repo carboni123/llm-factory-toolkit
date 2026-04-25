@@ -23,6 +23,7 @@ from ._base import (
     ProviderToolCall,
     ToolResultMessage,
 )
+from .capabilities import OPENAI_TOOL_SEARCH_PREFIXES, ProviderCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,18 @@ class OpenAIAdapter(BaseProvider):
 
     def _should_omit_temperature(self, model: str) -> bool:
         return model.lower().startswith(_GPT5_PREFIXES)
+
+    def capabilities(self, model: str) -> ProviderCapabilities:
+        bare = model.split("/", 1)[-1]
+        tool_search = any(bare.startswith(p) for p in OPENAI_TOOL_SEARCH_PREFIXES)
+        return ProviderCapabilities(
+            supports_function_tools=True,
+            supports_tool_choice=True,
+            supports_provider_tool_search=tool_search,
+            supports_hosted_mcp=tool_search,
+            supports_strict_schema=True,
+            supports_parallel_tool_calls=True,
+        )
 
     def _supports_reasoning_effort(self, model: str) -> bool:
         return model.lower().startswith(_REASONING_PREFIXES)

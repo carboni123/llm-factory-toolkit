@@ -208,6 +208,17 @@ class ProviderRouter:
                 self.model,
             )
 
+    @property
+    def adapter(self) -> BaseProvider:
+        """Return the cached adapter for this router's default ``self.model``.
+
+        Convenience accessor — equivalent to ``self.get_adapter(self.model)[0]``.
+        Used by code that needs to inspect provider capabilities without
+        knowing or caring about the per-call model override.
+        """
+        adapter, _ = self.get_adapter(self.model)
+        return adapter
+
     def get_adapter(self, model: str) -> tuple[BaseProvider, str]:
         """Return ``(adapter, effective_model)`` for the given model string.
 

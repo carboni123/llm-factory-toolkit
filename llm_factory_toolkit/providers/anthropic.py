@@ -21,6 +21,7 @@ from ._base import (
     ProviderResponse,
     ProviderToolCall,
 )
+from .capabilities import ProviderCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,15 @@ class AnthropicAdapter(BaseProvider):
 
     def _supports_web_search(self) -> bool:
         return True
+
+    def capabilities(self, model: str) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            supports_function_tools=True,
+            supports_tool_choice=True,
+            supports_mcp_toolsets=True,
+            supports_strict_schema=False,
+            supports_parallel_tool_calls=True,
+        )
 
     # ------------------------------------------------------------------
     # Message conversion: Chat Completions → Anthropic Messages API

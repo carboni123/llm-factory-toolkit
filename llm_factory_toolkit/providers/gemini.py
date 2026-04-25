@@ -23,6 +23,7 @@ from ._base import (
     ProviderResponse,
     ProviderToolCall,
 )
+from .capabilities import ProviderCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,13 @@ class GeminiAdapter(BaseProvider):
 
     def _supports_web_search(self) -> bool:
         return True
+
+    def capabilities(self, model: str) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            supports_function_tools=True,
+            supports_tool_choice=True,
+            supports_parallel_tool_calls=True,
+        )
 
     def _is_retryable_error(self, error: Exception) -> bool:
         # google-genai raises google.genai.errors.ClientError or
