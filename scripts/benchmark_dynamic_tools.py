@@ -43,6 +43,7 @@ from llm_factory_toolkit.tools import (  # noqa: E402
     ToolFactory,
     ToolSession,
 )
+from llm_factory_toolkit.tools.meta_tools import META_TOOL_NAMES  # noqa: E402
 from llm_factory_toolkit.tools.models import ToolExecutionResult  # noqa: E402
 
 # Import the CRM simulation helpers from the test suite.
@@ -144,6 +145,16 @@ class BenchmarkResult:
     # Repetitive loop detection
     repetition_detected: bool = False
     soft_warning_injected: bool = False
+    # v2 tool-loading selection metrics (only populated for non-agentic
+    # modes that surface ``result.metadata["tool_loading"]``)
+    selection_latency_ms: int | None = None
+    selected_tools_count: int | None = None
+    selection_precision: float | None = None
+    selection_recall: float | None = None
+    business_first: bool | None = None
+    recovery_used: bool = False
+    recovery_success: bool | None = None
+    provider_deferred_used: bool = False
 
 
 @dataclass
@@ -1052,6 +1063,7 @@ async def run_case(
         all_messages: list[dict] = []
         total_tokens = 0
         last_content = ""
+        last_metadata: dict[str, Any] = {}
 
         if case.multi_turn:
             # Multi-turn: messages is a list of message lists.
@@ -1073,6 +1085,7 @@ async def run_case(
                 if result.usage:
                     total_tokens += result.usage.get("total_tokens", 0)
                 last_content = str(result.content or "")
+                last_metadata = dict(result.metadata or {})
         else:
             # Single turn
             messages = [
@@ -1095,6 +1108,7 @@ async def run_case(
             if result.usage:
                 total_tokens = result.usage.get("total_tokens", 0)
             last_content = str(result.content or "")
+            last_metadata = dict(result.metadata or {})
 
         duration_ms = int((time.time() - start) * 1000)
 
@@ -1139,6 +1153,43 @@ async def run_case(
         bench_result.trace = trace
         bench_result.repetition_detected = repetition_detected
         bench_result.soft_warning_injected = soft_warning_injected
+
+        # v2 tool_loading metrics (only present for non-agentic, non-static modes)
+        tl = last_metadata.get("tool_loading", {}) if last_metadata else {}
+        if tl:
+            bench_result.selection_latency_ms = tl.get("selector_latency_ms")
+            bench_result.selected_tools_count = len(tl.get("selected_tools", []))
+            bench_result.recovery_used = tl.get("recovery_used", False)
+            bench_result.recovery_success = tl.get("recovery_success")
+            bench_result.provider_deferred_used = tl.get("provider_deferred", False)
+
+            # Selection precision: selected tools that were actually called
+            selected = set(tl.get("selected_tools", []))
+            business_called = {
+                n for n in all_tool_names_called if n not in META_TOOL_NAMES
+            }
+            if selected:
+                bench_result.selection_precision = round(
+                    len(selected & business_called) / len(selected), 3
+                )
+
+            # Selection recall: expected tools that were selected
+            expected = set(case.expect_tools_loaded)
+            if expected:
+                bench_result.selection_recall = round(
+                    len(expected & selected) / len(expected), 3
+                )
+
+            # business_first: was the first non-meta call to a selected tool?
+            first_business = next(
+                (n for n in all_tool_names_called if n not in META_TOOL_NAMES),
+                None,
+            )
+            if first_business is not None:
+                bench_result.business_first = (
+                    first_business in selected or len(selected) == 0
+                )
+
         return bench_result
 
     except Exception as e:
@@ -1439,6 +1490,83 @@ def format_efficiency_analysis(results: list[BenchmarkResult]) -> str:
     return "\n".join(lines)
 
 
+def _format_selection_metrics(r: BenchmarkResult) -> str:
+    """Format v2 selection metrics for a single case (markdown).
+
+    Returns an empty string when the case has no v2 metrics (legacy
+    ``agentic`` runs, or static modes that don't surface a plan).
+    """
+    if r.selected_tools_count is None:
+        return ""
+    lines = ["**Selection metrics:**"]
+    lines.append(f"- selected_tools_count: {r.selected_tools_count}")
+    if r.selection_latency_ms is not None:
+        lines.append(f"- selection_latency_ms: {r.selection_latency_ms}")
+    if r.selection_precision is not None:
+        lines.append(f"- precision: {r.selection_precision:.3f}")
+    if r.selection_recall is not None:
+        lines.append(f"- recall: {r.selection_recall:.3f}")
+    if r.business_first is not None:
+        lines.append(f"- business_first: {r.business_first}")
+    if r.recovery_used:
+        lines.append(
+            f"- recovery_used: True (success={r.recovery_success})"
+        )
+    if r.provider_deferred_used:
+        lines.append("- provider_deferred: True")
+    return "\n".join(lines)
+
+
+def _format_selection_summary(results: list[BenchmarkResult]) -> str:
+    """Aggregate selection metrics across all cases that have them."""
+    relevant = [r for r in results if r.selected_tools_count is not None]
+    if not relevant:
+        return ""
+
+    n = len(relevant)
+    lines = ["", "## Selection Metrics Summary", ""]
+    lines.append(f"Cases with selection metrics: {n}")
+
+    avg_latency = sum(r.selection_latency_ms or 0 for r in relevant) / n
+    lines.append(f"Avg selection latency (ms): {avg_latency:.1f}")
+
+    avg_count = sum(r.selected_tools_count or 0 for r in relevant) / n
+    lines.append(f"Avg selected tools / case: {avg_count:.2f}")
+
+    precs = [
+        r.selection_precision for r in relevant if r.selection_precision is not None
+    ]
+    if precs:
+        lines.append(f"Avg precision: {sum(precs) / len(precs):.3f}")
+
+    recs = [r.selection_recall for r in relevant if r.selection_recall is not None]
+    if recs:
+        lines.append(f"Avg recall: {sum(recs) / len(recs):.3f}")
+
+    bf = [r.business_first for r in relevant if r.business_first is not None]
+    if bf:
+        rate = sum(1 for v in bf if v) / len(bf)
+        lines.append(f"business_first_rate: {rate:.2%}")
+
+    zero_meta = (
+        sum(
+            1
+            for r in relevant
+            if r.selected_tools_count is not None and not r.recovery_used
+        )
+        / n
+    )
+    lines.append(f"zero_meta_case_rate: {zero_meta:.2%}")
+
+    rec = sum(1 for r in relevant if r.recovery_used)
+    if rec:
+        lines.append(f"recovery_used cases: {rec}/{n}")
+        success = sum(1 for r in relevant if r.recovery_success is True)
+        lines.append(f"recovery_success cases: {success}/{rec}")
+
+    return "\n".join(lines)
+
+
 def format_markdown_report(
     results: list[BenchmarkResult], include_traces: bool = False
 ) -> str:
@@ -1594,6 +1722,11 @@ def format_markdown_report(
         if r.response_text:
             preview = r.response_text[:200].replace("\n", " ")
             lines.append(f"- **Response:** {preview}...")
+
+        selection_block = _format_selection_metrics(r)
+        if selection_block:
+            lines.append("")
+            lines.append(selection_block)
         lines.append("")
 
     # Tool call traces
@@ -1621,6 +1754,11 @@ def format_markdown_report(
             lines.append("")
             lines.append("</details>")
             lines.append("")
+
+    selection_summary = _format_selection_summary(results)
+    if selection_summary:
+        lines.append(selection_summary)
+        lines.append("")
 
     return "\n".join(lines)
 
