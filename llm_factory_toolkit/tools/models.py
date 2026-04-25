@@ -36,6 +36,11 @@ class GenerationResult:
         cost_usd: Estimated total cost in USD accumulated across all LLM
             calls in the agentic loop.  ``None`` if pricing is unknown for
             the model.
+        metadata: Optional per-result diagnostics dict.  Currently populated
+            with a ``"tool_loading"`` block when the preselect tool-loading
+            mode ran a selector (mode, selected_tools, candidate_count,
+            selector_latency_ms, recovery_used, diagnostics, etc.).
+            ``None`` when no diagnostics were produced.
 
     Supports tuple unpacking for backwards compatibility::
 
@@ -48,6 +53,7 @@ class GenerationResult:
     messages: list[dict[str, Any]] | None = None
     usage: dict[str, int] | None = None
     cost_usd: float | None = None
+    metadata: dict[str, Any] | None = None
 
     def __iter__(self) -> Iterator[Any]:
         """Yield items so callers can unpack the result like a tuple."""

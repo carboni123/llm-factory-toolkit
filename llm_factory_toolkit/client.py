@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import (
     Any,
+    ClassVar,
     Literal,
     overload,
 )
@@ -1100,6 +1101,29 @@ class LLMClient:
                 file_search=file_search,
             )
 
+            # Surface tool_loading diagnostics on the result
+            if selection_plan is not None:
+                md = dict(result.metadata or {})
+                counts = self._count_tool_call_kinds(result.messages or [])
+                md["tool_loading"] = {
+                    "mode": self.tool_loading_mode,
+                    "selected_tools": list(selection_plan.selected_tools),
+                    "candidate_count": len(selection_plan.candidates),
+                    "selector_confidence": selection_plan.confidence,
+                    "selector_latency_ms": int(
+                        selection_plan.diagnostics.get("latency_ms", 0)
+                    ),
+                    "provider_deferred": False,
+                    "recovery_used": False,
+                    "recovery_success": None,
+                    "recovery_calls": 0,
+                    "meta_tool_calls": counts["meta"],
+                    "business_tool_calls": counts["business"],
+                    "selection_reason": selection_plan.reason,
+                    "diagnostics": dict(selection_plan.diagnostics),
+                }
+                result.metadata = md
+
             # --- Cache store ---
             if _cache_key is not None and cache is not None:
                 cache.set(_cache_key, result)
@@ -1424,6 +1448,40 @@ class LLMClient:
             merged[-1] = combined
 
         return merged
+
+    _META_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "browse_toolkit",
+            "load_tools",
+            "load_tool_group",
+            "unload_tool_group",
+            "unload_tools",
+            "find_tools",
+        }
+    )
+
+    @staticmethod
+    def _count_tool_call_kinds(messages: list[dict[str, Any]]) -> dict[str, int]:
+        """Count business vs meta tool calls in a transcript.
+
+        Walks assistant messages with ``tool_calls``. Each call is classified
+        as ``"meta"`` (browse/load/unload meta-tools) or ``"business"`` (any
+        other registered tool).
+        """
+        meta = 0
+        business = 0
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            for tc in msg.get("tool_calls") or []:
+                name = (tc.get("function") or {}).get("name") or tc.get("name")
+                if not name:
+                    continue
+                if name in LLMClient._META_TOOL_NAMES:
+                    meta += 1
+                else:
+                    business += 1
+        return {"meta": meta, "business": business}
 
     @staticmethod
     def _extract_text_content(content: Any) -> str:
