@@ -898,11 +898,17 @@ class BaseProvider(abc.ABC):
         use_tools: Sequence[str] | None,
         tool_session: ToolSession | None,
     ) -> Sequence[str] | None:
-        """Return the effective tool list, considering dynamic session."""
+        """Return the effective tool list, considering dynamic session.
+
+        When a *tool_session* is supplied (even if its active set is empty),
+        its visibility is authoritative — an explicit empty session means
+        "no business tools visible", not "fall back to use_tools". This is
+        important for v2 ``preselect`` mode where the selector may
+        legitimately pick zero tools and the user expects the empty result
+        to be honoured.
+        """
         if tool_session is not None:
-            active = tool_session.list_active()
-            if active:
-                return active
+            return tool_session.list_active()
         return use_tools
 
     def _prepare_native_tools(

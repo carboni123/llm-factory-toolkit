@@ -34,7 +34,7 @@ class ToolLoadingConfig:
 
     mode: ToolLoadingMode = "auto"
     max_selected_tools: int = 8
-    min_selection_score: float = 0.35
+    min_selection_score: float = 0.15
     selection_budget_tokens: int | None = None
     allow_recovery: bool = True
     max_recovery_discovery_calls: int = 1

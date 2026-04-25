@@ -15,7 +15,7 @@ class TestToolLoadingConfig:
         cfg = ToolLoadingConfig()
         assert cfg.mode == "auto"
         assert cfg.max_selected_tools == 8
-        assert cfg.min_selection_score == 0.35
+        assert cfg.min_selection_score == 0.15
         assert cfg.selection_budget_tokens is None
         assert cfg.allow_recovery is True
         assert cfg.max_recovery_discovery_calls == 1

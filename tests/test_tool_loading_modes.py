@@ -332,7 +332,7 @@ class TestPreselect:
         active = set(captured[0].list_active())
         # Core remains visible
         assert "call_human" in active
-        # Empty min_selection_score (default 0.35) should drop weak matches
+        # min_selection_score (default 0.15) should drop weak matches
         # but core stays
 
     async def test_provider_field_uses_router_resolution(self) -> None:
@@ -806,3 +806,72 @@ async def test_auto_falls_back_when_provider_deferred_unsupported() -> None:
     assert tl["mode"] in {"hybrid", "preselect"}
     assert tl["mode"] != "provider_deferred"
     assert tl["provider_deferred"] is False
+
+
+@pytest.mark.asyncio
+async def test_preselect_with_no_match_does_not_leak_all_tools(monkeypatch) -> None:
+    """When the selector returns empty, the session is empty and the model
+    sees zero business tools (NOT all registered ones via use_tools fallback).
+    """
+    from llm_factory_toolkit.tools.selection import ToolSelectionPlan
+
+    f = ToolFactory()
+    for name in ("alpha", "beta", "gamma"):
+        f.register_tool(
+            function=lambda: {},
+            name=name,
+            description=f"{name} tool",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    # Force the selector to return empty regardless of input
+    class _EmptySelector:
+        async def select_tools(self, input, config):  # type: ignore[no-untyped-def]
+            return ToolSelectionPlan(mode=config.mode, selected_tools=[])
+
+    client = LLMClient(
+        model="openai/gpt-4o-mini",
+        tool_factory=f,
+        tool_loading="preselect",
+        tool_selector=_EmptySelector(),  # type: ignore[arg-type]
+    )
+
+    captured_tool_lists: list = []
+
+    async def _capture(**kwargs):
+        # Provider receives use_tools through the BaseProvider loop's
+        # _get_effective_tools call, but we can inspect the session.
+        session = kwargs.get("tool_session")
+        if session is not None:
+            captured_tool_lists.append(list(session.list_active()))
+        return GenerationResult(content="ok")
+
+    with patch.object(client.provider, "generate", side_effect=_capture):
+        await client.generate(input=[{"role": "user", "content": "do something"}])
+
+    # Session must be empty (no leak to all 3 tools)
+    assert captured_tool_lists == [[]]
+
+
+def test_get_effective_tools_returns_empty_when_session_is_empty() -> None:
+    """BaseProvider._get_effective_tools honours an empty session as authoritative."""
+    from llm_factory_toolkit.providers._base import BaseProvider
+    from llm_factory_toolkit.tools.session import ToolSession
+
+    class _MinAdapter(BaseProvider):
+        async def _call_api(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+
+        async def _call_api_stream(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            raise NotImplementedError
+            yield  # noqa
+
+        def _build_tool_definitions(self, definitions):  # type: ignore[no-untyped-def]
+            return []
+
+    adapter = _MinAdapter()
+    empty_session = ToolSession()
+    # Even with use_tools=() (default = all), empty session wins
+    assert adapter._get_effective_tools((), empty_session) == []
+    # And with no session, use_tools is returned
+    assert adapter._get_effective_tools(("a", "b"), None) == ("a", "b")
