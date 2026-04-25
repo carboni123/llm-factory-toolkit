@@ -610,7 +610,7 @@ class TestClientSearchAgentModel:
             tool_factory=factory,
             dynamic_tool_loading="openai/gpt-4o-mini",
         )
-        session = client._build_dynamic_session()
+        session = client._build_agentic_session()
         assert session.is_active("find_tools")
         assert not session.is_active("browse_toolkit")
         assert session.is_active("load_tools")
@@ -623,7 +623,7 @@ class TestClientSearchAgentModel:
             tool_factory=factory,
             dynamic_tool_loading=True,
         )
-        session = client._build_dynamic_session()
+        session = client._build_agentic_session()
         assert not session.is_active("find_tools")
         assert session.is_active("browse_toolkit")
 

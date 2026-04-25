@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import (
     Any,
@@ -33,6 +34,7 @@ from .mcp import (
 )
 from .providers import ProviderRouter
 from .providers._base import DEFAULT_MAX_TOOL_ITERATIONS
+from .providers._registry import resolve_provider_key
 from .tools.catalog import InMemoryToolCatalog
 from .tools.loading_config import (
     ToolLoadingConfig,
@@ -383,7 +385,7 @@ class LLMClient:
     # Dynamic tool loading
     # ------------------------------------------------------------------
 
-    def _build_dynamic_session(self) -> ToolSession:
+    def _build_agentic_session(self) -> ToolSession:
         """Create a fresh :class:`ToolSession` with core + meta tools loaded."""
         session = ToolSession()
         # Use find_tools (semantic) OR browse_toolkit (keyword) — not both.
@@ -417,22 +419,22 @@ class LLMClient:
         if catalog is None:
             return None
 
-        # Latest user text — best-effort.
+        # Latest user text — best-effort, with multi-modal support.
         latest = ""
         for msg in reversed(input):
             if msg.get("role") == "user":
-                content = msg.get("content")
-                if isinstance(content, str):
-                    latest = content
+                text = self._extract_text_content(msg.get("content"))
+                if text:
+                    latest = text
                     break
 
-        # System prompt (best-effort)
-        system_prompt = next(
-            (m.get("content") for m in input if m.get("role") == "system"),
-            None,
+        # System prompt (best-effort) — same helper for multi-modal safety.
+        system_msg = next((m for m in input if m.get("role") == "system"), None)
+        system_prompt: str | None = (
+            self._extract_text_content(system_msg.get("content")) or None
+            if system_msg
+            else None
         )
-        if not isinstance(system_prompt, str):
-            system_prompt = None
 
         # Normalize use_tools — empty tuple/list means "all", not a filter
         use_tools_list: list[str] | None = None
@@ -447,12 +449,11 @@ class LLMClient:
             active_tools=[],
             core_tools=list(self.core_tools),
             use_tools=use_tools_list,
-            provider=self.model.split("/")[0] if "/" in self.model else "openai",
+            provider=resolve_provider_key(self.model),
             model=self.model,
             token_budget=self.tool_loading_config.selection_budget_tokens,
             metadata={},
         )
-        import time
 
         start = time.monotonic()
         plan = await self.tool_selector.select_tools(
@@ -472,7 +473,9 @@ class LLMClient:
         if plan is None:
             return tool_session
         session = tool_session or ToolSession()
-        apply_selection_plan(session, plan)
+        failed = apply_selection_plan(session, plan)
+        if failed:
+            plan.diagnostics["failed_loads"] = list(failed)
         return session
 
     # ------------------------------------------------------------------
@@ -982,7 +985,7 @@ class LLMClient:
         if tool_session is None:
             if self.tool_loading_mode == "agentic":
                 # Legacy behavior
-                tool_session = self._build_dynamic_session()
+                tool_session = self._build_agentic_session()
             elif self.tool_loading_mode in {"preselect", "hybrid"}:
                 selection_plan = await self._build_tool_selection_plan(
                     input=input, use_tools=use_tools
@@ -1421,6 +1424,28 @@ class LLMClient:
             merged[-1] = combined
 
         return merged
+
+    @staticmethod
+    def _extract_text_content(content: Any) -> str:
+        """Extract user-visible text from a message ``content`` field.
+
+        Handles three shapes:
+            - ``str`` -> return as-is.
+            - ``list[dict]`` (OpenAI multi-modal / Anthropic content blocks) ->
+              concatenate every dict's ``"text"`` value.
+            - anything else -> empty string.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return " ".join(parts)
+        return ""
 
     @staticmethod
     def _merge_message_content(first: Any, second: Any) -> Any:

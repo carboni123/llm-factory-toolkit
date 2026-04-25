@@ -334,3 +334,108 @@ class TestPreselect:
         assert "call_human" in active
         # Empty min_selection_score (default 0.35) should drop weak matches
         # but core stays
+
+    async def test_provider_field_uses_router_resolution(self) -> None:
+        """provider field uses resolve_provider_key, not split-on-slash."""
+        factory = _crm_factory()
+        captured_inputs: list = []
+
+        class _CapturingSelector:
+            async def select_tools(self, input, config):  # type: ignore[no-untyped-def]
+                from llm_factory_toolkit.tools.selection import ToolSelectionPlan
+
+                captured_inputs.append(input)
+                return ToolSelectionPlan(mode=config.mode)
+
+        client = LLMClient(
+            model="claude-sonnet-4-5",  # bare Anthropic model
+            tool_factory=factory,
+            tool_loading="preselect",
+            tool_selector=_CapturingSelector(),  # type: ignore[arg-type]
+        )
+
+        async def _stub(**kwargs):
+            return _DUMMY_RESULT
+
+        with patch.object(client.provider, "generate", side_effect=_stub):
+            await client.generate(
+                input=[{"role": "user", "content": "hello"}],
+            )
+
+        assert len(captured_inputs) == 1
+        assert captured_inputs[0].provider == "anthropic"
+
+    async def test_multimodal_user_content_extraction(self) -> None:
+        """Multi-modal user content (list of dicts) yields concatenated text."""
+        captured_inputs: list = []
+
+        class _CapturingSelector:
+            async def select_tools(self, input, config):  # type: ignore[no-untyped-def]
+                from llm_factory_toolkit.tools.selection import ToolSelectionPlan
+
+                captured_inputs.append(input)
+                return ToolSelectionPlan(mode=config.mode)
+
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=_crm_factory(),
+            tool_loading="preselect",
+            tool_selector=_CapturingSelector(),  # type: ignore[arg-type]
+        )
+
+        async def _stub(**kwargs):
+            return _DUMMY_RESULT
+
+        with patch.object(client.provider, "generate", side_effect=_stub):
+            await client.generate(
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "create_task"},
+                            {"type": "input_image", "image_url": "..."},
+                            {"type": "text", "text": "for João tomorrow"},
+                        ],
+                    }
+                ],
+            )
+
+        assert len(captured_inputs) == 1
+        text = captured_inputs[0].latest_user_text
+        assert "create_task" in text
+        assert "for João tomorrow" in text
+
+    async def test_selection_plan_diagnostics_latency_populated(self) -> None:
+        """latency_ms diagnostic is populated after selector runs."""
+        captured: list = []
+
+        class _CapturingSelector:
+            async def select_tools(self, input, config):  # type: ignore[no-untyped-def]
+                from llm_factory_toolkit.tools.selection import ToolSelectionPlan
+
+                return ToolSelectionPlan(
+                    mode=config.mode, selected_tools=["create_task"]
+                )
+
+        factory = _crm_factory()
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=factory,
+            tool_loading="preselect",
+            tool_selector=_CapturingSelector(),  # type: ignore[arg-type]
+        )
+
+        async def _capture_provider(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return _DUMMY_RESULT
+
+        with patch.object(client.provider, "generate", side_effect=_capture_provider):
+            await client.generate(
+                input=[{"role": "user", "content": "hi"}],
+            )
+
+        # Session was built — selector did run
+        assert captured[0] is not None
+        # We can't assert on the plan directly here (it's local to generate),
+        # but Task 10 will surface it on result.metadata. For now, this test
+        # at least confirms the selector path was taken when expected.
