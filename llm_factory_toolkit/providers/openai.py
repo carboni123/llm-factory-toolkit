@@ -123,6 +123,22 @@ class OpenAIAdapter(BaseProvider):
             supports_parallel_tool_calls=True,
         )
 
+    @staticmethod
+    def _inject_tool_search(
+        tools: list[dict[str, Any]] | None,
+        deferred_tool_names: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        """Append OpenAI ``tool_search`` config to the tools list.
+
+        Used by ``provider_deferred`` mode to delegate tool selection to the
+        provider rather than the local selector. The shape is provisional
+        until OpenAI publishes the final SDK type for this entry.
+        """
+        entry: dict[str, Any] = {"type": "tool_search"}
+        if deferred_tool_names:
+            entry["filters"] = {"names": list(deferred_tool_names)}
+        return list(tools or []) + [entry]
+
     def _supports_reasoning_effort(self, model: str) -> bool:
         return model.lower().startswith(_REASONING_PREFIXES)
 
@@ -663,10 +679,7 @@ class OpenAIAdapter(BaseProvider):
         # ignore the kwargs.
         request_tools: list[dict[str, Any]] | None
         if provider_deferred:
-            tool_search_entry: dict[str, Any] = {"type": "tool_search"}
-            if deferred_tool_names:
-                tool_search_entry["filters"] = {"names": list(deferred_tool_names)}
-            request_tools = list(tools or []) + [tool_search_entry]
+            request_tools = self._inject_tool_search(tools, deferred_tool_names)
         else:
             request_tools = tools
 
@@ -751,10 +764,7 @@ class OpenAIAdapter(BaseProvider):
         # cleanly so the shared streaming loop doesn't raise TypeError.
         request_tools: list[dict[str, Any]] | None
         if provider_deferred:
-            tool_search_entry: dict[str, Any] = {"type": "tool_search"}
-            if deferred_tool_names:
-                tool_search_entry["filters"] = {"names": list(deferred_tool_names)}
-            request_tools = list(tools or []) + [tool_search_entry]
+            request_tools = self._inject_tool_search(tools, deferred_tool_names)
         else:
             request_tools = tools
 

@@ -374,12 +374,10 @@ async def test_openai_call_api_maps_sdk_error_to_provider_error(
 
 
 @pytest.mark.asyncio
-async def test_openai_provider_deferred_passes_tool_search_config() -> None:
+async def test_openai_provider_deferred_passes_tool_search_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """When provider_deferred=True is requested, the adapter sends tool_search."""
-    from types import SimpleNamespace
-    from llm_factory_toolkit.providers.openai import OpenAIAdapter
-    from llm_factory_toolkit.tools.tool_factory import ToolFactory
-
     adapter = OpenAIAdapter(api_key="sk-test", tool_factory=ToolFactory())
 
     captured: dict = {}
@@ -404,7 +402,7 @@ async def test_openai_provider_deferred_passes_tool_search_config() -> None:
             )
 
     fake_client = SimpleNamespace(responses=_FakeResponses())
-    adapter._async_client = fake_client  # type: ignore[attr-defined]
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
     await adapter._call_api(
         model="gpt-5.5",
@@ -430,12 +428,10 @@ async def test_openai_provider_deferred_passes_tool_search_config() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_provider_deferred_omits_tool_search_when_not_set() -> None:
+async def test_openai_provider_deferred_omits_tool_search_when_not_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Without provider_deferred, no tool_search entry is sent."""
-    from types import SimpleNamespace
-    from llm_factory_toolkit.providers.openai import OpenAIAdapter
-    from llm_factory_toolkit.tools.tool_factory import ToolFactory
-
     adapter = OpenAIAdapter(api_key="sk-test", tool_factory=ToolFactory())
     captured: dict = {}
 
@@ -457,7 +453,8 @@ async def test_openai_provider_deferred_omits_tool_search_when_not_set() -> None
                 usage=SimpleNamespace(input_tokens=1, output_tokens=1),
             )
 
-    adapter._async_client = SimpleNamespace(responses=_FakeResponses())  # type: ignore[attr-defined]
+    fake_client = SimpleNamespace(responses=_FakeResponses())
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
 
     await adapter._call_api(
         model="gpt-5.5",
@@ -471,3 +468,43 @@ async def test_openai_provider_deferred_omits_tool_search_when_not_set() -> None
         t for t in tools if isinstance(t, dict) and t.get("type") == "tool_search"
     ]
     assert tool_search_entries == []
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_deferred_streaming_accepts_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streaming path accepts provider_deferred kwargs without TypeError.
+
+    Provider-deferred + streaming is not exercised in production today,
+    but the kwargs must flow through cleanly so the shared streaming
+    loop doesn't blow up if a caller enables both.
+    """
+    adapter = OpenAIAdapter(api_key="sk-test", tool_factory=ToolFactory())
+    captured: dict = {}
+
+    # Empty stream — terminates immediately
+    fake_stream = _FakeAsyncStream([])
+
+    class _FakeResponses:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return fake_stream
+
+    fake_client = SimpleNamespace(responses=_FakeResponses())
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
+
+    # Drive the stream — should not raise
+    stream = adapter._call_api_stream(
+        model="gpt-5.5",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        provider_deferred=True,
+        deferred_tool_names=["create_task"],
+    )
+    async for _ in stream:
+        pass
+
+    # Confirm tool_search was forwarded
+    tools = captured.get("tools") or []
+    assert any(isinstance(t, dict) and t.get("type") == "tool_search" for t in tools)

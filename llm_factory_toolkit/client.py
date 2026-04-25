@@ -1132,12 +1132,11 @@ class LLMClient:
         # reached for capable providers.
         if effective_mode == "provider_deferred":
             common_kwargs["provider_deferred"] = True
+            # When no explicit use_tools filter, omit deferred_tool_names so the
+            # provider's tool_search includes everything (including MCP tools whose
+            # definitions are merged in alongside via extra_tool_definitions).
             if isinstance(use_tools, (list, tuple)) and len(use_tools) > 0:
                 common_kwargs["deferred_tool_names"] = list(use_tools)
-            else:
-                common_kwargs["deferred_tool_names"] = list(
-                    self.tool_factory.available_tool_names
-                )
 
         # --- Cache lookup (non-streaming, no tools) ---
         _cache_key: str | None = None
