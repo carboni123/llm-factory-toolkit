@@ -42,8 +42,13 @@ class XAIAdapter(OpenAIAdapter):
         return False
 
     def capabilities(self, model: str) -> ProviderCapabilities:
-        # xAI uses the OpenAI SDK with custom base_url, but does NOT support
-        # OpenAI's tool_search hosted feature.
+        # xAI uses the OpenAI SDK with a custom base_url, but its REMOTE FEATURE
+        # SURFACE is distinct from OpenAI's. We deliberately do NOT inherit
+        # OpenAIAdapter.capabilities() because:
+        #   - xAI's API does not support OpenAI's hosted tool_search / hosted MCP.
+        #   - xAI rejects the OpenAI-style strict-mode JSON Schema (this is why
+        #     XAIAdapter._build_tool_definitions strips `strict` from definitions).
+        # Capabilities describe the remote API, not the local SDK shape.
         return ProviderCapabilities(
             supports_function_tools=True,
             supports_tool_choice=True,
