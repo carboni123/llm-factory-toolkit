@@ -439,3 +439,135 @@ class TestPreselect:
         # We can't assert on the plan directly here (it's local to generate),
         # but Task 10 will surface it on result.metadata. For now, this test
         # at least confirms the selector path was taken when expected.
+
+
+@pytest.mark.asyncio
+class TestAutoMode:
+    async def test_auto_small_catalog_picks_static_all(self) -> None:
+        """auto + small catalog (<=8 tools) → static_all (no auto session)."""
+        f = ToolFactory()
+        for i in range(5):
+            f.register_tool(
+                function=lambda: {},
+                name=f"t{i}",
+                description=f"tool {i}",
+                parameters={"type": "object", "properties": {}},
+            )
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=f,
+            tool_loading="auto",
+        )
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return GenerationResult(content="ok")
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            result = await client.generate(
+                input=[{"role": "user", "content": "hi"}]
+            )
+
+        # static_all means no auto session
+        assert captured[0] is None
+        # No tool_loading metadata for static_all
+        assert (
+            result.metadata is None
+            or "tool_loading" not in (result.metadata or {})
+        )
+
+    async def test_auto_large_catalog_picks_hybrid(self) -> None:
+        """auto + large catalog + non-tool-search provider → hybrid."""
+        f = ToolFactory()
+        for i in range(50):
+            f.register_tool(
+                function=lambda: {},
+                name=f"tool_{i:03d}",
+                description=f"tool {i} description",
+                parameters={"type": "object", "properties": {}},
+                tags=[f"tag_{i}"],
+            )
+        client = LLMClient(
+            model="openai/gpt-4o-mini",  # gpt-4o has no provider tool_search
+            tool_factory=f,
+            tool_loading="auto",
+        )
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return GenerationResult(content="ok")
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            result = await client.generate(
+                input=[{"role": "user", "content": "tool_001 please"}]
+            )
+
+        # hybrid resolved → session built with selected + core
+        assert captured[0] is not None
+        # Metadata records the resolved mode (hybrid), NOT 'auto'
+        assert result.metadata["tool_loading"]["mode"] == "hybrid"
+
+    async def test_auto_with_tool_search_capable_model_picks_provider_deferred(
+        self,
+    ) -> None:
+        """auto + provider supports tool_search → provider_deferred."""
+        # Need a 50+ tool catalog (>8 to escape static_all branch)
+        f = ToolFactory()
+        for i in range(20):
+            f.register_tool(
+                function=lambda: {},
+                name=f"tool_{i:02d}",
+                description=f"tool {i}",
+                parameters={"type": "object", "properties": {}},
+            )
+        # gpt-5.5 supports tool_search per OPENAI_TOOL_SEARCH_PREFIXES
+        client = LLMClient(
+            model="openai/gpt-5.5",
+            tool_factory=f,
+            tool_loading="auto",
+        )
+        captured: list = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs.get("tool_session"))
+            return GenerationResult(content="ok")
+
+        with patch.object(client.provider, "generate", side_effect=_capture):
+            result = await client.generate(
+                input=[{"role": "user", "content": "tool_05 please"}]
+            )
+
+        # provider_deferred resolved
+        assert result.metadata["tool_loading"]["mode"] == "provider_deferred"
+
+    async def test_auto_metadata_records_resolved_mode_not_auto(self) -> None:
+        """Diagnostics report the RESOLVED mode, not 'auto'."""
+        f = ToolFactory()
+        for i in range(50):
+            f.register_tool(
+                function=lambda: {},
+                name=f"x_{i}",
+                description=f"x {i}",
+                parameters={"type": "object", "properties": {}},
+            )
+        client = LLMClient(
+            model="openai/gpt-4o-mini",
+            tool_factory=f,
+            tool_loading="auto",
+        )
+
+        async def _fake(**kwargs):
+            return GenerationResult(content="done")
+
+        with patch.object(client.provider, "generate", side_effect=_fake):
+            result = await client.generate(
+                input=[{"role": "user", "content": "hello"}]
+            )
+
+        assert result.metadata["tool_loading"]["mode"] in {
+            "hybrid", "preselect", "provider_deferred", "static_all"
+        }
+        # Crucially: not 'auto'
+        assert result.metadata["tool_loading"]["mode"] != "auto"

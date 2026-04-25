@@ -413,15 +413,33 @@ class LLMClient:
         session.load(initial)
         return session
 
+    def _resolve_auto_mode(self, *, model: str) -> ToolLoadingMode:
+        """Translate ``auto`` into a concrete mode for this client + catalog.
+
+        Decision table:
+            - ``<=8`` tools in catalog → ``static_all`` (small catalog, send all).
+            - Provider supports ``tool_search`` → ``provider_deferred``
+              (provider does the loading).
+            - Otherwise → ``hybrid`` (preselect + recovery fallback).
+        """
+        catalog = self.tool_factory.get_catalog()
+        n = len(catalog.list_all()) if catalog else 0
+        if n <= 8:
+            return "static_all"
+        caps = self.provider.adapter.capabilities(model)
+        if caps.supports_provider_tool_search:
+            return "provider_deferred"
+        return "hybrid"
+
     async def _build_tool_selection_plan(
         self,
         *,
         input: list[dict[str, Any]],
         use_tools: Sequence[str] | None,
+        mode: ToolLoadingMode,
     ) -> ToolSelectionPlan | None:
         """Run the configured selector. Returns None when mode does not need it."""
-        mode = self.tool_loading_mode
-        if mode in {"static_all", "none", "agentic"}:
+        if mode in {"static_all", "none", "agentic", "auto"}:
             return None  # No selector run for these modes.
 
         catalog = self.tool_factory.get_catalog()
@@ -470,6 +488,7 @@ class LLMClient:
         )
         plan.diagnostics["latency_ms"] = int((time.monotonic() - start) * 1000)
         plan.core_tools = list(self.core_tools)
+        plan.mode = mode
         return plan
 
     def _apply_tool_selection_plan(
@@ -990,14 +1009,19 @@ class LLMClient:
             async for chunk in stream:
                 print(chunk.content, end="")
         """
+        # Resolve auto mode lazily — depends on catalog + per-call model override.
+        effective_mode: ToolLoadingMode = self.tool_loading_mode
+        if effective_mode == "auto":
+            effective_mode = self._resolve_auto_mode(model=model or self.model)
+
         selection_plan: ToolSelectionPlan | None = None
         if tool_session is None:
-            if self.tool_loading_mode == "agentic":
+            if effective_mode == "agentic":
                 # Legacy behavior
                 tool_session = self._build_agentic_session()
-            elif self.tool_loading_mode in {"preselect", "hybrid"}:
+            elif effective_mode in {"preselect", "hybrid", "provider_deferred"}:
                 selection_plan = await self._build_tool_selection_plan(
-                    input=input, use_tools=use_tools
+                    input=input, use_tools=use_tools, mode=effective_mode
                 )
                 tool_session = self._apply_tool_selection_plan(
                     tool_session=None, plan=selection_plan
@@ -1113,7 +1137,7 @@ class LLMClient:
             if selection_plan is not None:
                 md = dict(result.metadata or {})
                 md["tool_loading"] = self._build_tool_loading_metadata(
-                    mode=self.tool_loading_mode,
+                    mode=effective_mode,
                     plan=selection_plan,
                     messages=result.messages or [],
                 )
@@ -1124,7 +1148,7 @@ class LLMClient:
             # browse_toolkit + load_tools on the same session and re-run
             # provider.generate() once.
             if (
-                self.tool_loading_mode == "hybrid"
+                effective_mode == "hybrid"
                 and selection_plan is not None
                 and self.tool_loading_config.allow_recovery
                 and tool_session is not None
@@ -1136,6 +1160,7 @@ class LLMClient:
                     fallback_input=input,
                     tool_session=tool_session,
                     selection_plan=selection_plan,
+                    effective_mode=effective_mode,
                 )
 
             # --- Cache store ---
@@ -1194,6 +1219,7 @@ class LLMClient:
         fallback_input: list[dict[str, Any]],
         tool_session: ToolSession,
         selection_plan: ToolSelectionPlan,
+        effective_mode: ToolLoadingMode,
     ) -> GenerationResult:
         """Run a single hybrid-recovery pass when the first turn refused.
 
@@ -1249,7 +1275,7 @@ class LLMClient:
 
         md = dict(new_result.metadata or {})
         md["tool_loading"] = self._build_tool_loading_metadata(
-            mode=self.tool_loading_mode,
+            mode=effective_mode,
             plan=selection_plan,
             messages=new_result.messages or [],
         )
