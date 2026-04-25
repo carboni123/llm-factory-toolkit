@@ -714,6 +714,29 @@ class LLMClient:
             )
         await self.mcp_client.remove_server(name)
 
+    @staticmethod
+    def _mcp_server_to_anthropic_config(server: Any) -> dict[str, Any] | None:
+        """Translate an MCPServer config to Anthropic's mcp_toolset wire format.
+
+        Anthropic's hosted MCP connector expects entries shaped as:
+        ``{"type": "url", "url": "<endpoint>", "name": "<name>"}``.
+
+        Returns ``None`` when the server isn't translatable (e.g.,
+        :class:`MCPServerStdio` instances which Anthropic's hosted
+        connector cannot reach).
+        """
+        # Lazy import to avoid circulars.
+        from .mcp import MCPServerStreamableHTTP
+
+        if isinstance(server, MCPServerStreamableHTTP):
+            return {
+                "type": "url",
+                "url": server.url,
+                "name": server.name,
+            }
+        # stdio servers are not addressable by Anthropic's hosted connector.
+        return None
+
     async def _prepare_mcp_tools_for_call(
         self,
         *,
@@ -1137,6 +1160,19 @@ class LLMClient:
             # definitions are merged in alongside via extra_tool_definitions).
             if isinstance(use_tools, (list, tuple)) and len(use_tools) > 0:
                 common_kwargs["deferred_tool_names"] = list(use_tools)
+            # Anthropic adapter consumes mcp_servers; OpenAI adapter ignores it.
+            # When the user has configured MCP servers via LLMClient(mcp_servers=...),
+            # surface their wire-format config to the provider_deferred path so
+            # Anthropic's mcp_toolset entry can be built. Stdio servers are
+            # silently skipped — Anthropic's hosted connector cannot reach them.
+            if self.mcp_client is not None:
+                mcp_server_configs: list[dict[str, Any]] = []
+                for srv in self.mcp_client.servers.values():
+                    cfg = self._mcp_server_to_anthropic_config(srv)
+                    if cfg:
+                        mcp_server_configs.append(cfg)
+                if mcp_server_configs:
+                    common_kwargs["mcp_servers"] = mcp_server_configs
 
         # --- Cache lookup (non-streaming, no tools) ---
         _cache_key: str | None = None

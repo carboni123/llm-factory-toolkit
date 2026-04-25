@@ -773,3 +773,146 @@ class TestServerToolUseHandling:
         assert content == "Found info. Let me also check the CRM."
         assert len(tool_calls) == 1
         assert tool_calls[0].name == "query_customers"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_deferred_uses_mcp_toolset(monkeypatch) -> None:
+    """provider_deferred for Anthropic forwards an mcp_toolset config."""
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    adapter = AnthropicAdapter(api_key="ak-test", tool_factory=ToolFactory())
+    captured: dict = {}
+
+    async def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(create=_fake_create)
+    )
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
+
+    await adapter._call_api(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        provider_deferred=True,
+        deferred_tool_names=["create_task"],
+        mcp_servers=[
+            {"type": "url", "url": "https://example/mcp", "name": "demo"}
+        ],
+    )
+
+    sent_tools = captured.get("tools") or []
+    toolset_entries = [
+        t for t in sent_tools if isinstance(t, dict) and t.get("type") == "mcp_toolset"
+    ]
+    assert len(toolset_entries) == 1
+    entry = toolset_entries[0]
+    assert "create_task" in entry.get("allowed_tools", [])
+    assert entry.get("servers") == [
+        {"type": "url", "url": "https://example/mcp", "name": "demo"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_deferred_omits_toolset_without_servers(monkeypatch) -> None:
+    """No mcp_toolset entry when mcp_servers is not provided."""
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    adapter = AnthropicAdapter(api_key="ak-test", tool_factory=ToolFactory())
+    captured: dict = {}
+
+    async def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="ok")],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(create=_fake_create)
+    )
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
+
+    await adapter._call_api(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        provider_deferred=True,  # no mcp_servers
+    )
+
+    sent_tools = captured.get("tools") or []
+    toolset_entries = [
+        t for t in sent_tools if isinstance(t, dict) and t.get("type") == "mcp_toolset"
+    ]
+    assert toolset_entries == []
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_deferred_streaming_accepts_kwargs(monkeypatch) -> None:
+    """Streaming path accepts the new kwargs without TypeError."""
+    from llm_factory_toolkit.tools.tool_factory import ToolFactory
+
+    adapter = AnthropicAdapter(api_key="ak-test", tool_factory=ToolFactory())
+
+    class _FakeStreamCM:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+        @property
+        def text_stream(self):
+            async def _gen():
+                if False:
+                    yield ""  # pragma: no cover
+            return _gen()
+
+        async def get_final_message(self):
+            return SimpleNamespace(
+                content=[],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            )
+
+    captured: dict = {}
+
+    def _stream_factory(**kwargs):
+        captured.update(kwargs)
+        return _FakeStreamCM()
+
+    fake_client = SimpleNamespace(
+        messages=SimpleNamespace(stream=_stream_factory)
+    )
+    monkeypatch.setattr(adapter, "_get_client", lambda: fake_client)
+
+    stream = adapter._call_api_stream(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        provider_deferred=True,
+        deferred_tool_names=["create_task"],
+        mcp_servers=[
+            {"type": "url", "url": "https://example/mcp", "name": "demo"}
+        ],
+    )
+    async for _ in stream:
+        pass
+
+    sent_tools = captured.get("tools") or []
+    assert any(
+        isinstance(t, dict) and t.get("type") == "mcp_toolset" for t in sent_tools
+    )

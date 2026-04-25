@@ -315,6 +315,31 @@ class AnthropicAdapter(BaseProvider):
         return tool
 
     # ------------------------------------------------------------------
+    # mcp_toolset injection (provider_deferred)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _inject_mcp_toolset(
+        tools: list[dict[str, Any]] | None,
+        *,
+        mcp_servers: list[dict[str, Any]] | None,
+        deferred_tool_names: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        """Append Anthropic ``mcp_toolset`` config to the tools list.
+
+        Used by ``provider_deferred`` mode to delegate tool selection to the
+        provider's hosted MCP connector. ``deferred_tool_names`` is added as
+        an ``allowed_tools`` allowlist on the toolset entry.
+        """
+        entry: dict[str, Any] = {
+            "type": "mcp_toolset",
+            "servers": list(mcp_servers or []),
+        }
+        if deferred_tool_names:
+            entry["allowed_tools"] = list(deferred_tool_names)
+        return list(tools or []) + [entry]
+
+    # ------------------------------------------------------------------
     # Tool definition building
     # ------------------------------------------------------------------
 
@@ -488,6 +513,9 @@ class AnthropicAdapter(BaseProvider):
         response_format: dict[str, Any] | type[BaseModel] | None = None,
         web_search: bool | dict[str, Any] = False,
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        provider_deferred: bool = False,
+        deferred_tool_names: list[str] | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> ProviderResponse:
         """Make a single non-streaming call via Anthropic Messages API."""
@@ -517,6 +545,16 @@ class AnthropicAdapter(BaseProvider):
         ws_tool = self._build_web_search_tool(web_search, model=model)
         if ws_tool:
             effective_tools.append(ws_tool)
+        # provider_deferred mode: inject Anthropic's hosted mcp_toolset config
+        # so the provider can delegate tool selection to its MCP connector.
+        # Skipped when no servers are configured — capability validation
+        # happens upstream (Task 16) at LLMClient level.
+        if provider_deferred and mcp_servers:
+            effective_tools = self._inject_mcp_toolset(
+                effective_tools,
+                mcp_servers=mcp_servers,
+                deferred_tool_names=deferred_tool_names,
+            )
         if effective_tools:
             request["tools"] = effective_tools
 
@@ -669,6 +707,9 @@ class AnthropicAdapter(BaseProvider):
         response_format: dict[str, Any] | type[BaseModel] | None = None,
         web_search: bool | dict[str, Any] = False,
         file_search: bool | dict[str, Any] | list[str] | tuple[str, ...] = False,
+        provider_deferred: bool = False,
+        deferred_tool_names: list[str] | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ProviderResponse, None]:
         """Stream via Anthropic Messages API."""
@@ -694,6 +735,12 @@ class AnthropicAdapter(BaseProvider):
         ws_tool = self._build_web_search_tool(web_search, model=model)
         if ws_tool:
             effective_tools.append(ws_tool)
+        if provider_deferred and mcp_servers:
+            effective_tools = self._inject_mcp_toolset(
+                effective_tools,
+                mcp_servers=mcp_servers,
+                deferred_tool_names=deferred_tool_names,
+            )
         if effective_tools:
             request["tools"] = effective_tools
 
